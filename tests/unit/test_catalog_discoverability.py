@@ -35,6 +35,21 @@ def test_duplicate_descriptions_flagged():
     assert "VGI120" in set(codes(cat))
 
 
+def test_duplicate_descriptions_span_schemas_and_functions():
+    dup = "Reference data describing the overall system and its parts"
+    f1 = F.func("main", "f1", "scalar", description=dup)
+    f2 = F.func("main", "f2", "scalar", description=dup)
+    s = F.schema("main", comment=dup, functions=[f1, f2])
+    cfg = Config()
+    findings = [
+        f for f in run(select_rules(cfg), RuleContext(F.catalog(s), cfg)) if f.code == "VGI120"
+    ]
+    flagged = {f.object_id.qualified() for f in findings}
+    # schema + both functions all flagged as sharing one description
+    assert {"v.main", "v.main.f1", "v.main.f2"} <= flagged
+    assert findings[0].severity is Severity.WARNING
+
+
 def test_short_and_echo_descriptions():
     short = F.table("main", "metrics", comment="metrics")  # short + echo
     cat = F.catalog(F.schema("main", tables=[short]))

@@ -11,7 +11,6 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from collections.abc import Iterator
-from typing import Any
 
 from ..findings import Category, Finding, Severity
 from ..model import (
@@ -67,27 +66,57 @@ def _looks_like_url(value: str) -> bool:
     return value.strip().lower().startswith(("http://", "https://"))
 
 
+def _primary_descriptions(ctx: RuleContext) -> Iterator[tuple[ObjectId, str]]:
+    """(id, description) across the catalog, schemas, tables/views, and functions.
+
+    Uses each object's primary description (comment, or description for
+    functions). Table-functions are excluded — their description legitimately
+    mirrors the table they back.
+    """
+    cat = ctx.catalog
+    if not blank(cat.comment):
+        yield cat.id, cat.comment or ""
+    for s in cat.iter_schemas():
+        if not blank(s.comment):
+            yield s.id, s.comment or ""
+    for t in cat.iter_table_like():
+        if not blank(t.comment):
+            yield t.id, t.comment or ""
+    for f in cat.iter_functions():  # scalar/aggregate/macro (no table-functions)
+        text = f.description or f.comment
+        if not blank(text):
+            yield f.id, text or ""
+
+
 @register
 class DuplicateDescriptions(Rule):
     code = "VGI120"
     name = "duplicate-descriptions"
     category = DISC
-    default_severity = Severity.INFO
-    targets = (ObjectKind.TABLE, ObjectKind.VIEW)
-    summary = "Many objects sharing one description reads as boilerplate (dup content)."
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+    )
+    summary = "Distinct objects (schemas, tables, functions, ...) must not share a description."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        groups: dict[str, list[Any]] = defaultdict(list)
-        for t in ctx.catalog.iter_table_like():
-            if not blank(t.comment):
-                groups[_norm(t.comment or "")].append(t)
-        for objs in groups.values():
-            if len(objs) > 1:
-                for t in objs:
+        groups: dict[str, list[ObjectId]] = defaultdict(list)
+        for oid, text in _primary_descriptions(ctx):
+            groups[_norm(text)].append(oid)
+        for oids in groups.values():
+            if len(oids) > 1:
+                others = ", ".join(o.qualified() for o in oids)
+                for oid in oids:
                     yield self.finding(
                         ctx,
-                        t.id,
-                        f"description is shared by {len(objs)} objects",
+                        oid,
+                        f"description is shared by {len(oids)} objects ({others})",
                         "give each object a distinct description so search and "
                         "agents can tell them apart",
                     )

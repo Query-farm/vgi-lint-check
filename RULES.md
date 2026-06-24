@@ -28,7 +28,7 @@ skipped unless `--execute` is passed.
 
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
-| `VGI120` | info | duplicate-descriptions | Many objects sharing one description reads as boilerplate (dup content). |  |
+| `VGI120` | warning | duplicate-descriptions | Distinct objects (schemas, tables, functions, ...) must not share a description. |  |
 | `VGI121` | info | description-too-short | A description should be substantive enough to index and read well. |  |
 | `VGI122` | info | description-echoes-name | A description that just restates the name adds no searchable signal. |  |
 | `VGI123` | off | classifying-tag-present | Objects should carry a classifying tag (domain/category/...) for faceting. | opt-in |
