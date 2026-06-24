@@ -211,8 +211,9 @@ def init(location, target):
         'fail_on = "error"\n'
         '# baseline = "vgi-lint-baseline"\n\n'
         "[tool.vgi-lint-check.options]\n"
-        'required_schema_tags = ["provider", "domain"]\n'
         "column_comment_min_ratio = 0.8\n"
+        "# Require specific tag keys (opt-in; empty by default):\n"
+        "# required_schema_tags = [\"provider\", \"domain\"]\n"
     )
     with open(target, "w") as fh:
         fh.write(content)

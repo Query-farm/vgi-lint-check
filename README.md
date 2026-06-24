@@ -2,6 +2,13 @@
   <img src="https://raw.githubusercontent.com/Query-farm/vgi-lint-check/main/assets/vgi-logo.png" alt="Vector Gateway Interface" width="320">
 </p>
 
+<p align="center">
+  <a href="https://pypi.org/project/vgi-lint-check/"><img src="https://img.shields.io/pypi/v/vgi-lint-check" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/vgi-lint-check/"><img src="https://img.shields.io/pypi/pyversions/vgi-lint-check" alt="Python versions"></a>
+  <a href="https://github.com/Query-farm/vgi-lint-check/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Query-farm/vgi-lint-check/ci.yml?branch=main&amp;label=CI" alt="CI"></a>
+  <a href="https://github.com/Query-farm/vgi-lint-check/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Source--Available-blue" alt="License"></a>
+</p>
+
 # vgi-lint
 
 A `pydoclint`-style **metadata-quality linter for VGI workers**. It attaches to an
@@ -99,8 +106,10 @@ fail_on = "error"
 VGI201 = "error"
 
 [tool.vgi-lint-check.options]
-required_schema_tags = ["provider", "domain"]
 column_comment_min_ratio = 0.8
+# Required tags are opt-in (empty by default) — set them if your workers have a
+# tagging convention you want enforced:
+# required_schema_tags = ["provider", "domain"]
 
 [tool.vgi-lint-check.per-object]
 "volcanos.hans.*" = { ignore = ["VGI112"] }

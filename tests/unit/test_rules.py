@@ -103,9 +103,14 @@ def test_example_qualification():
     assert "b" in flagged and "a" not in flagged
 
 
-def test_required_tags():
-    s = F.schema("main", comment="c")  # missing provider+domain
-    found = set(codes(F.catalog(s)))
+def test_required_tags_opt_in():
+    s = F.schema("main", comment="c")  # no provider/domain tags
+    # not flagged by default — required tags are opt-in
+    assert "VGI401" not in set(codes(F.catalog(s)))
+    # ...but flagged once configured
+    cfg = Config()
+    cfg.options = Options(required_schema_tags=["provider", "domain"])
+    found = {f.code for f in run(select_rules(cfg), RuleContext(F.catalog(s), cfg))}
     assert "VGI401" in found
 
 

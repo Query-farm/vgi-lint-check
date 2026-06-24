@@ -23,7 +23,9 @@ class Options:
     min_llm_description_chars: int = 40
     min_md_description_chars: int = 80
     min_description_chars: int = 12
-    required_schema_tags: list[str] = field(default_factory=lambda: ["provider", "domain"])
+    # Required tags are opt-in: VGI401 only fires for keys you list here. There
+    # is no universal tag every schema/table must carry.
+    required_schema_tags: list[str] = field(default_factory=list)
     required_table_tags: list[str] = field(default_factory=list)
     allowed_tag_keys: list[str] = field(default_factory=list)
 
