@@ -69,9 +69,10 @@ skipped unless `--execute` is passed.
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
 | `VGI101` | warning | schema-comment | Every schema should have a comment describing the domain it covers. |  |
+| `VGI102` | info | description-tag-not-duplicate | vgi.description_llm/_md should add narrative detail, not just repeat the object's own description/comment. |  |
 | `VGI111` | warning | table-comment | Every table should have a one-line comment describing its rows. |  |
-| `VGI112` | warning | description-llm | Tables/views/functions may carry a 'vgi.description_llm' tag (opt-in). |  |
-| `VGI113` | warning | description-md | Tables/views/functions may carry a 'vgi.description_md' tag (opt-in). |  |
+| `VGI112` | warning | description-llm | Tables/views/functions should carry a 'vgi.description_llm' tag for agents. |  |
+| `VGI113` | warning | description-md | Tables/views/functions should carry a 'vgi.description_md' tag for human docs. |  |
 | `VGI114` | info | description-md-distinct | The Markdown description should be richer than the LLM one. |  |
 | `VGI115` | warning | view-comment | Every view should have a comment describing what it returns. |  |
 | `VGI116` | warning | schema-description-llm | Every schema must carry a 'vgi.description_llm' tag (required). |  |
@@ -181,4 +182,4 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 
-_96 rules._
+_97 rules._

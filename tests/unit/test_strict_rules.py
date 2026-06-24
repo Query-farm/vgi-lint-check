@@ -146,3 +146,35 @@ def test_vgi510_deterministic_example():
     )
     s2 = F.schema("main", comment="c", tags=_TAGS, functions=[ordered])
     assert "VGI510" not in _codes(F.catalog(s2))
+
+
+def test_vgi102_description_not_duplicate():
+    dup = "Classifies a Richter magnitude into a severity band."
+    fn = F.func(
+        "main",
+        "magnitude_class",
+        description=dup,
+        tags={"vgi.description_llm": dup, "vgi.description_md": "## Magnitude\nA fuller writeup."},
+    )
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[fn])
+    found = [
+        f
+        for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))
+        if f.code == "VGI102"
+    ]
+    assert found and "description_llm" in found[0].message
+    # a genuinely distinct llm description is not flagged
+    fn2 = F.func(
+        "main",
+        "magnitude_class",
+        description=dup,
+        tags={
+            "vgi.description_llm": "Use this to bucket quakes for alerting; input is Richter, "
+            "output is one of micro/minor/light/moderate/strong/major.",
+            "vgi.description_md": "## Magnitude\nA fuller writeup.",
+        },
+    )
+    s2 = F.schema("main", comment="c", tags=_TAGS, functions=[fn2])
+    assert "VGI102" not in [
+        f.code for f in run(select_rules(Config()), RuleContext(F.catalog(s2), Config()))
+    ]

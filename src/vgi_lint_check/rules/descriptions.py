@@ -155,7 +155,7 @@ class LLMDescription(Rule):
     category = DESC
     default_severity = Severity.WARNING  # strict default (was opt-in for tables/views/functions)
     targets = _OPTIONAL_DESC_KINDS
-    summary = "Tables/views/functions may carry a 'vgi.description_llm' tag (opt-in)."
+    summary = "Tables/views/functions should carry a 'vgi.description_llm' tag for agents."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for oid, tags, _name in _optional_desc_objects(ctx):
@@ -164,7 +164,9 @@ class LLMDescription(Rule):
                     ctx,
                     oid,
                     f"missing '{TAG_DESCRIPTION_LLM}' tag",
-                    "add a 'vgi.description_llm' tag: concise prose aimed at LLMs",
+                    "add a 'vgi.description_llm' tag: an LLM-oriented description of "
+                    "what this object is and when to use it. It complements the "
+                    "object's short description/comment — don't just duplicate it",
                 )
 
 
@@ -175,7 +177,7 @@ class MarkdownDescription(Rule):
     category = DESC
     default_severity = Severity.WARNING  # strict default (was opt-in for tables/views/functions)
     targets = _OPTIONAL_DESC_KINDS
-    summary = "Tables/views/functions may carry a 'vgi.description_md' tag (opt-in)."
+    summary = "Tables/views/functions should carry a 'vgi.description_md' tag for human docs."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for oid, tags, _name in _optional_desc_objects(ctx):
@@ -184,7 +186,9 @@ class MarkdownDescription(Rule):
                     ctx,
                     oid,
                     f"missing '{TAG_DESCRIPTION_MD}' tag",
-                    "add a 'vgi.description_md' tag with a Markdown description",
+                    "add a 'vgi.description_md' tag: a richer narrative description "
+                    "in Markdown (what it is, columns/returns, caveats, examples) — "
+                    "not a copy of the object's one-line description/comment",
                 )
 
 
@@ -231,3 +235,43 @@ class MarkdownNotIdenticalToLLM(Rule):
                     "vgi.description_md is identical to vgi.description_llm",
                     "make the Markdown description richer than the LLM one",
                 )
+
+
+def _norm_desc(text: str | None) -> str:
+    return " ".join((text or "").split()).strip().lower()
+
+
+@register
+class DescriptionTagNotDuplicate(Rule):
+    code = "VGI102"
+    name = "description-tag-not-duplicate"
+    category = DESC
+    default_severity = Severity.INFO
+    targets = _OPTIONAL_DESC_KINDS
+    summary = (
+        "vgi.description_llm/_md should add narrative detail, not just repeat the "
+        "object's own description/comment."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        items: list[tuple[ObjectId, TagSet, str | None]] = []
+        for t in cat.iter_table_like():
+            items.append((t.id, t.tags, t.comment))
+        for f in cat.iter_all_functions():
+            items.append((f.id, f.tags, f.description or f.comment))
+        for oid, tags, primary in items:
+            base = _norm_desc(primary)
+            if not base:
+                continue
+            for key in (TAG_DESCRIPTION_LLM, TAG_DESCRIPTION_MD):
+                value = tags.get(key)
+                if not blank(value) and _norm_desc(value) == base:
+                    yield self.finding(
+                        ctx,
+                        oid,
+                        f"{key} just repeats the object's description",
+                        f"{key} should add narrative detail an agent/reader can't get "
+                        "from the one-line description — purpose, columns/returns, "
+                        "caveats, examples — not duplicate it",
+                    )
