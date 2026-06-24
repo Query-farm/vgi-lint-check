@@ -116,6 +116,7 @@ skipped unless `--execute` is passed.
 | `VGI505` | warning | example-queries-qualified | Example queries should qualify references with the catalog name (catalog.schema.table) so they run when the worker is attached. |  |
 | `VGI506` | off | schema-example-queries | Schemas should carry a vgi.example_queries tag (opt-in). | opt-in |
 | `VGI507` | error | executable-examples-well-formed | vgi.executable_examples must be a valid JSON list; each entry needs a description and at least one non-empty SQL statement. |  |
+| `VGI508` | warning | too-many-executable-examples | Warn when one object carries more executable examples than options.max_executable_examples. |  |
 
 ## Settings (VGI6xx)
 
@@ -172,4 +173,4 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 
-_87 rules._
+_88 rules._

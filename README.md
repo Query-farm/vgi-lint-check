@@ -117,7 +117,13 @@ There are **two tiers of examples**:
 ```
 
 Executable examples should be **re-runnable** (e.g. use `CREATE OR REPLACE`),
-since VGI906 and VGI907 each run the statement sequence.
+since VGI906 and VGI907 each run the statement sequence. Keep the set focused:
+**VGI508** warns when one object declares more than
+`options.max_executable_examples` (default 10) — each runs against the worker
+under `--execute`, and a long list is noise for an LLM. Every executable-example
+finding's `fix` is fully self-describing (the JSON shape, `expected_result`
+format, and the catalog-qualified/self-contained requirement), so a coding agent
+can author or repair the tag straight from `--format agent`/`json` output.
 
 ```toml
 [tool.vgi-lint-check.execution]

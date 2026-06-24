@@ -50,6 +50,9 @@ class Options:
     # Discoverability (VGI12x) tuning.
     min_meaningful_description_chars: int = 30
     min_example_queries: int = 3
+    # Warn when one object declares more than this many executable examples
+    # (each runs against the worker under --execute). 0 = disabled.
+    max_executable_examples: int = 10
     classifying_tag_keys: list[str] = field(
         default_factory=lambda: ["domain", "category", "provider", "topic"]
     )

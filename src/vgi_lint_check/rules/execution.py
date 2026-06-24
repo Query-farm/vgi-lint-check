@@ -425,8 +425,10 @@ class ExecutableExamplesExecute(Rule):
                         ctx,
                         obj_id,
                         f"executable example {label!r} failed: {type(e).__name__}: {e}",
-                        "make the example self-contained and runnable as written "
-                        "(catalog-qualify references; include any required filters)",
+                        "make every statement run as written: catalog-qualify "
+                        "references (catalog.schema.name), include any required "
+                        "filters, and make the example self-contained and "
+                        "re-runnable (e.g. CREATE OR REPLACE for any setup)",
                     )
 
 
@@ -475,6 +477,8 @@ class ExecutableExampleResultMatches(Rule):
                             obj_id,
                             f"executable example {label!r} statement #{i} output "
                             "does not match expected_result",
-                            "update expected_result to the actual output, or fix the "
-                            "statement; values compare as strings, rows in order",
+                            "set expected_result to the statement's actual output, "
+                            "or fix the statement. Format: a scalar, a list of "
+                            "row-objects keyed by column name, or a list of rows; "
+                            "cells compare as strings and rows in order",
                         )

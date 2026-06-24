@@ -20,6 +20,19 @@ from .registry import register
 
 EX = Category.EXAMPLES
 
+# A complete, self-contained spec of the vgi.executable_examples shape so an agent
+# can author a correct tag from a single finding without a second lookup.
+_EXECUTABLE_SCHEMA_HINT = (
+    "set the vgi.executable_examples tag to a JSON list of "
+    '{"name"?, "description", "sql"} objects, where "sql" is a SQL string, a list '
+    'of SQL strings, or a list of {"description", "sql", "expected_result"?} steps '
+    "run in order. expected_result (optional, per statement) is the JSON output to "
+    "assert (a scalar, a list of row-objects keyed by column, or a list of rows; "
+    "cells compare as strings, rows in order). Catalog-qualify every reference "
+    "(catalog.schema.name) and make each example self-contained and re-runnable so "
+    "it executes as written when the worker is attached."
+)
+
 # Strip single-quoted string literals and -- / /* */ comments so a qualifier
 # mentioned only inside a literal/comment does not count as a real reference.
 _SQL_LITERAL_OR_COMMENT = re.compile(r"'(?:[^']|'')*'|--[^\n]*|/\*.*?\*/", re.DOTALL)
@@ -212,8 +225,7 @@ class ExecutableExamplesWellFormed(Rule):
                     ctx,
                     obj_id,
                     f"vgi.executable_examples is not valid: {parse_error}",
-                    'use a JSON list of {"description","sql"} objects; sql may be a '
-                    "string or a list of {description, sql} steps",
+                    _EXECUTABLE_SCHEMA_HINT,
                 )
                 continue
             for ex in examples:
@@ -222,15 +234,57 @@ class ExecutableExamplesWellFormed(Rule):
                         ctx,
                         obj_id,
                         f"executable example #{ex.index} has no description",
-                        "describe what the example demonstrates so LLMs can learn from it",
+                        "give the example a 'description' (prose an LLM can learn "
+                        f"from). {_EXECUTABLE_SCHEMA_HINT}",
                     )
                 if not ex.statements or all(blank(s.sql) for s in ex.statements):
                     yield self.finding(
                         ctx,
                         obj_id,
                         f"executable example #{ex.index} has no SQL statement",
-                        "give the example at least one non-empty SQL statement to run",
+                        f"give the example at least one non-empty SQL statement. "
+                        f"{_EXECUTABLE_SCHEMA_HINT}",
                     )
+
+
+@register
+class TooManyExecutableExamples(Rule):
+    code = "VGI508"
+    name = "too-many-executable-examples"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.MACRO,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = (
+        "Warn when one object carries more executable examples than "
+        "options.max_executable_examples."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        limit = ctx.config.options.max_executable_examples
+        if not limit or limit <= 0:
+            return
+        for obj_id, examples, parse_error in ctx.catalog.iter_executable_example_hosts():
+            if parse_error:
+                continue
+            n = len(examples)
+            if n > limit:
+                yield self.finding(
+                    ctx,
+                    obj_id,
+                    f"object declares {n} executable examples (> {limit})",
+                    "keep a focused, curated set — each one runs against the worker "
+                    "under --execute, and a long list is noise for LLMs; move extras "
+                    "to vgi.example_queries (illustrative) or raise the limit",
+                )
 
 
 @register

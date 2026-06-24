@@ -78,6 +78,22 @@ def test_vgi507_flags_malformed_and_incomplete():
     # the well-formed example produced no VGI507
 
 
+def test_vgi508_limits_example_count():
+    from vgi_lint_check.config import Options
+
+    many = [F.exec_example(i, f"ex {i}", [("s", "SELECT 1")]) for i in range(4)]
+    fn = F.func("main", "f", description="d", executable_examples=many)
+    s = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=[fn])
+    cat = F.catalog(s)
+    # default cap (10) -> not flagged
+    assert "VGI508" not in _lint(cat)
+    # lower the cap -> flagged
+    cfg = Config()
+    cfg.options = Options(max_executable_examples=2)
+    codes = [f.code for f in run(select_rules(cfg), RuleContext(cat, cfg))]
+    assert "VGI508" in codes
+
+
 # --- VGI906 / VGI907 (execution + result) ---------------------------------
 class FakeResult:
     def __init__(self, rows, cols):
