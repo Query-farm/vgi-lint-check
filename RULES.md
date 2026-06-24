@@ -29,6 +29,7 @@ skipped unless `--execute` is passed.
 | `VGI008` | warning | default-schema-valid | The catalog's default schema must resolve to a schema that exists. |  |
 | `VGI009` | info | catalog-support | The catalog should advertise a support contact and support policy URL. |  |
 | `VGI010` | warning | support-links-valid | A URL in the support contact / policy must be a valid http(s) URL. |  |
+| `VGI011` | warning | catalog-not-empty | A catalog must expose at least one table, view, or function. |  |
 
 ## Discoverability (VGI12x)
 
@@ -141,7 +142,15 @@ skipped unless `--execute` is passed.
 
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
+| `VGI110` | warning | schema-not-empty | A schema should contain at least one table, view, or function. |  |
 | `VGI117` | off | schema-object-count | Flag a schema with more objects than options.max_schema_objects. | opt-in |
+
+## Attach options (VGI10xx)
+
+| Code | Default | Rule | What it checks | Notes |
+| --- | --- | --- | --- | --- |
+| `VGI1001` | warning | attach-option-description | Every advertised attach option should have a description. |  |
+| `VGI1002` | info | attach-option-description-quality | An attach-option description should add information, not restate the name. |  |
 
 ## Execution (VGI9xx)
 
@@ -150,5 +159,7 @@ skipped unless `--execute` is passed.
 | `VGI901` | error | example-queries-execute | Every example query should bind/execute against the worker. | requires `--execute` |
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
 | `VGI903` | error | view-executes | Every defined view must actually execute against the worker. | requires `--execute` |
+| `VGI904` | error | attach-options-accepted | Advertised attach options must actually be accepted at ATTACH time. | requires `--execute` |
+| `VGI905` | error | advertised-catalogs-attachable | Every catalog vgi_catalogs() advertises must be attachable. | requires `--execute` |
 
-_71 rules._
+_77 rules._

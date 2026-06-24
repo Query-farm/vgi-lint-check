@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .model import (
+    AttachOption,
     Catalog,
     Column,
     Constraint,
@@ -92,6 +93,8 @@ def build_catalog(
     releases: list[Release] | None = None,
     setting_rows: list[dict[str, Any]] | None = None,
     pragma_rows: list[dict[str, Any]] | None = None,
+    attach_options: list[Any] | None = None,
+    advertised_catalogs: list[str] | None = None,
 ) -> Catalog:
     """Build a normalized :class:`Catalog` from a post-attach snapshot."""
     schemas: dict[str, Schema] = {}
@@ -271,6 +274,23 @@ def build_catalog(
             )
         )
 
+    # --- attach options (from vgi_catalogs() discovery; pre-attach) -------
+    opts: list[AttachOption] = []
+    opt_info: Any
+    for opt_info in attach_options or []:
+        opt_name = getattr(opt_info, "name", None)
+        if not opt_name:
+            continue
+        opts.append(
+            AttachOption(
+                id=ObjectId(alias, ObjectKind.ATTACH_OPTION, name=opt_name),
+                name=opt_name,
+                description=getattr(opt_info, "description", None),
+                type=getattr(opt_info, "type", None),
+                default=getattr(opt_info, "default", None),
+            )
+        )
+
     return Catalog(
         database=alias,
         location=location,
@@ -287,6 +307,8 @@ def build_catalog(
         schemas=list(schemas.values()),
         settings=settings,
         pragmas=pragmas,
+        attach_options=opts,
+        advertised_catalogs=list(advertised_catalogs or []),
     )
 
 

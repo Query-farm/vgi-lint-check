@@ -12,7 +12,7 @@ module decides *which* versions a run should lint:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -27,6 +27,16 @@ class Release:
 
 
 @dataclass(frozen=True)
+class AttachOptionInfo:
+    """A declared attach option from the ``attach_options`` discovery column."""
+
+    name: str
+    description: str | None = None
+    type: str | None = None
+    default: str | None = None
+
+
+@dataclass(frozen=True)
 class CatalogDiscovery:
     """A worker catalog and the data versions it advertises."""
 
@@ -35,6 +45,7 @@ class CatalogDiscovery:
     data_version_spec: str | None
     source_url: str | None
     releases: list[Release]
+    attach_options: list[AttachOptionInfo] = field(default_factory=list)
 
 
 def discover_catalogs(con: Any, location: str) -> list[CatalogDiscovery]:
@@ -51,6 +62,35 @@ def discover_catalogs(con: Any, location: str) -> list[CatalogDiscovery]:
                 data_version_spec=_blank_to_none(r.get("data_version_spec")),
                 source_url=_blank_to_none(r.get("source_url")),
                 releases=_parse_releases(r.get("releases")),
+                attach_options=_parse_attach_options(r.get("attach_options")),
+            )
+        )
+    return out
+
+
+def _parse_attach_options(raw: Any) -> list[AttachOptionInfo]:
+    """Parse the ``attach_options`` column (list of structs, or a JSON string)."""
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+    elif isinstance(raw, list):
+        data = raw
+    else:
+        return []
+    out: list[AttachOptionInfo] = []
+    for item in data:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        out.append(
+            AttachOptionInfo(
+                name=str(item["name"]),
+                description=_blank_to_none(item.get("description")),
+                type=_blank_to_none(item.get("type")),
+                default=_stringify(item.get("default_value")),
             )
         )
     return out

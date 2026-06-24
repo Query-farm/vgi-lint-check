@@ -3,7 +3,12 @@ import pytest
 from vgi_lint_check.connection import attach_statement, sql_str, validate_alias
 from vgi_lint_check.diff import diff_snapshots
 from vgi_lint_check.snapshot import Snapshot
-from vgi_lint_check.versions import _parse_releases, resolve_versions
+from vgi_lint_check.versions import (
+    _parse_attach_options,
+    _parse_releases,
+    discover_catalogs,
+    resolve_versions,
+)
 
 
 def test_sql_str_escapes_quotes():
@@ -101,3 +106,51 @@ def test_resolve_versions_all_from_discovery():
         ],
     )
     assert resolve_versions(con, "loc", all_versions=True) == ["2.0.0", "1.0.0"]
+
+
+def test_parse_attach_options_list_and_string():
+    # haybarn materializes the column as a list of structs ...
+    rows = [
+        {
+            "name": "opt_bool",
+            "description": "Boolean option",
+            "type": "BOOLEAN",
+            "default_value": "true",
+        },
+        {"name": "token", "description": None, "type": "VARCHAR", "default_value": None},
+    ]
+    opts = _parse_attach_options(rows)
+    assert [o.name for o in opts] == ["opt_bool", "token"]
+    assert opts[0].default == "true" and opts[0].type == "BOOLEAN"
+    assert opts[1].default is None  # no default -> required is implied
+    # ... but a JSON-string carrier is also accepted, and junk is ignored.
+    assert _parse_attach_options('[{"name":"x","default_value":"1"}]')[0].name == "x"
+    assert _parse_attach_options("not json") == []
+    assert _parse_attach_options(None) == []
+
+
+def test_discover_catalogs_parses_attach_options():
+    con = _FakeCon(
+        rows=[
+            (
+                "c",
+                "1.0",
+                "",
+                [{"name": "region", "description": "AWS region", "type": "VARCHAR"}],
+                "[]",
+                None,
+            )
+        ],
+        cols=[
+            "catalog",
+            "implementation_version",
+            "data_version_spec",
+            "attach_options",
+            "releases",
+            "source_url",
+        ],
+    )
+    cats = discover_catalogs(con, "loc")
+    assert len(cats) == 1
+    assert [o.name for o in cats[0].attach_options] == ["region"]
+    assert cats[0].attach_options[0].description == "AWS region"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from vgi_lint_check.model import (
+    AttachOption,
     Catalog,
     Column,
     Constraint,
@@ -133,6 +134,16 @@ def schema(name, *, comment=None, tags=None, tables=(), views=(), functions=()):
     )
 
 
+def attach_option(name, description=None, type="VARCHAR", default="x"):
+    return AttachOption(
+        id=ObjectId("v", ObjectKind.ATTACH_OPTION, name=name),
+        name=name,
+        description=description,
+        type=type,
+        default=default,
+    )
+
+
 def catalog(
     *schemas,
     settings=(),
@@ -141,6 +152,8 @@ def catalog(
     tags=None,
     source_url="https://example.com",
     releases=(),
+    attach_options=(),
+    advertised_catalogs=(),
 ):
     # Default catalog metadata satisfies the VGI0xx required rules so per-object
     # rule tests aren't polluted; pass comment=None / tags={} to test VGI00x.
@@ -164,4 +177,6 @@ def catalog(
         schemas=list(schemas),
         settings=list(settings),
         pragmas=list(pragmas),
+        attach_options=list(attach_options),
+        advertised_catalogs=list(advertised_catalogs),
     )

@@ -57,6 +57,7 @@ class ObjectKind(StrEnum):
     MACRO = "macro"
     PRAGMA = "pragma"
     SETTING = "setting"
+    ATTACH_OPTION = "attach_option"
 
 
 # Maps duckdb_functions().function_type -> our ObjectKind.
@@ -233,6 +234,26 @@ class Pragma:
 
 
 @dataclass(frozen=True)
+class AttachOption:
+    """A declarative attach-time option a worker advertises via ``vgi_catalogs``.
+
+    Discoverable *before* attach. ``required`` is not signalled on the wire —
+    it is inferred from the absence of a default (``default is None``).
+    """
+
+    id: ObjectId
+    name: str
+    description: str | None = None
+    type: str | None = None
+    default: str | None = None
+
+    @property
+    def required(self) -> bool:
+        """True when the option has no default, so a value must be supplied."""
+        return self.default is None
+
+
+@dataclass(frozen=True)
 class Constraint:
     """A table constraint from duckdb_constraints().
 
@@ -298,6 +319,10 @@ class Catalog:
     schemas: list[Schema] = field(default_factory=list)
     settings: list[Setting] = field(default_factory=list)
     pragmas: list[Pragma] = field(default_factory=list)
+    # Attach-time options advertised via vgi_catalogs() (discoverable pre-attach).
+    attach_options: list[AttachOption] = field(default_factory=list)
+    # Names of every catalog vgi_catalogs() advertised at this location.
+    advertised_catalogs: list[str] = field(default_factory=list)
     # Lazily-built {name: [tables/views]} index for FK reference resolution.
     _name_index: dict[str, list[Table | View]] | None = field(
         default=None, init=False, repr=False, compare=False
@@ -382,6 +407,14 @@ class Catalog:
         if schema is not None:
             return [t for t in matches if t.schema == schema]
         return list(matches)
+
+    def iter_attach_options(self) -> Iterator[AttachOption]:
+        """Iterate the catalog's advertised attach-time options."""
+        return iter(self.attach_options)
+
+    def has_objects(self) -> bool:
+        """True when the catalog exposes at least one table, view, or function."""
+        return any(s.tables or s.views or s.functions for s in self.schemas)
 
     def iter_macros(self) -> Iterator[Function]:
         """Iterate macro functions."""

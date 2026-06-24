@@ -57,19 +57,20 @@ families:
 
 | Family | Codes | Examples |
 | --- | --- | --- |
-| Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it |
+| Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty** |
 | Descriptions | VGI1xx | schema/table/view comment, `vgi.description_llm`, `vgi.description_md` |
 | Discoverability | VGI12x | duplicate/short/echoed descriptions, join-path docs, release freshness, example richness, units (opt-in) |
 | Content | VGI17x | `vgi.description_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage (tables **and views**), comment-not-echo |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples |
 | Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity |
-| Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete entries, **catalog-qualified** |
+| Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete entries, **catalog-qualified**, references the object it documents |
 | Settings | VGI6xx | setting descriptions |
 | Pragmas | VGI7xx | pragma descriptions |
 | Constraints | VGI8xx | FK/PK/check validity — references must point at real tables & columns; completeness nudges (no constraints / no PKs / no NOT NULL anywhere) |
-| Structure | VGI11x | schema object-count cap (opt-in) |
-| Execution | VGI9xx | example queries & CHECK constraints bind/execute (opt-in, `--execute`); per-query timeout so nothing runs forever |
+| Attach options | VGI10xx | every `vgi_catalogs()` attach option is documented (description present + meaningful) |
+| Structure | VGI11x | **schema not empty**; schema object-count cap (opt-in) |
+| Execution | VGI9xx | example queries & CHECK constraints bind/execute; advertised attach options are accepted and advertised catalogs attach (opt-in, `--execute`); per-query timeout so nothing runs forever |
 
 See **[RULES.md](RULES.md)** for the full per-rule reference (codes, default
 severities, and what each checks). Run `vgi-lint rules` to list them from your
@@ -96,6 +97,21 @@ mode    = "explain"  # explain (bind-only, cheapest) | limit | run
 limit   = 1          # row cap for limit/VGI902 modes
 timeout = 30.0       # per-query seconds; 0 disables the guard
 ```
+
+## Attach options
+
+A worker advertises its attach-time options through `vgi_catalogs()` **before**
+attach — each option has a `name`, `description`, `type`, and `default_value`.
+`vgi-lint` reads them and checks they're documented (**VGI1001/VGI1002**): an
+agent choosing the worker relies on those descriptions to know what each option
+does. Whether an option is *required* is not flagged on the wire — it's inferred
+from the absence of a default. With `--execute`, two live checks also run:
+
+- **VGI904** attaches a throwaway handle passing every advertised option at its
+  default and confirms the worker actually accepts each one (options whose type
+  can't be reconstructed from a stringified default — `STRUCT`/`MAP`/array/blob —
+  are skipped rather than guessed).
+- **VGI905** confirms every catalog `vgi_catalogs()` advertises can be attached.
 
 ## Reserved tags
 

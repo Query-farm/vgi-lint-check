@@ -1,4 +1,4 @@
-"""VGI11x (structure) — schema organization. Opt-in."""
+"""VGI11x (structure) — schema organization."""
 
 from __future__ import annotations
 
@@ -8,6 +8,27 @@ from ..findings import Category, Finding, Severity
 from ..model import ObjectKind
 from .base import Rule, RuleContext
 from .registry import register
+
+
+@register
+class SchemaNotEmpty(Rule):
+    code = "VGI110"
+    name = "schema-not-empty"
+    category = Category.STRUCTURE
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.SCHEMA,)
+    summary = "A schema should contain at least one table, view, or function."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for s in ctx.catalog.iter_schemas():
+            if not (s.tables or s.views or s.functions):
+                yield self.finding(
+                    ctx,
+                    s.id,
+                    "schema is empty — no tables, views, or functions",
+                    "add the objects this schema is meant to expose, or drop the "
+                    "schema if it was registered by mistake",
+                )
 
 
 @register

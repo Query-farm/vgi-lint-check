@@ -22,6 +22,8 @@ VERSIONED_LOC = (
     f"uv run --project {VGI_PYTHON} --with pytz python -m vgi._test_fixtures.versioned_tables"
 )
 
+ATTACH_OPTIONS_LOC = f"uv run --project {VGI_PYTHON} vgi-fixture-attach-options-worker"
+
 
 def _need(path):
     if not os.path.isdir(path) or shutil.which("uv") is None:
@@ -70,6 +72,23 @@ def test_versioned_worker_all_versions():
     # metadata differs across versions: 1.1.0 adds the 'color' column to animals,
     # so the set of column objects is not identical between adjacent versions.
     assert any(row.added_objects or row.removed_objects for row in report.comparison.rows)
+
+
+def test_attach_options_discovered_and_accepted():
+    """Attach options are discoverable pre-attach, documented, and all passable."""
+    _need(VGI_PYTHON)
+    cfg = Config(execute=True, check_links=False)
+    report = lint_worker(ATTACH_OPTIONS_LOC, config=cfg, install=False)
+    r = report.results[0]
+    opts = r.catalog.attach_options
+    assert len(opts) >= 10, "expected the worker's declared attach options"
+    assert all(o.description for o in opts), "every option should carry a description"
+    assert all(o.type for o in opts)
+    # VGI904: every advertised option, passed at its default, is accepted.
+    assert not [f for f in r.findings if f.code == "VGI904"]
+    # VGI905: the single advertised catalog attaches; VGI011: it is non-empty.
+    assert not [f for f in r.findings if f.code == "VGI905"]
+    assert not [f for f in r.findings if f.code == "VGI011"]
 
 
 def test_unqualified_examples_flagged_and_fail_execution(volcanos_url):

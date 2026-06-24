@@ -183,6 +183,45 @@ def test_required_tags_opt_in():
     assert "VGI401" in found
 
 
+def test_attach_option_documentation():
+    cat = F.catalog(
+        F.schema(
+            "main", comment="c", tags=_SCHEMA_TAGS, tables=[F.table("main", "t", comment="c")]
+        ),
+        attach_options=[
+            F.attach_option("api_key", description=None),  # VGI1001
+            F.attach_option("region", description="region"),  # VGI1002 (echo)
+            F.attach_option("endpoint", description="The base URL of the upstream service"),
+        ],
+    )
+    found = set(codes(cat))
+    assert "VGI1001" in found  # api_key has no description
+    assert "VGI1002" in found  # region's description just restates the name
+
+
+def test_attach_option_required_derived():
+    required = F.attach_option("token", description=None, default=None)
+    optional = F.attach_option("region", description="x", default="us")
+    assert required.required is True
+    assert optional.required is False
+
+
+def test_empty_schema_warns():
+    empty = F.schema("ghost", comment="c", tags=_SCHEMA_TAGS)  # no objects
+    full = F.schema(
+        "main", comment="c", tags=_SCHEMA_TAGS, tables=[F.table("main", "t", comment="c")]
+    )
+    found = set(codes(F.catalog(empty, full)))
+    assert "VGI110" in found  # ghost is empty
+    assert "VGI011" not in found  # catalog still exposes main.t
+
+
+def test_empty_catalog_warns():
+    found = set(codes(F.catalog(F.schema("main", comment="c", tags=_SCHEMA_TAGS))))
+    assert "VGI011" in found  # no objects anywhere
+    assert "VGI110" in found  # the lone schema is empty
+
+
 def test_settings_and_pragmas():
     cat = F.catalog(
         F.schema("main", comment="c", tags={"provider": "a", "domain": "b"}),

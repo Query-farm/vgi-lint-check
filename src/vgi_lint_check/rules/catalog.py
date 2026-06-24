@@ -52,6 +52,27 @@ def _looks_like_url_attempt(value: str) -> bool:
 
 
 @register
+class CatalogNotEmpty(Rule):
+    code = "VGI011"
+    name = "catalog-not-empty"
+    category = CAT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A catalog must expose at least one table, view, or function."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        if not cat.has_objects():
+            yield self.finding(
+                ctx,
+                cat.id,
+                "catalog exposes no tables, views, or functions",
+                "this worker advertises a catalog but contributes no objects — "
+                "expose its data/functions, or check the attach succeeded",
+            )
+
+
+@register
 class CatalogComment(Rule):
     code = "VGI001"
     name = "catalog-comment"

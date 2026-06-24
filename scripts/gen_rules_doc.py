@@ -29,6 +29,7 @@ CATEGORY_TITLES = {
     Category.PRAGMAS: "Pragmas (VGI7xx)",
     Category.CONSTRAINTS: "Constraints (VGI8xx)",
     Category.STRUCTURE: "Structure (VGI11x)",
+    Category.ATTACH_OPTIONS: "Attach options (VGI10xx)",
     Category.EXECUTION: "Execution (VGI9xx)",
 }
 

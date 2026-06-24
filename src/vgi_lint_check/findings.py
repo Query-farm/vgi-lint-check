@@ -51,6 +51,7 @@ class Category(StrEnum):
     EXAMPLES = "examples"
     SETTINGS = "settings"
     PRAGMAS = "pragmas"
+    ATTACH_OPTIONS = "attach_options"
     CONSTRAINTS = "constraints"
     STRUCTURE = "structure"
     EXECUTION = "execution"

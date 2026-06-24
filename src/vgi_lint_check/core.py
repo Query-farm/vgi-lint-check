@@ -46,7 +46,9 @@ def lint_worker(
     config = config or Config()
     con, vgi_version = connect_loaded(install=install, spatial=spatial)
     try:
-        discovery = _discover(con, location, catalog_name)
+        catalogs = discover_catalogs(con, location)
+        discovery = _choose(catalogs, location, catalog_name)
+        advertised = [c.catalog for c in catalogs] or [discovery.catalog]
         name = discovery.catalog
         local_alias = validate_alias(alias) if alias else derive_alias(name)
         versions = resolve_versions(
@@ -57,6 +59,7 @@ def lint_worker(
                 con,
                 location,
                 discovery,
+                advertised,
                 local_alias,
                 dv,
                 vgi_version,
@@ -80,13 +83,14 @@ def lint_worker(
     )
 
 
-def _discover(con: Any, location: str, catalog_name: str | None) -> CatalogDiscovery:
-    """Discover the target catalog's listing metadata via ``vgi_catalogs``.
+def _choose(
+    catalogs: list[CatalogDiscovery], location: str, catalog_name: str | None
+) -> CatalogDiscovery:
+    """Pick which advertised catalog to lint.
 
     When ``catalog_name`` is given, match it; otherwise take the first catalog.
     Falls back to a minimal record if discovery returns nothing.
     """
-    catalogs = discover_catalogs(con, location)
     if catalog_name is not None:
         for c in catalogs:
             if c.catalog == catalog_name:
@@ -101,6 +105,7 @@ def _lint_one_version(
     con: Any,
     location: str,
     discovery: CatalogDiscovery,
+    advertised: list[str],
     alias: str,
     data_version: str | None,
     vgi_version: str | None,
@@ -129,6 +134,8 @@ def _lint_one_version(
             releases=releases,
             setting_rows=diff.setting_rows,
             pragma_rows=diff.pragma_rows,
+            attach_options=discovery.attach_options,
+            advertised_catalogs=advertised,
         )
         rules = select_rules(config)
         needs_con = any(getattr(r, "requires_connection", False) for r in rules)
