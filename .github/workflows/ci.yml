@@ -35,6 +35,9 @@ jobs:
       - name: Run tests (offline; live worker tests are skipped)
         run: uv run pytest -q
 
+      - name: Check RULES.md is up to date
+        run: uv run python scripts/gen_rules_doc.py --check
+
   build:
     # Smoke-build the distribution so packaging breaks are caught on PRs too.
     runs-on: ubuntu-latest

@@ -54,7 +54,9 @@ settings, and pragmas. Rule families:
 | Pragmas | VGI7xx | pragma descriptions |
 | Execution | VGI9xx | example queries bind/execute (opt-in, `--execute`) |
 
-Run `vgi-lint rules` to list every rule, or `vgi-lint explain VGI112` for one.
+See **[RULES.md](RULES.md)** for the full per-rule reference (codes, default
+severities, and what each checks). Run `vgi-lint rules` to list them from your
+installed version, or `vgi-lint explain VGI112` for one.
 
 ## Data versions
 
