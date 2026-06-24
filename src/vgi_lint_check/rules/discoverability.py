@@ -427,8 +427,14 @@ class MinimumExamples(Rule):
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         minimum = ctx.config.options.min_example_queries
+        # Count every example the worker ships. Use iter_all_functions() (not
+        # iter_functions()) so table-function examples are included — a
+        # table-function-only worker (e.g. a model-registry worker) keeps all
+        # its examples on table-functions, which iter_functions() excludes
+        # (they're correlated to a table) and which need not materialize a
+        # table row to be counted.
         total = sum(len(t.examples) for t in ctx.catalog.iter_table_like())
-        total += sum(len(f.examples) for f in ctx.catalog.iter_functions())
+        total += sum(len(f.examples) for f in ctx.catalog.iter_all_functions())
         if total < minimum:
             yield self.finding(
                 ctx,

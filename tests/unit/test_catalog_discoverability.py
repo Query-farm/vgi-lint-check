@@ -65,6 +65,25 @@ def test_minimum_examples_flagged():
     assert "VGI151" in set(codes(cat))  # 1 < default min 3
 
 
+def test_minimum_examples_counts_table_functions():
+    # A table-function-only worker (e.g. a model-registry worker) keeps all its
+    # examples on table-functions: excluded from iter_functions() and with no
+    # materialized table rows. VGI151 must still count them (via
+    # iter_all_functions()), so a worker shipping >= min examples does not fire.
+    fns = [
+        F.func(
+            "main",
+            f"f{i}",
+            ftype="table",
+            description="A table function that ships an example",
+            examples=[F.example(0, "demo", f"SELECT * FROM v.main.f{i}()")],
+        )
+        for i in range(3)
+    ]
+    cat = F.catalog(F.schema("main", functions=fns))
+    assert "VGI151" not in set(codes(cat))  # 3 table-function examples >= min 3
+
+
 def test_release_freshness_rules():
     cat = F.catalog(
         F.schema("main"),
