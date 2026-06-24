@@ -153,7 +153,7 @@ def catalog(
     source_url="https://example.com",
     releases=(),
     attach_options=(),
-    advertised_catalogs=(),
+    advertised_catalogs=None,
 ):
     # Default catalog metadata satisfies the VGI0xx required rules so per-object
     # rule tests aren't polluted; pass comment=None / tags={} to test VGI00x.
@@ -178,5 +178,7 @@ def catalog(
         settings=list(settings),
         pragmas=list(pragmas),
         attach_options=list(attach_options),
-        advertised_catalogs=list(advertised_catalogs),
+        # A real worker always advertises >=1 catalog; default to one so VGI012
+        # doesn't pollute unrelated tests. Pass [] explicitly to test the gap.
+        advertised_catalogs=["v"] if advertised_catalogs is None else list(advertised_catalogs),
     )

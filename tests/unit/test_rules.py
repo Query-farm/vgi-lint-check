@@ -222,6 +222,44 @@ def test_empty_catalog_warns():
     assert "VGI110" in found  # the lone schema is empty
 
 
+def test_worker_catalog_count():
+    s = F.schema("main", comment="c", tags=_SCHEMA_TAGS, tables=[F.table("main", "t", comment="c")])
+    # no advertised catalogs -> flagged
+    assert "VGI012" in set(codes(F.catalog(s, advertised_catalogs=[])))
+    # within bounds -> clean
+    assert "VGI012" not in set(codes(F.catalog(s, advertised_catalogs=["a"])))
+    # over the cap -> flagged
+    many = [f"c{i}" for i in range(101)]
+    assert "VGI012" in set(codes(F.catalog(s, advertised_catalogs=many)))
+
+
+def test_excessive_counts_and_long_names():
+    long_tbl = "t_" + "x" * 80
+    long_fn = "fn_" + "y" * 80
+    tables = [F.table("main", f"t{i}", comment="c") for i in range(3)] + [
+        F.table("main", long_tbl, comment="c")
+    ]
+    funcs = [F.func("main", long_fn, description="d")]
+    s = F.schema("main", comment="c", tags=_SCHEMA_TAGS, tables=tables, functions=funcs)
+
+    # generous defaults: small catalog is not flagged for counts
+    base = set(codes(F.catalog(s, advertised_catalogs=["a"])))
+    assert "VGI134" not in base and "VGI135" not in base
+    # ...but the over-long names are
+    assert "VGI136" in base  # long table name
+    assert "VGI137" in base  # long function name
+
+    # lower the thresholds -> count rules fire
+    cfg = Config()
+    cfg.options = Options(max_tables=2, max_functions=0)  # functions disabled
+    found = {
+        f.code
+        for f in run(select_rules(cfg), RuleContext(F.catalog(s, advertised_catalogs=["a"]), cfg))
+    }
+    assert "VGI134" in found  # 4 tables > 2
+    assert "VGI135" not in found  # disabled (0)
+
+
 def test_settings_and_pragmas():
     cat = F.catalog(
         F.schema("main", comment="c", tags={"provider": "a", "domain": "b"}),

@@ -52,3 +52,104 @@ class SchemaObjectCount(Rule):
                         f"schema has {count} objects (> {limit})",
                         "split the schema into smaller, focused schemas",
                     )
+
+
+@register
+class ExcessiveTableCount(Rule):
+    code = "VGI134"
+    name = "excessive-table-count"
+    category = Category.STRUCTURE
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "Warn when a catalog defines more tables than options.max_tables."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        limit = ctx.config.options.max_tables
+        if not limit or limit <= 0:
+            return
+        count = sum(1 for _ in ctx.catalog.iter_tables())
+        if count > limit:
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"catalog defines {count} tables (> {limit})",
+                "this many tables is hard for agents to explore — group related "
+                "data, or raise options.max_tables if it is intentional",
+            )
+
+
+@register
+class ExcessiveFunctionCount(Rule):
+    code = "VGI135"
+    name = "excessive-function-count"
+    category = Category.STRUCTURE
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "Warn when a catalog defines more functions than options.max_functions."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        limit = ctx.config.options.max_functions
+        if not limit or limit <= 0:
+            return
+        count = sum(1 for _ in ctx.catalog.iter_all_functions())
+        if count > limit:
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"catalog defines {count} functions (> {limit})",
+                "this many functions is hard for agents to explore — consolidate "
+                "them, or raise options.max_functions if it is intentional",
+            )
+
+
+@register
+class LongTableName(Rule):
+    code = "VGI136"
+    name = "long-table-name"
+    category = Category.STRUCTURE
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = "Warn on table/view names longer than options.max_table_name_length."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        limit = ctx.config.options.max_table_name_length
+        if not limit or limit <= 0:
+            return
+        for t in ctx.catalog.iter_table_like():
+            n = len(t.name or "")
+            if n > limit:
+                yield self.finding(
+                    ctx,
+                    t.id,
+                    f"{t.kind} name is {n} characters (> {limit})",
+                    "use a shorter, memorable name so it is easy to type and read",
+                )
+
+
+@register
+class LongFunctionName(Rule):
+    code = "VGI137"
+    name = "long-function-name"
+    category = Category.STRUCTURE
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "Warn on function names longer than options.max_function_name_length."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        limit = ctx.config.options.max_function_name_length
+        if not limit or limit <= 0:
+            return
+        for f in ctx.catalog.iter_all_functions():
+            n = len(f.name or "")
+            if n > limit:
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    f"function name is {n} characters (> {limit})",
+                    "use a shorter, memorable name so it is easy to type and read",
+                )

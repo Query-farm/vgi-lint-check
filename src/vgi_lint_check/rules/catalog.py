@@ -73,6 +73,39 @@ class CatalogNotEmpty(Rule):
 
 
 @register
+class WorkerCatalogCount(Rule):
+    code = "VGI012"
+    name = "worker-catalog-count"
+    category = CAT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A worker should advertise at least one catalog and not an unbounded number."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        n = len(cat.advertised_catalogs)
+        if n == 0:
+            yield self.finding(
+                ctx,
+                cat.id,
+                "worker advertises no catalogs via vgi_catalogs()",
+                "a worker must expose at least one catalog — check the worker's "
+                "catalogs() RPC returns its catalog",
+            )
+            return
+        limit = ctx.config.options.max_catalogs
+        if limit and n > limit:
+            yield self.finding(
+                ctx,
+                cat.id,
+                f"worker advertises {n} catalogs (> {limit})",
+                "a worker exposing this many catalogs is usually a bug or a "
+                "listing that should be split; raise options.max_catalogs if "
+                "this is intentional",
+            )
+
+
+@register
 class CatalogComment(Rule):
     code = "VGI001"
     name = "catalog-comment"

@@ -33,6 +33,15 @@ class Options:
     min_description_chars: int = 12
     # Flag a schema with more than this many objects (0 = disabled).
     max_schema_objects: int = 0
+    # Flag a worker advertising more than this many catalogs (0 = disabled).
+    max_catalogs: int = 100
+    # Warn (never error) on a catalog with more than this many tables / functions
+    # (0 = disabled). Generous so only genuinely excessive catalogs are flagged.
+    max_tables: int = 500
+    max_functions: int = 500
+    # Warn on over-long table/function names (0 = disabled).
+    max_table_name_length: int = 64
+    max_function_name_length: int = 64
     # Required tags are opt-in: VGI401 only fires for keys you list here. There
     # is no universal tag every schema/table must carry.
     required_schema_tags: list[str] = field(default_factory=list)

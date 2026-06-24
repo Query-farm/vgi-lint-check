@@ -30,6 +30,7 @@ skipped unless `--execute` is passed.
 | `VGI009` | info | catalog-support | The catalog should advertise a support contact and support policy URL. |  |
 | `VGI010` | warning | support-links-valid | A URL in the support contact / policy must be a valid http(s) URL. |  |
 | `VGI011` | warning | catalog-not-empty | A catalog must expose at least one table, view, or function. |  |
+| `VGI012` | warning | worker-catalog-count | A worker should advertise at least one catalog and not an unbounded number. |  |
 
 ## Discoverability (VGI12x)
 
@@ -138,12 +139,16 @@ skipped unless `--execute` is passed.
 | `VGI805` | warning | no-primary-keys | A worker with constraints but no primary keys likely forgot them. |  |
 | `VGI806` | warning | no-constraints | A worker that declares no constraints at all is likely incomplete. |  |
 
-## Structure (VGI11x)
+## Structure & size limits (VGI11x/13x)
 
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
 | `VGI110` | warning | schema-not-empty | A schema should contain at least one table, view, or function. |  |
 | `VGI117` | off | schema-object-count | Flag a schema with more objects than options.max_schema_objects. | opt-in |
+| `VGI134` | warning | excessive-table-count | Warn when a catalog defines more tables than options.max_tables. |  |
+| `VGI135` | warning | excessive-function-count | Warn when a catalog defines more functions than options.max_functions. |  |
+| `VGI136` | warning | long-table-name | Warn on table/view names longer than options.max_table_name_length. |  |
+| `VGI137` | warning | long-function-name | Warn on function names longer than options.max_function_name_length. |  |
 
 ## Attach options (VGI10xx)
 
@@ -162,4 +167,4 @@ skipped unless `--execute` is passed.
 | `VGI904` | error | attach-options-accepted | Advertised attach options must actually be accepted at ATTACH time. | requires `--execute` |
 | `VGI905` | error | advertised-catalogs-attachable | Every catalog vgi_catalogs() advertises must be attachable. | requires `--execute` |
 
-_77 rules._
+_82 rules._

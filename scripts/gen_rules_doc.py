@@ -28,7 +28,7 @@ CATEGORY_TITLES = {
     Category.SETTINGS: "Settings (VGI6xx)",
     Category.PRAGMAS: "Pragmas (VGI7xx)",
     Category.CONSTRAINTS: "Constraints (VGI8xx)",
-    Category.STRUCTURE: "Structure (VGI11x)",
+    Category.STRUCTURE: "Structure & size limits (VGI11x/13x)",
     Category.ATTACH_OPTIONS: "Attach options (VGI10xx)",
     Category.EXECUTION: "Execution (VGI9xx)",
 }

@@ -57,7 +57,7 @@ families:
 
 | Family | Codes | Examples |
 | --- | --- | --- |
-| Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty** |
+| Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty**, worker advertises 1–N catalogs |
 | Descriptions | VGI1xx | schema/table/view comment, `vgi.description_llm`, `vgi.description_md` |
 | Discoverability | VGI12x | duplicate/short/echoed descriptions, join-path docs, release freshness, example richness, units (opt-in) |
 | Content | VGI17x | `vgi.description_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
@@ -69,7 +69,7 @@ families:
 | Pragmas | VGI7xx | pragma descriptions |
 | Constraints | VGI8xx | FK/PK/check validity — references must point at real tables & columns; completeness nudges (no constraints / no PKs / no NOT NULL anywhere) |
 | Attach options | VGI10xx | every `vgi_catalogs()` attach option is documented (description present + meaningful) |
-| Structure | VGI11x | **schema not empty**; schema object-count cap (opt-in) |
+| Structure | VGI11x/13x | **schema not empty**; warn on excessive table/function counts and over-long table/function names; schema object-count cap (opt-in) |
 | Execution | VGI9xx | example queries & CHECK constraints bind/execute; advertised attach options are accepted and advertised catalogs attach (opt-in, `--execute`); per-query timeout so nothing runs forever |
 
 See **[RULES.md](RULES.md)** for the full per-rule reference (codes, default
