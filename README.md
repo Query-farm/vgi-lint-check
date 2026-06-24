@@ -74,6 +74,28 @@ See **[RULES.md](RULES.md)** for the full per-rule reference (codes, default
 severities, and what each checks). Run `vgi-lint rules` to list them from your
 installed version, or `vgi-lint explain VGI112` for one.
 
+## Reserved tags
+
+VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
+(set them on the catalog, a schema, a table/view, or — where noted — a function):
+
+| Tag | Purpose |
+| --- | --- |
+| `vgi.description_llm` | Concise description aimed at LLMs/agents (tool selection) |
+| `vgi.description_md` | Markdown description for human docs / listing pages |
+| `vgi.example_queries` | JSON list of `{"description","sql"}` example queries |
+| `vgi.title` | Human/marketing display name (vs. the machine name) |
+| `vgi.keywords` | Comma-separated search keywords / synonyms |
+| `vgi.source_url` | Link to where the object is implemented (repo/file) |
+| `vgi.author` | Author / maintainer attribution (catalog) |
+| `vgi.copyright` | Copyright notice (catalog) |
+| `vgi.license` | License name or SPDX identifier (catalog) |
+
+Catalog descriptions (`vgi.description_llm`/`_md`) and `source_url` are
+**required** (the catalog is the worker's listing). Titles, keywords, and
+per-object source links are **opt-in** to *require* but **validated when set**;
+author/copyright/license are encouraged (info). Tune any of this via config.
+
 ## Data versions
 
 A VGI worker can publish multiple data versions whose metadata differs. The tool

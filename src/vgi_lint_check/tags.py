@@ -44,6 +44,13 @@ def to_tagset(raw: Any) -> TagSet:
     return TagSet(out)
 
 
+def parse_keywords(value: str | None) -> list[str]:
+    """Split a ``vgi.keywords`` value (comma-separated) into trimmed keywords."""
+    if not value:
+        return []
+    return [kw.strip() for kw in str(value).split(",") if kw.strip()]
+
+
 def decode_example_queries(tags: TagSet) -> tuple[list[ExampleQuery], str | None]:
     """Decode the ``vgi.example_queries`` tag into (examples, parse_error).
 

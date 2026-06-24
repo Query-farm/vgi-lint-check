@@ -75,6 +75,49 @@ def test_release_freshness_rules():
     assert "VGI141" in found  # no summary/notes_url
 
 
+def test_title_keywords_present_opt_in_and_quality():
+    # presence rules (VGI124 title, VGI126 keywords) are off by default
+    t = F.table("main", "t", comment="A table for testing title/keyword conventions")
+    cat = F.catalog(F.schema("main", tables=[t]))
+    base = set(codes(cat))
+    assert "VGI124" not in base and "VGI126" not in base
+
+    # quality rules fire when the tags ARE set badly
+    bad = F.table(
+        "main",
+        "metrics",
+        comment="A metrics table for testing tag quality checks",
+        tags={"vgi.title": "metrics", "vgi.keywords": "a, a, b"},  # echo + duplicate
+    )
+    cat2 = F.catalog(F.schema("main", tables=[bad]))
+    found = set(codes(cat2))
+    assert "VGI125" in found  # title echoes the name
+    assert "VGI127" in found  # duplicate keywords
+
+
+def test_source_url_present_opt_in_and_valid():
+    bad = F.table(
+        "main",
+        "t",
+        comment="A table whose source link is not a real URL here",
+        tags={"vgi.source_url": "see the repo"},  # not http(s)
+    )
+    cat = F.catalog(F.schema("main", tables=[bad]))
+    found = set(codes(cat))
+    assert "VGI128" not in found  # presence is opt-in
+    assert "VGI129" in found  # invalid URL flagged when present
+
+
+def test_catalog_attribution_required_tags():
+    # F.catalog defaults supply author/copyright/license -> no finding
+    assert "VGI160" not in set(codes(F.catalog(F.schema("main"))))
+    bare = F.catalog(
+        F.schema("main"),
+        tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
+    )
+    assert "VGI160" in set(codes(bare))
+
+
 def test_classifying_tag_and_units_are_opt_in():
     untagged = F.table(
         "main",

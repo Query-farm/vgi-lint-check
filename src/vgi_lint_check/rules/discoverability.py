@@ -14,12 +14,36 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..findings import Category, Finding, Severity
-from ..model import ObjectId, ObjectKind
+from ..model import (
+    TAG_AUTHOR,
+    TAG_COPYRIGHT,
+    TAG_KEYWORDS,
+    TAG_LICENSE,
+    TAG_SOURCE_URL,
+    TAG_TITLE,
+    ObjectId,
+    ObjectKind,
+    TagSet,
+)
+from ..tags import parse_keywords
 from ._util import blank, is_trivial_echo
 from .base import Rule, RuleContext
 from .registry import register
 
 DISC = Category.DISCOVERABILITY
+
+
+# Object kinds that can carry a title/keywords tag, with (id, tags, name).
+def _taggable(ctx: RuleContext) -> Iterator[tuple[ObjectId, TagSet, str]]:
+    cat = ctx.catalog
+    yield cat.id, cat.tags, cat.qualifier
+    for s in cat.iter_schemas():
+        yield s.id, s.tags, s.name
+    for t in cat.iter_table_like():
+        yield t.id, t.tags, t.name
+    for f in cat.iter_functions():
+        yield f.id, f.tags, f.name
+
 
 # Tokens that suggest a column comment states a unit/definition.
 _UNIT_HINT = re.compile(
@@ -37,6 +61,10 @@ _TRIVIAL_SELECT = re.compile(r"^\s*SELECT\s+\*\s+FROM\b", re.IGNORECASE)
 
 def _norm(text: str) -> str:
     return " ".join(text.split()).strip().lower()
+
+
+def _looks_like_url(value: str) -> bool:
+    return value.strip().lower().startswith(("http://", "https://"))
 
 
 @register
@@ -224,6 +252,167 @@ class ExamplesNotTrivial(Rule):
                     t.id,
                     "all example queries are trivial `SELECT *`",
                     "add an example that filters/aggregates/joins to show real value",
+                )
+
+
+@register
+class TitlePresent(Rule):
+    code = "VGI124"
+    name = "title-present"
+    category = DISC
+    default_severity = Severity.OFF  # opt-in: not every worker uses display titles
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = "Objects should carry a 'vgi.title' display name (human/marketing)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags, _name in _taggable(ctx):
+            if not tags.has(TAG_TITLE):
+                yield self.finding(
+                    ctx,
+                    oid,
+                    "no 'vgi.title' display name",
+                    "add a 'vgi.title' tag — a human-friendly name for listings/UIs",
+                )
+
+
+@register
+class TitleQuality(Rule):
+    code = "VGI125"
+    name = "title-quality"
+    category = DISC
+    default_severity = Severity.INFO
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = "A 'vgi.title', when set, should differ from the machine name."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags, name in _taggable(ctx):
+            title = tags.get(TAG_TITLE)
+            if not blank(title) and is_trivial_echo(title, name):
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"'vgi.title' just restates the machine name ({name!r})",
+                    "use a human-friendly display title, not the identifier",
+                )
+
+
+@register
+class KeywordsPresent(Rule):
+    code = "VGI126"
+    name = "keywords-present"
+    category = DISC
+    default_severity = Severity.OFF  # opt-in
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = "Objects should carry 'vgi.keywords' (search terms / synonyms)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags, _name in _taggable(ctx):
+            if not tags.has(TAG_KEYWORDS):
+                yield self.finding(
+                    ctx,
+                    oid,
+                    "no 'vgi.keywords' search terms",
+                    "add a 'vgi.keywords' tag: comma-separated search terms/synonyms",
+                )
+
+
+@register
+class KeywordsWellFormed(Rule):
+    code = "VGI127"
+    name = "keywords-well-formed"
+    category = DISC
+    default_severity = Severity.INFO
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = "'vgi.keywords', when set, should be non-empty with no duplicates."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags, _name in _taggable(ctx):
+            if not tags.has(TAG_KEYWORDS):
+                continue
+            kws = parse_keywords(tags.get(TAG_KEYWORDS))
+            lowered = [k.lower() for k in kws]
+            if not kws:
+                yield self.finding(
+                    ctx,
+                    oid,
+                    "'vgi.keywords' has no usable keywords",
+                    "provide comma-separated keywords, e.g. 'seismic, tremor, magnitude'",
+                )
+            elif len(set(lowered)) != len(lowered):
+                yield self.finding(
+                    ctx,
+                    oid,
+                    "'vgi.keywords' contains duplicate keywords",
+                    "remove duplicate keywords",
+                )
+
+
+@register
+class SourceUrlPresent(Rule):
+    code = "VGI128"
+    name = "source-url-present"
+    category = DISC
+    default_severity = Severity.OFF  # opt-in
+    targets = (ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = "Objects should link to their implementation via 'vgi.source_url'."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags, _name in _taggable(ctx):
+            if oid.kind is ObjectKind.CATALOG:
+                continue  # catalog provenance is covered by VGI004 (source_url)
+            if not tags.has(TAG_SOURCE_URL):
+                yield self.finding(
+                    ctx,
+                    oid,
+                    "no 'vgi.source_url' implementation link",
+                    "add a 'vgi.source_url' tag linking to the repo/file that "
+                    "implements this object",
+                )
+
+
+@register
+class SourceUrlValid(Rule):
+    code = "VGI129"
+    name = "source-url-valid"
+    category = DISC
+    default_severity = Severity.INFO
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = "'vgi.source_url', when set, should be an http(s) URL."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags, _name in _taggable(ctx):
+            url = tags.get(TAG_SOURCE_URL)
+            if not blank(url) and not _looks_like_url(url or ""):
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"'vgi.source_url' is not an http(s) URL: {url!r}",
+                    "use an absolute http(s) link to the source",
+                )
+
+
+@register
+class CatalogAttribution(Rule):
+    code = "VGI160"
+    name = "catalog-attribution"
+    category = DISC
+    default_severity = Severity.INFO
+    targets = (ObjectKind.CATALOG,)
+    summary = "The catalog should declare author, copyright, and license tags."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        tags = ctx.catalog.tags
+        for key, what in (
+            (TAG_AUTHOR, "author/maintainer ('vgi.author')"),
+            (TAG_COPYRIGHT, "copyright notice ('vgi.copyright')"),
+            (TAG_LICENSE, "license ('vgi.license')"),
+        ):
+            if not tags.has(key):
+                yield self.finding(
+                    ctx,
+                    ctx.catalog.id,
+                    f"catalog has no {what}",
+                    f"add a '{key}' tag so consumers know provenance and terms of use",
                 )
 
 

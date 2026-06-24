@@ -12,11 +12,29 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-# Reserved tag keys VGI workers use as documentation channels.
+# Reserved tag keys VGI workers use as documentation/discovery channels.
 TAG_DESCRIPTION_LLM = "vgi.description_llm"
 TAG_DESCRIPTION_MD = "vgi.description_md"
 TAG_EXAMPLE_QUERIES = "vgi.example_queries"
-RESERVED_TAG_KEYS = frozenset({TAG_DESCRIPTION_LLM, TAG_DESCRIPTION_MD, TAG_EXAMPLE_QUERIES})
+TAG_TITLE = "vgi.title"  # human/marketing display name (vs the machine name)
+TAG_KEYWORDS = "vgi.keywords"  # comma-separated search keywords / synonyms
+TAG_SOURCE_URL = "vgi.source_url"  # link to where this object is implemented (repo/file)
+TAG_AUTHOR = "vgi.author"  # author / maintainer attribution
+TAG_COPYRIGHT = "vgi.copyright"  # copyright notice
+TAG_LICENSE = "vgi.license"  # license name or SPDX identifier
+RESERVED_TAG_KEYS = frozenset(
+    {
+        TAG_DESCRIPTION_LLM,
+        TAG_DESCRIPTION_MD,
+        TAG_EXAMPLE_QUERIES,
+        TAG_TITLE,
+        TAG_KEYWORDS,
+        TAG_SOURCE_URL,
+        TAG_AUTHOR,
+        TAG_COPYRIGHT,
+        TAG_LICENSE,
+    }
+)
 
 
 class ObjectKind(StrEnum):

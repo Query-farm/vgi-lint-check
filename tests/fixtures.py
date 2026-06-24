@@ -139,6 +139,9 @@ def catalog(
         tags = {
             "vgi.description_llm": "A test catalog used by the unit tests, etc. " * 2,
             "vgi.description_md": "## Test catalog\nUsed by the unit tests. " * 3,
+            "vgi.author": "Test Author",
+            "vgi.copyright": "(c) 2026 Test",
+            "vgi.license": "MIT",
         }
     return Catalog(
         database="v",

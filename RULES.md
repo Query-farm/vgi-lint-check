@@ -32,11 +32,18 @@ skipped unless `--execute` is passed.
 | `VGI121` | info | description-too-short | A description should be substantive enough to index and read well. |  |
 | `VGI122` | info | description-echoes-name | A description that just restates the name adds no searchable signal. |  |
 | `VGI123` | off | classifying-tag-present | Objects should carry a classifying tag (domain/category/...) for faceting. | opt-in |
+| `VGI124` | off | title-present | Objects should carry a 'vgi.title' display name (human/marketing). | opt-in |
+| `VGI125` | info | title-quality | A 'vgi.title', when set, should differ from the machine name. |  |
+| `VGI126` | off | keywords-present | Objects should carry 'vgi.keywords' (search terms / synonyms). | opt-in |
+| `VGI127` | info | keywords-well-formed | 'vgi.keywords', when set, should be non-empty with no duplicates. |  |
+| `VGI128` | off | source-url-present | Objects should link to their implementation via 'vgi.source_url'. | opt-in |
+| `VGI129` | info | source-url-valid | 'vgi.source_url', when set, should be an http(s) URL. |  |
 | `VGI131` | off | column-units | Numeric column comments should state units/definition where relevant. | opt-in |
 | `VGI140` | info | release-dated | Published data-version releases should carry a release date (freshness). |  |
 | `VGI141` | info | release-documented | Releases should have a summary or notes_url ('what's new'). |  |
 | `VGI150` | info | examples-not-trivial | Example queries should demonstrate value, not only `SELECT * FROM x`. |  |
 | `VGI151` | info | minimum-examples | A worker should ship a minimum number of example queries overall. |  |
+| `VGI160` | info | catalog-attribution | The catalog should declare author, copyright, and license tags. |  |
 
 ## Descriptions (VGI1xx)
 
@@ -122,4 +129,4 @@ skipped unless `--execute` is passed.
 | `VGI901` | error | example-queries-execute | Every example query should bind/execute against the worker. | requires `--execute` |
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
 
-_47 rules._
+_54 rules._
