@@ -89,6 +89,7 @@ skipped unless `--execute` is passed.
 | `VGI304` | info | function-description-quality | A function description should be substantive, not a stub or echo. |  |
 | `VGI305` | warning | function-arguments-named | All function/macro arguments should be named, not positional. |  |
 | `VGI306` | warning | function-example | Scalar/aggregate functions should ship an example query. |  |
+| `VGI307` | warning | table-function-columns-documented | A table function with a dynamic schema (no backing table) must document its returned columns in a 'vgi.columns_md' tag. |  |
 
 ## Tags (VGI4xx)
 
@@ -148,4 +149,4 @@ skipped unless `--execute` is passed.
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
 | `VGI903` | error | view-executes | Every defined view must actually execute against the worker. | requires `--execute` |
 
-_68 rules._
+_69 rules._

@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterator
 
 from ..findings import Category, Finding, Severity
-from ..model import ObjectKind
+from ..model import TAG_COLUMNS_MD, ObjectKind
 from ._util import blank, is_trivial_echo
 from .base import Rule, RuleContext
 from .registry import register
@@ -142,6 +142,38 @@ class FunctionExample(Rule):
                     f.id,
                     f"{f.function_type} function has no example query",
                     "add a 'vgi.example_queries' tag showing the function in use",
+                )
+
+
+@register
+class TableFunctionColumnsDocumented(Rule):
+    code = "VGI307"
+    name = "table-function-columns-documented"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE_FUNCTION,)
+    summary = (
+        "A table function with a dynamic schema (no backing table) must document "
+        "its returned columns in a 'vgi.columns_md' tag."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        for f in cat.iter_all_functions():
+            if f.kind is not ObjectKind.TABLE_FUNCTION:
+                continue
+            # A table function backed by a static table already has its columns
+            # documented via that table's column comments.
+            if cat.find_table_like(f.name, f.schema):
+                continue
+            if not f.tags.has(TAG_COLUMNS_MD):
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    f"table function has no documented return columns ('{TAG_COLUMNS_MD}')",
+                    "DuckDB can't expose a dynamic table-function schema — add a "
+                    "'vgi.columns_md' tag with a Markdown table of the returned "
+                    "columns (note any columns that vary by argument)",
                 )
 
 

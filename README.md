@@ -93,6 +93,7 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | `vgi.example_queries` | JSON list of `{"description","sql"}` example queries |
 | `vgi.title` | Human/marketing display name (vs. the machine name) |
 | `vgi.keywords` | Comma-separated search keywords / synonyms |
+| `vgi.columns_md` | Markdown doc of a table function's returned columns (for dynamic schemas DuckDB can't expose) |
 | `vgi.source_url` | Link to where the object is implemented (repo/file) |
 | `vgi.author` | Author / maintainer attribution (catalog) |
 | `vgi.copyright` | Copyright notice (catalog) |

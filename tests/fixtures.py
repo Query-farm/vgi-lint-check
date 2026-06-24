@@ -81,7 +81,15 @@ def view(schema, name, *, comment=None, tags=None, columns=(), examples=()):
 
 
 def func(
-    schema, name, ftype="scalar", *, description=None, comment=None, parameters=(), examples=()
+    schema,
+    name,
+    ftype="scalar",
+    *,
+    description=None,
+    comment=None,
+    parameters=(),
+    examples=(),
+    tags=None,
 ):
     return Function(
         id=ObjectId("v", ObjectKind.SCALAR_FUNCTION, schema=schema, name=name),
@@ -90,6 +98,7 @@ def func(
         function_type=ftype,
         description=description,
         comment=comment,
+        tags=TagSet(dict(tags or {})),
         parameters=list(parameters),
         examples=list(examples),
     )

@@ -18,6 +18,7 @@ TAG_DESCRIPTION_MD = "vgi.description_md"
 TAG_EXAMPLE_QUERIES = "vgi.example_queries"
 TAG_TITLE = "vgi.title"  # human/marketing display name (vs the machine name)
 TAG_KEYWORDS = "vgi.keywords"  # comma-separated search keywords / synonyms
+TAG_COLUMNS_MD = "vgi.columns_md"  # Markdown doc of a table function's returned columns
 TAG_SOURCE_URL = "vgi.source_url"  # link to where this object is implemented (repo/file)
 TAG_AUTHOR = "vgi.author"  # author / maintainer attribution
 TAG_COPYRIGHT = "vgi.copyright"  # copyright notice
@@ -29,6 +30,7 @@ RESERVED_TAG_KEYS = frozenset(
         TAG_EXAMPLE_QUERIES,
         TAG_TITLE,
         TAG_KEYWORDS,
+        TAG_COLUMNS_MD,
         TAG_SOURCE_URL,
         TAG_AUTHOR,
         TAG_COPYRIGHT,

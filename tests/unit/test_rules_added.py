@@ -115,6 +115,30 @@ def test_pk_missing_column_flagged():
     assert "VGI802" in set(codes(F.catalog(s)))
 
 
+def test_table_function_columns_documented():
+    # un-backed dynamic table function (no table of the same name) -> flagged
+    tf = F.func("main", "read_thing", ftype="table", description="reads things dynamically")
+    s = F.schema("main", comment="c", functions=[tf])
+    assert "VGI307" in set(codes(F.catalog(s)))
+
+    # documenting columns in vgi.columns_md clears it
+    tf2 = F.func(
+        "main",
+        "read_thing",
+        ftype="table",
+        description="reads things dynamically",
+        tags={"vgi.columns_md": "| col | type |\n| --- | --- |\n| id | INT |"},
+    )
+    assert "VGI307" not in set(codes(F.catalog(F.schema("main", comment="c", functions=[tf2]))))
+
+    # a table function backed by a same-named table is covered by the table's
+    # column comments -> not flagged
+    backed = F.func("main", "animals", ftype="table", description="scan animals")
+    tbl = F.table("main", "animals", comment="Animals table for testing backed table funcs")
+    s3 = F.schema("main", comment="c", tables=[tbl], functions=[backed])
+    assert "VGI307" not in set(codes(F.catalog(s3)))
+
+
 def test_view_executes_rule_flags_broken_view():
     from vgi_lint_check.rules.execution import ViewExecutes
 

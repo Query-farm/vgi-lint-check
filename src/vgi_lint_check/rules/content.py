@@ -10,6 +10,7 @@ from markdown_it import MarkdownIt
 from ..findings import Category, Finding, Severity
 from ..linkcheck import is_broken
 from ..model import (
+    TAG_COLUMNS_MD,
     TAG_DESCRIPTION_LLM,
     TAG_DESCRIPTION_MD,
     TAG_SOURCE_URL,
@@ -52,9 +53,9 @@ def _iter_md(ctx: RuleContext) -> Iterator[tuple[ObjectId, str]]:
         if not blank(md):
             yield t.id, md or ""
     for f in ctx.catalog.iter_all_functions():
-        md = f.tags.get(TAG_DESCRIPTION_MD)
-        if not blank(md):
-            yield f.id, md or ""
+        for md in (f.tags.get(TAG_DESCRIPTION_MD), f.tags.get(TAG_COLUMNS_MD)):
+            if not blank(md):
+                yield f.id, md or ""
 
 
 @register
@@ -108,6 +109,10 @@ def _iter_urls(ctx: RuleContext) -> Iterator[tuple[ObjectId, str, str]]:
         for kind, url in _md_targets(md or ""):
             if url.startswith(("http://", "https://")):
                 yield oid, url, f"vgi.description_md {kind}"
+    for f in cat.iter_all_functions():
+        for kind, url in _md_targets(f.tags.get(TAG_COLUMNS_MD) or ""):
+            if url.startswith(("http://", "https://")):
+                yield f.id, url, f"vgi.columns_md {kind}"
 
 
 def _described(
