@@ -1,7 +1,17 @@
 from tests import fixtures as F
 from vgi_lint_check.config import Config, Options
+from vgi_lint_check.findings import Severity
 from vgi_lint_check.rules import run, select_rules
 from vgi_lint_check.rules.base import RuleContext
+
+# A schema that satisfies the required schema-description rules (VGI101/116/118)
+# so per-object tests aren't polluted; pass explicit tags to omit.
+_SCHEMA_TAGS = {
+    "provider": "acme",
+    "domain": "zoo",
+    "vgi.description_llm": "Zoo domain: animals, attributes, and sounds for LLM use.",
+    "vgi.description_md": "## Zoo\nAnimals, attributes, and sounds — full reference.",
+}
 
 
 def lint(cat, **cfg_kwargs):
@@ -39,7 +49,7 @@ def test_clean_table_no_findings():
     s = F.schema(
         "main",
         comment="Zoo data about animals and their attributes",
-        tags={"provider": "acme", "domain": "zoo"},
+        tags=_SCHEMA_TAGS,
         tables=[t],
     )
     # VGI151 (catalog-wide minimum example count) is marketing, not per-object.
@@ -47,13 +57,19 @@ def test_clean_table_no_findings():
     assert found == [] or set(found) <= set()  # nothing flagged
 
 
-def test_missing_llm_and_md_and_comment():
-    t = F.table("main", "bare")
+def test_schema_descriptions_required_table_optional():
+    t = F.table("main", "bare")  # no comment, no llm/md
     s = F.schema("main", comment="x", tags={"provider": "a", "domain": "b"}, tables=[t])
     found = set(codes(F.catalog(s)))
-    assert "VGI111" in found  # table comment
-    assert "VGI112" in found  # llm
-    assert "VGI113" in found  # md
+    assert "VGI111" in found  # table comment still required
+    assert "VGI116" in found  # schema llm required
+    assert "VGI118" in found  # schema md required
+    # llm/md are optional (off) for tables
+    assert "VGI112" not in found
+    assert "VGI113" not in found
+    # ...but flagged when opted in
+    on = set(codes(F.catalog(s), severity_overrides={"VGI112": Severity.WARNING}))
+    assert "VGI112" in on
 
 
 def test_column_coverage_threshold():
@@ -152,12 +168,12 @@ def test_settings_and_pragmas():
 
 
 def test_per_object_ignore_suppresses():
-    t = F.table("hans", "x")
+    t = F.table("hans", "x")  # no comment -> VGI111
     s = F.schema("hans", comment="c", tags={"provider": "a", "domain": "b"}, tables=[t])
     base = set(codes(F.catalog(s)))
-    assert "VGI112" in base
-    suppressed = set(codes(F.catalog(s), per_object={"v.hans.x": ["VGI112"]}))
-    assert "VGI112" not in suppressed
+    assert "VGI111" in base
+    suppressed = set(codes(F.catalog(s), per_object={"v.hans.x": ["VGI111"]}))
+    assert "VGI111" not in suppressed
 
 
 def test_findings_sorted_deterministically():

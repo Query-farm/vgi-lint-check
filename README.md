@@ -91,10 +91,13 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | `vgi.copyright` | Copyright notice (catalog) |
 | `vgi.license` | License name or SPDX identifier (catalog) |
 
-Catalog descriptions (`vgi.description_llm`/`_md`) and `source_url` are
-**required** (the catalog is the worker's listing). Titles, keywords, and
-per-object source links are **opt-in** to *require* but **validated when set**;
-author/copyright/license are encouraged (info). Tune any of this via config.
+`vgi.description_llm`/`_md` are **required on the catalog and every schema**
+(the catalog is the worker's listing; schemas are its sections). They're
+**optional on tables, views, and functions** (opt-in to require, but validated
+when set — e.g. minimum length, must differ). The catalog `source_url` is
+required; titles, keywords, and per-object source links are opt-in but validated
+when set; author/copyright/license are encouraged (info). Tune any of this via
+config.
 
 ## Data versions
 

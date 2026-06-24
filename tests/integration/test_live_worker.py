@@ -36,8 +36,8 @@ def test_lint_volcanos_end_to_end():
     assert report.alias == "volcanos"
     r = report.results[0]
     assert r.catalog.schemas, "expected schemas"
-    # volcanos uses plain comments + example_queries, no llm/md tags -> VGI112 fires
-    assert any(f.code == "VGI112" for f in r.findings)
+    # volcanos schemas have no llm/md tags -> the required schema rule fires
+    assert any(f.code == "VGI116" for f in r.findings)
     assert 0 <= r.score <= 100
 
 

@@ -55,8 +55,9 @@ def test_full_pipeline_offline():
     cfg = Config()
     findings = run(select_rules(cfg), RuleContext(cat, cfg))
     codes = {f.code for f in findings}
-    # volcanos lacks llm/md tags and qualifies no examples -> these fire
-    assert "VGI112" in codes
+    # volcanos schemas lack llm/md tags (required) and examples aren't
+    # catalog-qualified -> these fire
+    assert "VGI116" in codes  # schema description_llm required
     assert "VGI505" in codes
     # its constraints are all valid -> no constraint false positives
     assert not any(c.startswith("VGI8") for c in codes)
