@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Query-farm/vgi-lint-check/main/assets/vgi-logo.png" alt="Vector Gateway Interface" width="320">
+</p>
+
 # vgi-lint
 
 A `pydoclint`-style **metadata-quality linter for VGI workers**. It attaches to an
