@@ -52,7 +52,7 @@ skipped unless `--execute` is passed.
 | `VGI101` | warning | schema-comment | Every schema should have a comment describing the domain it covers. |  |
 | `VGI111` | warning | table-comment | Every table should have a one-line comment describing its rows. |  |
 | `VGI112` | warning | description-llm | Tables/views should carry a 'vgi.description_llm' tag for LLM consumers. |  |
-| `VGI113` | info | description-md | Tables/views should carry a 'vgi.description_md' tag for docs. |  |
+| `VGI113` | warning | description-md | Tables/views should carry a 'vgi.description_md' tag for docs. |  |
 | `VGI114` | info | description-md-distinct | The Markdown description should be richer than the LLM one. |  |
 | `VGI115` | warning | view-comment | Every view should have a comment describing what it returns. |  |
 
@@ -70,10 +70,10 @@ skipped unless `--execute` is passed.
 | --- | --- | --- | --- | --- |
 | `VGI301` | warning | function-description | Functions/macros without parameters still need a description. |  |
 | `VGI302` | warning | function-parameters-undocumented | A function that takes parameters must describe what it does. |  |
-| `VGI303` | info | macro-example | Macros should ship at least one example query showing usage. |  |
+| `VGI303` | warning | macro-example | Macros should ship at least one example query showing usage. |  |
 | `VGI304` | info | function-description-quality | A function description should be substantive, not a stub or echo. |  |
 | `VGI305` | warning | function-arguments-named | All function/macro arguments should be named, not positional. |  |
-| `VGI306` | info | function-example | Scalar/aggregate functions should ship an example query. |  |
+| `VGI306` | warning | function-example | Scalar/aggregate functions should ship an example query. |  |
 
 ## Tags (VGI4xx)
 
@@ -128,5 +128,6 @@ skipped unless `--execute` is passed.
 | --- | --- | --- | --- | --- |
 | `VGI901` | error | example-queries-execute | Every example query should bind/execute against the worker. | requires `--execute` |
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
+| `VGI903` | error | view-executes | Every defined view must actually execute against the worker. | requires `--execute` |
 
-_54 rules._
+_55 rules._

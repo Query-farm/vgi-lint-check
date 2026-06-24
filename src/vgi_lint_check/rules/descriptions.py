@@ -108,7 +108,7 @@ class MarkdownDescription(Rule):
     code = "VGI113"
     name = "description-md"
     category = DESC
-    default_severity = Severity.INFO
+    default_severity = Severity.WARNING
     targets = (ObjectKind.TABLE, ObjectKind.VIEW)
     summary = "Tables/views should carry a 'vgi.description_md' tag for docs."
 

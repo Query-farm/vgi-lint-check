@@ -96,3 +96,31 @@ class ExampleQueriesReturnRows(Rule):
                         f"example #{ex.index} returned no rows",
                         "use an example that returns data so consumers see output",
                     )
+
+
+@register
+class ViewExecutes(Rule):
+    code = "VGI903"
+    name = "view-executes"
+    category = EXEC
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.VIEW,)
+    requires_connection = True
+    summary = "Every defined view must actually execute against the worker."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        con = ctx.connection
+        if con is None:
+            return
+        qualifier = ctx.catalog.qualifier
+        for view in ctx.catalog.iter_views():
+            relation = f'"{qualifier}"."{view.schema}"."{view.name}"'
+            try:
+                con.execute(f"EXPLAIN SELECT * FROM {relation}")
+            except Exception as e:  # noqa: BLE001 - surface engine error
+                yield self.finding(
+                    ctx,
+                    view.id,
+                    f"view does not execute: {type(e).__name__}: {e}",
+                    "fix the view definition so it binds and runs against the worker",
+                )

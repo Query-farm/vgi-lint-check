@@ -115,6 +115,31 @@ def test_pk_missing_column_flagged():
     assert "VGI802" in set(codes(F.catalog(s)))
 
 
+def test_view_executes_rule_flags_broken_view():
+    from vgi_lint_check.rules.execution import ViewExecutes
+
+    v = F.view("main", "broken_view", comment="A view that fails to bind/execute")
+    s = F.schema("main", comment="c", views=[v])
+
+    class BadCon:
+        def execute(self, sql):
+            raise RuntimeError("Binder Error: referenced column missing")
+
+    cfg = Config(execute=True)
+    ctx = RuleContext(F.catalog(s), cfg, connection=BadCon())
+    ctx.severity = Severity.ERROR
+    out = list(ViewExecutes().check(ctx))
+    assert out and out[0].code == "VGI903"
+
+    class OkCon:
+        def execute(self, sql):
+            return self
+
+    ctx2 = RuleContext(F.catalog(s), cfg, connection=OkCon())
+    ctx2.severity = Severity.ERROR
+    assert list(ViewExecutes().check(ctx2)) == []
+
+
 def test_check_binds_rule_uses_connection():
     from vgi_lint_check.rules.constraints import CheckConstraintBinds
 

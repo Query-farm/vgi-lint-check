@@ -130,7 +130,7 @@ class FunctionExample(Rule):
     code = "VGI306"
     name = "function-example"
     category = FUNC
-    default_severity = Severity.INFO
+    default_severity = Severity.WARNING
     targets = (ObjectKind.SCALAR_FUNCTION, ObjectKind.AGGREGATE)
     summary = "Scalar/aggregate functions should ship an example query."
 
@@ -150,7 +150,7 @@ class MacroExample(Rule):
     code = "VGI303"
     name = "macro-example"
     category = FUNC
-    default_severity = Severity.INFO
+    default_severity = Severity.WARNING
     targets = (ObjectKind.MACRO,)
     summary = "Macros should ship at least one example query showing usage."
 
