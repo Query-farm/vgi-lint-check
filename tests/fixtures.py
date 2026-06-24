@@ -91,6 +91,7 @@ def func(
     parameters=(),
     examples=(),
     tags=None,
+    stability=None,
 ):
     return Function(
         id=ObjectId("v", ObjectKind.SCALAR_FUNCTION, schema=schema, name=name),
@@ -102,6 +103,7 @@ def func(
         tags=TagSet(dict(tags or {})),
         parameters=list(parameters),
         examples=list(examples),
+        stability=stability,
     )
 
 

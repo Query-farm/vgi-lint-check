@@ -260,6 +260,28 @@ def test_excessive_counts_and_long_names():
     assert "VGI135" not in found  # disabled (0)
 
 
+def test_scalar_function_stability():
+    vol = [
+        F.func("main", "f1", "scalar", description="d", stability="VOLATILE"),
+        F.func("main", "f2", "scalar", description="d", stability="VOLATILE"),
+    ]
+    s = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=vol)
+    found = set(codes(F.catalog(s)))
+    assert "VGI308" in found  # all scalar functions volatile -> probably unset
+    # VGI309 is opt-in (off by default)
+    assert "VGI309" not in found
+    on = set(codes(F.catalog(s), severity_overrides={"VGI309": Severity.WARNING}))
+    assert "VGI309" in on  # per-function flag once enabled
+
+    # a mix (one CONSISTENT) is a deliberate choice -> VGI308 does not fire
+    mixed = [
+        F.func("main", "f1", "scalar", description="d", stability="VOLATILE"),
+        F.func("main", "f2", "scalar", description="d", stability="CONSISTENT"),
+    ]
+    s2 = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=mixed)
+    assert "VGI308" not in set(codes(F.catalog(s2)))
+
+
 def test_settings_and_pragmas():
     cat = F.catalog(
         F.schema("main", comment="c", tags={"provider": "a", "domain": "b"}),

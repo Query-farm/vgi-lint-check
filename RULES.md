@@ -94,6 +94,8 @@ skipped unless `--execute` is passed.
 | `VGI305` | warning | function-arguments-named | All function/macro arguments should be named, not positional. |  |
 | `VGI306` | warning | function-example | Scalar/aggregate functions should ship an example query. |  |
 | `VGI307` | warning | table-function-columns-documented | A table function with a dynamic schema (no backing table) must document its returned columns in a 'vgi.columns_md' tag. |  |
+| `VGI308` | warning | all-scalar-functions-volatile | Every scalar function being VOLATILE usually means stability was never set. |  |
+| `VGI309` | off | volatile-scalar-function | Flag each VOLATILE scalar/aggregate function for a stability audit. | opt-in |
 
 ## Tags (VGI4xx)
 
@@ -167,4 +169,4 @@ skipped unless `--execute` is passed.
 | `VGI904` | error | attach-options-accepted | Advertised attach options must actually be accepted at ATTACH time. | requires `--execute` |
 | `VGI905` | error | advertised-catalogs-attachable | Every catalog vgi_catalogs() advertises must be attachable. | requires `--execute` |
 
-_82 rules._
+_84 rules._

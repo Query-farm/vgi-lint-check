@@ -195,3 +195,56 @@ class MacroExample(Rule):
                     "macro has no example query",
                     "add a 'vgi.example_queries' tag showing the macro in use",
                 )
+
+
+@register
+class AllScalarFunctionsVolatile(Rule):
+    code = "VGI308"
+    name = "all-scalar-functions-volatile"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "Every scalar function being VOLATILE usually means stability was never set."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        # Only scalar functions that report a stability (macros/table-functions
+        # report None). VOLATILE disables constant-folding/caching, so a worker
+        # whose scalars are *all* volatile most likely left the default unset.
+        scalars = [
+            f
+            for f in ctx.catalog.iter_functions()
+            if f.kind is ObjectKind.SCALAR_FUNCTION and f.stability
+        ]
+        if len(scalars) >= 2 and all(f.is_volatile for f in scalars):
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"all {len(scalars)} scalar functions are VOLATILE",
+                "set each deterministic scalar function's stability to CONSISTENT "
+                "(only truly non-deterministic ones — random/now — should be "
+                "VOLATILE); a blanket VOLATILE usually means it was never set",
+            )
+
+
+@register
+class VolatileScalarFunction(Rule):
+    code = "VGI309"
+    name = "volatile-scalar-function"
+    category = FUNC
+    default_severity = Severity.OFF  # opt-in: some functions are legitimately volatile
+    targets = (ObjectKind.SCALAR_FUNCTION, ObjectKind.AGGREGATE)
+    summary = "Flag each VOLATILE scalar/aggregate function for a stability audit."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for f in ctx.catalog.iter_functions():
+            if f.kind not in (ObjectKind.SCALAR_FUNCTION, ObjectKind.AGGREGATE):
+                continue
+            if f.is_volatile:
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    f"{f.function_type} function is VOLATILE",
+                    "confirm this function is genuinely non-deterministic; if it "
+                    "always returns the same output for the same input, mark it "
+                    "CONSISTENT so the engine can optimize it",
+                )

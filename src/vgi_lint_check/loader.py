@@ -213,6 +213,7 @@ def build_catalog(
             examples=examples,
             examples_parse_error=err,
             macro_definition=r.get("macro_definition"),
+            stability=r.get("stability"),
         )
         # Correlate a table-function to its table so column/desc rules use the
         # richer table row rather than flagging the bare function.

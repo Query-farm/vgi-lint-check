@@ -194,6 +194,14 @@ class Function:
     examples: list[ExampleQuery] = field(default_factory=list)
     examples_parse_error: str | None = None
     macro_definition: str | None = None
+    # DuckDB function stability: CONSISTENT (deterministic), VOLATILE, or
+    # CONSISTENT_WITHIN_QUERY. None for macros/table-functions (not applicable).
+    stability: str | None = None
+
+    @property
+    def is_volatile(self) -> bool:
+        """True when the function is declared VOLATILE (non-deterministic)."""
+        return (self.stability or "").upper() == "VOLATILE"
 
     @property
     def kind(self) -> ObjectKind:
