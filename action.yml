@@ -22,12 +22,12 @@ inputs:
     default: "error"
   version:
     description: >-
-      vgi-lint-check version to run. A bare version pins exactly ("0.6.0"); a
-      requirement operator is honored verbatim (">=0.6.0,<0.7"). The default
-      floors at 0.6.0, which FORCE-installs the signed vgi community extension
+      vgi-lint-check version to run. A bare version pins exactly ("0.7.0"); a
+      requirement operator is honored verbatim (">=0.7.0,<0.8"). The default
+      floors at 0.7.0, which FORCE-installs the signed vgi community extension
       itself (so a cached/stale copy on the runner is refreshed).
     required: false
-    default: ">=0.6.0"
+    default: ">=0.7.0"
   working-directory:
     description: "Directory to run in — used for config ([tool.vgi-lint-check] / vgi-lint.toml) and baseline discovery."
     required: false
@@ -126,7 +126,7 @@ runs:
         echo "+ uvx --prerelease=allow --from ${spec} vgi-lint lint <location> ${flags[*]} ${VGILC_ARGS}"
         # haybarn (a transitive dep) is RC-only → --prerelease=allow is required.
         # The linter FORCE-installs the signed `vgi` community extension itself
-        # (0.6.0+), so a cached/stale extension on the runner is refreshed.
+        # (0.7.0+), so a cached/stale extension on the runner is refreshed.
         uvx --prerelease=allow --from "${spec}" \
           vgi-lint lint "${VGILC_LOCATION}" "${flags[@]}" ${VGILC_ARGS} 2>&1 | tee vgi-lint-output.txt
         status=${PIPESTATUS[0]}
