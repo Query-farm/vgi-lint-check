@@ -41,6 +41,8 @@ class Severity(IntEnum):
 class Category(StrEnum):
     """The rule family a finding belongs to."""
 
+    CATALOG = "catalog"
+    DISCOVERABILITY = "discoverability"
     DESCRIPTION = "description"
     COLUMNS = "columns"
     FUNCTIONS = "functions"

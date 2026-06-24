@@ -7,9 +7,11 @@ registry), so they must run for ``REGISTRY`` to be complete.
 from __future__ import annotations
 
 from . import (  # noqa: F401  (imported for registration side effects)
+    catalog,
     columns,
     constraints,
     descriptions,
+    discoverability,
     examples,
     execution,
     functions,

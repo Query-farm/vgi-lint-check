@@ -15,11 +15,12 @@ from .config import Config
 from .connection import attached, connect_loaded, derive_alias, validate_alias
 from .diff import diff_snapshots
 from .loader import build_catalog
+from .model import Release
 from .result import Report, VersionResult
 from .rules import run, select_rules
 from .rules.base import RuleContext
 from .snapshot import take_snapshot
-from .versions import discover_catalogs, resolve_versions
+from .versions import CatalogDiscovery, discover_catalogs, resolve_versions
 
 
 def lint_worker(
@@ -38,7 +39,8 @@ def lint_worker(
     config = config or Config()
     con, vgi_version = connect_loaded(install=install, spatial=spatial)
     try:
-        name = catalog_name or _discover_catalog_name(con, location)
+        discovery = _discover(con, location, catalog_name)
+        name = discovery.catalog
         local_alias = validate_alias(alias) if alias else derive_alias(name)
         versions = resolve_versions(
             con, location, explicit=data_versions, all_versions=all_versions
@@ -47,7 +49,7 @@ def lint_worker(
             _lint_one_version(
                 con,
                 location,
-                name,
+                discovery,
                 local_alias,
                 dv,
                 vgi_version,
@@ -71,25 +73,38 @@ def lint_worker(
     )
 
 
-def _discover_catalog_name(con: Any, location: str) -> str:
+def _discover(con: Any, location: str, catalog_name: str | None) -> CatalogDiscovery:
+    """Discover the target catalog's listing metadata via ``vgi_catalogs``.
+
+    When ``catalog_name`` is given, match it; otherwise take the first catalog.
+    Falls back to a minimal record if discovery returns nothing.
+    """
     catalogs = discover_catalogs(con, location)
+    if catalog_name is not None:
+        for c in catalogs:
+            if c.catalog == catalog_name:
+                return c
+        return CatalogDiscovery(catalog_name, None, None, None, [])
     if not catalogs:
         raise RuntimeError(f"worker at {location!r} advertised no catalogs via vgi_catalogs()")
-    return catalogs[0].catalog
+    return catalogs[0]
 
 
 def _lint_one_version(
     con: Any,
     location: str,
-    catalog_name: str,
+    discovery: CatalogDiscovery,
     alias: str,
     data_version: str | None,
     vgi_version: str | None,
     config: Config,
     update_baseline: bool,
 ) -> VersionResult:
+    releases = [
+        Release(r.version, r.released_at, r.summary, r.notes_url) for r in discovery.releases
+    ]
     before = take_snapshot(con)
-    with attached(con, location, catalog_name, alias, data_version=data_version):
+    with attached(con, location, discovery.catalog, alias, data_version=data_version):
         after = take_snapshot(con)
         diff = diff_snapshots(before, after, alias)
         catalog = build_catalog(
@@ -98,7 +113,10 @@ def _lint_one_version(
             location,
             vgi_version=vgi_version,
             data_version=data_version,
-            catalog_name=catalog_name,
+            catalog_name=discovery.catalog,
+            source_url=discovery.source_url,
+            implementation_version=discovery.implementation_version,
+            releases=releases,
             setting_rows=diff.setting_rows,
             pragma_rows=diff.pragma_rows,
         )

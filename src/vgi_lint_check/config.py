@@ -38,6 +38,12 @@ class Options:
     required_schema_tags: list[str] = field(default_factory=list)
     required_table_tags: list[str] = field(default_factory=list)
     allowed_tag_keys: list[str] = field(default_factory=list)
+    # Discoverability (VGI12x) tuning.
+    min_meaningful_description_chars: int = 30
+    min_example_queries: int = 3
+    classifying_tag_keys: list[str] = field(
+        default_factory=lambda: ["domain", "category", "provider", "topic"]
+    )
 
 
 @dataclass

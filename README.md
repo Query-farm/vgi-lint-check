@@ -51,12 +51,15 @@ with a `location`, then just run `vgi-lint` with no arguments.
 
 ## What it checks
 
-Object coverage: schemas, tables, views, columns, scalar/aggregate functions,
-macros, settings, pragmas, and constraints. Rule families:
+Object coverage: the catalog itself, schemas, tables, views, columns,
+scalar/aggregate functions, macros, settings, pragmas, and constraints. Rule
+families:
 
 | Family | Codes | Examples |
 | --- | --- | --- |
+| Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url` (the worker's "listing") |
 | Descriptions | VGI1xx | schema/table/view comment, `vgi.description_llm`, `vgi.description_md` |
+| Discoverability | VGI12x | duplicate/short/echoed descriptions, release freshness, example richness, units (opt-in) |
 | Columns | VGI2xx | column-comment coverage (tables **and views**), comment-not-echo |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples |
 | Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity |

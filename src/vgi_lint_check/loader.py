@@ -22,6 +22,7 @@ from .model import (
     ObjectId,
     ObjectKind,
     Pragma,
+    Release,
     Schema,
     Setting,
     Table,
@@ -64,11 +65,22 @@ def build_catalog(
     vgi_version: str | None = None,
     data_version: str | None = None,
     catalog_name: str | None = None,
+    source_url: str | None = None,
+    implementation_version: str | None = None,
+    releases: list[Release] | None = None,
     setting_rows: list[dict[str, Any]] | None = None,
     pragma_rows: list[dict[str, Any]] | None = None,
 ) -> Catalog:
     """Build a normalized :class:`Catalog` from a post-attach snapshot."""
     schemas: dict[str, Schema] = {}
+
+    # Catalog-level metadata from duckdb_databases() (the worker's "listing").
+    catalog_comment: str | None = None
+    catalog_tags = to_tagset(None)
+    for r in _scoped(snapshot.databases, alias):
+        catalog_comment = r.get("comment")
+        catalog_tags = to_tagset(r.get("tags"))
+        break
 
     def get_schema(name: str) -> Schema:
         if name not in schemas:
@@ -244,6 +256,11 @@ def build_catalog(
         vgi_version=vgi_version,
         data_version=data_version,
         catalog_name=catalog_name or alias,
+        comment=catalog_comment,
+        tags=catalog_tags,
+        source_url=source_url,
+        implementation_version=implementation_version,
+        releases=list(releases or []),
         schemas=list(schemas.values()),
         settings=settings,
         pragmas=pragmas,

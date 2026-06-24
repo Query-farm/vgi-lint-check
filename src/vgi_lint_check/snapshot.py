@@ -14,6 +14,7 @@ from typing import Any
 # (attribute, sql) — one bulk query each. Selecting * keeps us resilient to
 # column additions; the loader reads columns by name with .get().
 _SYSTEM_TABLES = {
+    "databases": "SELECT * FROM duckdb_databases()",
     "schemas": "SELECT * FROM duckdb_schemas()",
     "tables": "SELECT * FROM duckdb_tables()",
     "columns": "SELECT * FROM duckdb_columns()",
@@ -28,6 +29,7 @@ _SYSTEM_TABLES = {
 class Snapshot:
     """Raw system-table rows captured from one connection state."""
 
+    databases: list[dict[str, Any]] = field(default_factory=list)
     schemas: list[dict[str, Any]] = field(default_factory=list)
     tables: list[dict[str, Any]] = field(default_factory=list)
     columns: list[dict[str, Any]] = field(default_factory=list)

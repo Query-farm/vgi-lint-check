@@ -22,6 +22,7 @@ RESERVED_TAG_KEYS = frozenset({TAG_DESCRIPTION_LLM, TAG_DESCRIPTION_MD, TAG_EXAM
 class ObjectKind(StrEnum):
     """Kind of catalog object a finding or model node refers to."""
 
+    CATALOG = "catalog"
     SCHEMA = "schema"
     TABLE = "table"
     VIEW = "view"
@@ -240,6 +241,16 @@ class Schema:
     functions: list[Function] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class Release:
+    """One published data-version release (from ``vgi_catalogs`` discovery)."""
+
+    version: str
+    released_at: str | None = None
+    summary: str = ""
+    notes_url: str | None = None
+
+
 @dataclass
 class Catalog:
     """A normalized view of everything one worker catalog contributes."""
@@ -251,6 +262,13 @@ class Catalog:
     # The worker's own catalog name (what example authors qualify with). Falls
     # back to the alias when not separately known.
     catalog_name: str | None = None
+    # Catalog-level metadata (the worker's "listing"): comment + tags from
+    # duckdb_databases(); source_url/releases from vgi_catalogs() discovery.
+    comment: str | None = None
+    tags: TagSet = field(default_factory=TagSet)
+    source_url: str | None = None
+    implementation_version: str | None = None
+    releases: list[Release] = field(default_factory=list)
     schemas: list[Schema] = field(default_factory=list)
     settings: list[Setting] = field(default_factory=list)
     pragmas: list[Pragma] = field(default_factory=list)
@@ -260,9 +278,24 @@ class Catalog:
     )
 
     @property
+    def id(self) -> ObjectId:
+        """Identity of the catalog object itself."""
+        return ObjectId(self.database, ObjectKind.CATALOG)
+
+    @property
     def qualifier(self) -> str:
         """Catalog name used to qualify references in example queries."""
         return self.catalog_name or self.database
+
+    @property
+    def description_llm(self) -> str | None:
+        """The catalog's ``vgi.description_llm`` tag value, if any."""
+        return self.tags.get(TAG_DESCRIPTION_LLM)
+
+    @property
+    def description_md(self) -> str | None:
+        """The catalog's ``vgi.description_md`` tag value, if any."""
+        return self.tags.get(TAG_DESCRIPTION_MD)
 
     # ---- iteration helpers used by rules ---------------------------------
     def iter_schemas(self) -> Iterator[Schema]:

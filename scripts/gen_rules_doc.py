@@ -17,6 +17,8 @@ from vgi_lint_check.findings import Category  # noqa: E402
 from vgi_lint_check.rules.registry import all_rule_classes  # noqa: E402
 
 CATEGORY_TITLES = {
+    Category.CATALOG: "Catalog (VGI0xx)",
+    Category.DISCOVERABILITY: "Discoverability (VGI12x)",
     Category.DESCRIPTION: "Descriptions (VGI1xx)",
     Category.COLUMNS: "Columns (VGI2xx)",
     Category.FUNCTIONS: "Functions & macros (VGI3xx)",

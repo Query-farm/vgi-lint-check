@@ -15,6 +15,29 @@ is **opt-in** (enable it via `--severity CODE=warning` or config). Rules marked
 skipped unless `--execute` is passed.
 
 
+## Catalog (VGI0xx)
+
+| Code | Default | Rule | What it checks | Notes |
+| --- | --- | --- | --- | --- |
+| `VGI001` | warning | catalog-comment | The catalog must have a comment — the worker's one-line description. |  |
+| `VGI002` | warning | catalog-description-llm | The catalog must carry a 'vgi.description_llm' tag for agents. |  |
+| `VGI003` | warning | catalog-description-md | The catalog must carry a 'vgi.description_md' tag for human docs. |  |
+| `VGI004` | warning | catalog-source-url | The catalog should advertise a source_url (provenance / about link). |  |
+
+## Discoverability (VGI12x)
+
+| Code | Default | Rule | What it checks | Notes |
+| --- | --- | --- | --- | --- |
+| `VGI120` | info | duplicate-descriptions | Many objects sharing one description reads as boilerplate (dup content). |  |
+| `VGI121` | info | description-too-short | A description should be substantive enough to index and read well. |  |
+| `VGI122` | info | description-echoes-name | A description that just restates the name adds no searchable signal. |  |
+| `VGI123` | off | classifying-tag-present | Objects should carry a classifying tag (domain/category/...) for faceting. | opt-in |
+| `VGI131` | off | column-units | Numeric column comments should state units/definition where relevant. | opt-in |
+| `VGI140` | info | release-dated | Published data-version releases should carry a release date (freshness). |  |
+| `VGI141` | info | release-documented | Releases should have a summary or notes_url ('what's new'). |  |
+| `VGI150` | info | examples-not-trivial | Example queries should demonstrate value, not only `SELECT * FROM x`. |  |
+| `VGI151` | info | minimum-examples | A worker should ship a minimum number of example queries overall. |  |
+
 ## Descriptions (VGI1xx)
 
 | Code | Default | Rule | What it checks | Notes |
@@ -99,4 +122,4 @@ skipped unless `--execute` is passed.
 | `VGI901` | error | example-queries-execute | Every example query should bind/execute against the worker. | requires `--execute` |
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
 
-_34 rules._
+_47 rules._

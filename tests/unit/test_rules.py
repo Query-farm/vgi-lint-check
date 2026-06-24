@@ -24,7 +24,7 @@ def test_clean_table_no_findings():
     t = F.table(
         "main",
         "animals",
-        comment="Animal facts",
+        comment="Animal facts: species, number of legs, and the sound each makes",
         tags={
             "vgi.description_llm": "Animals and their attributes for LLM consumers, etc.",
             "vgi.description_md": "## Animals\nAnimals and attributes with much more detail here.",
@@ -32,10 +32,18 @@ def test_clean_table_no_findings():
             "domain": "zoo",
         },
         columns=[F.col("main", "animals", "name", "the animal's common name")],
-        examples=[F.example(0, "all animals", "SELECT * FROM v.main.animals")],
+        examples=[
+            F.example(0, "two-legged animals", "SELECT name FROM v.main.animals WHERE legs = 2")
+        ],
     )
-    s = F.schema("main", comment="Zoo data", tags={"provider": "acme", "domain": "zoo"}, tables=[t])
-    found = codes(F.catalog(s))
+    s = F.schema(
+        "main",
+        comment="Zoo data about animals and their attributes",
+        tags={"provider": "acme", "domain": "zoo"},
+        tables=[t],
+    )
+    # VGI151 (catalog-wide minimum example count) is marketing, not per-object.
+    found = codes(F.catalog(s), ignore=["VGI151"])
     assert found == [] or set(found) <= set()  # nothing flagged
 
 

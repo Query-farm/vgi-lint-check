@@ -124,10 +124,29 @@ def schema(name, *, comment=None, tags=None, tables=(), views=(), functions=()):
     )
 
 
-def catalog(*schemas, settings=(), pragmas=()):
+def catalog(
+    *schemas,
+    settings=(),
+    pragmas=(),
+    comment="A test catalog of things.",
+    tags=None,
+    source_url="https://example.com",
+    releases=(),
+):
+    # Default catalog metadata satisfies the VGI0xx required rules so per-object
+    # rule tests aren't polluted; pass comment=None / tags={} to test VGI00x.
+    if tags is None:
+        tags = {
+            "vgi.description_llm": "A test catalog used by the unit tests, etc. " * 2,
+            "vgi.description_md": "## Test catalog\nUsed by the unit tests. " * 3,
+        }
     return Catalog(
         database="v",
         location="loc",
+        comment=comment,
+        tags=TagSet(dict(tags)),
+        source_url=source_url,
+        releases=list(releases),
         schemas=list(schemas),
         settings=list(settings),
         pragmas=list(pragmas),
