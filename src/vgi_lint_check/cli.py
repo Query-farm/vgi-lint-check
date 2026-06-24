@@ -75,6 +75,11 @@ def app() -> None:
 @click.option("--execute-mode", type=click.Choice(["explain", "limit", "run"]), default=None)
 @click.option("--execute-limit", type=int, default=None)
 @click.option(
+    "--check-links/--no-check-links",
+    default=None,
+    help="Resolve URLs/images in descriptions over HTTP (VGI171). On by default.",
+)
+@click.option(
     "--select",
     default=None,
     help="Comma list/globs of rule codes to enable (replaces the default set).",
@@ -112,6 +117,7 @@ def lint(
     execute: bool,
     execute_mode: str | None,
     execute_limit: int | None,
+    check_links: bool | None,
     select: str | None,
     extend_select: str | None,
     ignore: str | None,
@@ -141,6 +147,7 @@ def lint(
         execute=execute,
         execute_mode=execute_mode,
         execute_limit=execute_limit,
+        check_links=check_links,
         fail_on=fail_on,
         baseline=baseline,
     )
@@ -330,6 +337,7 @@ def _apply_cli_overrides(
     execute: bool,
     execute_mode: str | None,
     execute_limit: int | None,
+    check_links: bool | None,
     fail_on: str | None,
     baseline: str | None,
 ) -> None:
@@ -354,6 +362,8 @@ def _apply_cli_overrides(
         cfg.execute_mode = execute_mode
     if execute_limit is not None:
         cfg.execute_limit = execute_limit
+    if check_links is not None:
+        cfg.check_links = check_links
     if fail_on is not None:
         cfg.fail_on = Severity.OFF if fail_on == "never" else Severity.parse(fail_on)
     if baseline is not None:

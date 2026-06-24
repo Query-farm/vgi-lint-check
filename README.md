@@ -60,6 +60,7 @@ families:
 | Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url` (the worker's "listing") |
 | Descriptions | VGI1xx | schema/table/view comment, `vgi.description_llm`, `vgi.description_md` |
 | Discoverability | VGI12x | duplicate/short/echoed descriptions, release freshness, example richness, units (opt-in) |
+| Content | VGI17x | `vgi.description_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage (tables **and views**), comment-not-echo |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples |
 | Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity |
@@ -73,6 +74,12 @@ families:
 See **[RULES.md](RULES.md)** for the full per-rule reference (codes, default
 severities, and what each checks). Run `vgi-lint rules` to list them from your
 installed version, or `vgi-lint explain VGI112` for one.
+
+**Link checking is on by default** (VGI171): URLs and images in descriptions,
+and `source_url`/`vgi.source_url` repo links, are resolved over HTTP and flagged
+if they 404. Only definitive client errors (4xx) are reported — timeouts, DNS
+failures, 5xx, and access-gated codes are skipped so CI isn't flaky. Disable
+with `--no-check-links` (or run fully offline).
 
 ## Reserved tags
 

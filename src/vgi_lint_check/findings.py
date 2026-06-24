@@ -43,6 +43,7 @@ class Category(StrEnum):
 
     CATALOG = "catalog"
     DISCOVERABILITY = "discoverability"
+    CONTENT = "content"
     DESCRIPTION = "description"
     COLUMNS = "columns"
     FUNCTIONS = "functions"

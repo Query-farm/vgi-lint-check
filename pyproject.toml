@@ -42,6 +42,7 @@ dependencies = [
     "haybarn>=1.5.4rc1,<1.6",
     "click>=8.1",
     "rich>=13",
+    "markdown-it-py>=3",  # parse vgi.description_md (validity + link extraction)
     # Needed by DuckDB/haybarn to materialize timezone-aware timestamps that
     # workers publish in vgi_catalogs() release metadata.
     "pytz>=2024.1",

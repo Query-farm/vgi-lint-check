@@ -65,6 +65,8 @@ class Config:
     execute: bool = False
     execute_mode: str = "explain"
     execute_limit: int = 1
+    check_links: bool = False  # enable network rules (validate description URLs)
+    link_timeout: float = 10.0
     fail_on: Severity = Severity.ERROR
     location: str | None = None
     baseline: str | None = None
@@ -83,8 +85,10 @@ class Config:
 
     def effective_severity(self, rule: Rule | type[Rule]) -> Severity:
         """Resolve a rule's severity per the documented order. OFF = disabled."""
-        # 1. execution rules need --execute
+        # 1. execution rules need --execute; network rules need --check-links
         if getattr(rule, "requires_connection", False) and not self.execute:
+            return Severity.OFF
+        if getattr(rule, "requires_network", False) and not self.check_links:
             return Severity.OFF
         # 2. category gate
         if self.categories is not None and str(rule.category) not in self.categories:
@@ -149,6 +153,10 @@ def from_table(raw: dict[str, Any]) -> Config:
         cfg.location = raw["location"]
     if "baseline" in raw:
         cfg.baseline = raw["baseline"]
+    if "check_links" in raw:
+        cfg.check_links = bool(raw["check_links"])
+    if "link_timeout" in raw:
+        cfg.link_timeout = float(raw["link_timeout"])
     if "severity" in raw and isinstance(raw["severity"], dict):
         cfg.severity_overrides = {
             code: Severity.parse(level) for code, level in raw["severity"].items()

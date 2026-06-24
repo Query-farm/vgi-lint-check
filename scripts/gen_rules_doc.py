@@ -19,6 +19,7 @@ from vgi_lint_check.rules.registry import all_rule_classes  # noqa: E402
 CATEGORY_TITLES = {
     Category.CATALOG: "Catalog (VGI0xx)",
     Category.DISCOVERABILITY: "Discoverability (VGI12x)",
+    Category.CONTENT: "Content — Markdown & links (VGI17x)",
     Category.DESCRIPTION: "Descriptions (VGI1xx)",
     Category.COLUMNS: "Columns (VGI2xx)",
     Category.FUNCTIONS: "Functions & macros (VGI3xx)",

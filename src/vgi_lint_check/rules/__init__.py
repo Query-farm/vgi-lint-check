@@ -10,6 +10,7 @@ from . import (  # noqa: F401  (imported for registration side effects)
     catalog,
     columns,
     constraints,
+    content,
     descriptions,
     discoverability,
     examples,

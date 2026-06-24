@@ -14,6 +14,7 @@ from . import scoring
 from .config import Config
 from .connection import attached, connect_loaded, derive_alias, validate_alias
 from .diff import diff_snapshots
+from .linkcheck import make_link_resolver
 from .loader import build_catalog
 from .model import Release
 from .result import Report, VersionResult
@@ -122,7 +123,14 @@ def _lint_one_version(
         )
         rules = select_rules(config)
         needs_con = any(getattr(r, "requires_connection", False) for r in rules)
-        ctx = RuleContext(catalog, config, connection=con if needs_con else None)
+        needs_net = any(getattr(r, "requires_network", False) for r in rules)
+        resolver = make_link_resolver(config.link_timeout) if needs_net else None
+        ctx = RuleContext(
+            catalog,
+            config,
+            connection=con if needs_con else None,
+            link_resolver=resolver,
+        )
         findings = run(rules, ctx)
 
     if config.baseline:

@@ -45,6 +45,13 @@ skipped unless `--execute` is passed.
 | `VGI151` | info | minimum-examples | A worker should ship a minimum number of example queries overall. |  |
 | `VGI160` | info | catalog-attribution | The catalog should declare author, copyright, and license tags. |  |
 
+## Content — Markdown & links (VGI17x)
+
+| Code | Default | Rule | What it checks | Notes |
+| --- | --- | --- | --- | --- |
+| `VGI170` | info | markdown-well-formed | vgi.description_md should be valid Markdown (no empty/broken links). |  |
+| `VGI171` | warning | description-links-resolve | Links/images and source URLs in descriptions must resolve (no 404). |  |
+
 ## Descriptions (VGI1xx)
 
 | Code | Default | Rule | What it checks | Notes |
@@ -133,4 +140,4 @@ skipped unless `--execute` is passed.
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
 | `VGI903` | error | view-executes | Every defined view must actually execute against the worker. | requires `--execute` |
 
-_58 rules._
+_60 rules._

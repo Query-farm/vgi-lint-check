@@ -23,6 +23,9 @@ class RuleContext:
     # The live haybarn connection (typed ``Any`` — a third-party DB cursor),
     # present only for rules with ``requires_connection``.
     connection: Any | None = None
+    # URL -> HTTP status resolver, wired only for real runs when --check-links is
+    # on; network rules no-op when it is None (keeps tests offline).
+    link_resolver: Any | None = None
     # Resolved severity for the rule currently executing (set by the engine).
     severity: Severity = Severity.WARNING
 
@@ -33,7 +36,8 @@ class Rule(ABC):
     category: Category
     default_severity: Severity
     targets: tuple[ObjectKind, ...] = ()
-    requires_connection: bool = False
+    requires_connection: bool = False  # gated by --execute (runs SQL on the worker)
+    requires_network: bool = False  # gated by --check-links (makes outbound HTTP)
     summary: str = ""  # one-liner shown in `rules`/`explain` and agent output
 
     @abstractmethod
