@@ -108,7 +108,7 @@ skipped unless `--execute` is passed.
 | `VGI501` | info | example-queries-present | Tables/views should ship example queries (macros are covered by VGI303). |  |
 | `VGI502` | error | example-queries-well-formed | The vgi.example_queries tag must be a valid JSON list of objects. |  |
 | `VGI503` | error | example-entries-complete | Each example needs a non-empty description and sql. |  |
-| `VGI504` | info | example-references-object | An example for an object should reference that object's name. |  |
+| `VGI504` | info | example-references-object | An example for an object should reference (call) that object by name. |  |
 | `VGI505` | warning | example-queries-qualified | Example queries should qualify references with the catalog name (catalog.schema.table) so they run when the worker is attached. |  |
 | `VGI506` | off | schema-example-queries | Schemas should carry a vgi.example_queries tag (opt-in). | opt-in |
 

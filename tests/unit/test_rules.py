@@ -149,6 +149,29 @@ def test_example_qualification():
     assert "b" in flagged and "a" not in flagged
 
 
+def test_example_references_object():
+    # A function whose example never calls it, and a table whose example uses a
+    # different table, are both flagged (VGI504); correct ones are not. The match
+    # is whole-identifier, so "felt" inside "unfelt" does not count as a use.
+    good_fn = F.func("main", "felt", examples=[F.example(0, "ok", "SELECT v.main.felt(123)")])
+    bad_fn = F.func("main", "vei", examples=[F.example(0, "copied", "SELECT v.main.felt(123)")])
+    substr_fn = F.func(
+        "main", "shook", examples=[F.example(0, "substr", "SELECT v.main.unshook(1)")]
+    )
+    s = F.schema(
+        "main",
+        comment="c",
+        tags=_SCHEMA_TAGS,
+        functions=[good_fn, bad_fn, substr_fn],
+    )
+    findings = [f for f in _findings(F.catalog(s)) if f.code == "VGI504"]
+    flagged = {f.object_id.name for f in findings}
+    assert flagged == {"vei", "shook"}  # different-fn call + substring-only use
+    assert "felt" not in flagged  # the example actually calls felt -> clean
+    # functions are described as "call", not "reference"
+    assert all("does not call" in f.message for f in findings)
+
+
 def test_required_tags_opt_in():
     s = F.schema("main", comment="c")  # no provider/domain tags
     # not flagged by default — required tags are opt-in

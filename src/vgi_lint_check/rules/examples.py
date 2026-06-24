@@ -29,10 +29,32 @@ def _references_catalog(sql: str, qualifier: str) -> bool:
     return re.search(pattern, code, re.IGNORECASE) is not None
 
 
+def _references_identifier(sql: str, name: str) -> bool:
+    """True if ``sql`` uses ``name`` as a whole identifier (call or reference).
+
+    Strips string literals and comments first, then matches ``name`` only as a
+    complete token — so ``felt`` does not match inside ``unfelt`` or ``felt_at``,
+    while a qualified use (``main.felt``) and a call (``felt(...)``) both count.
+    """
+    code = _strip_sql_noise(sql)
+    pattern = rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])"
+    return re.search(pattern, code, re.IGNORECASE) is not None
+
+
 def _example_hosts(catalog: Catalog) -> Iterator[Table | View | Function]:
     """Objects that may carry vgi.example_queries: tables, views, macros."""
     yield from catalog.iter_table_like()
     yield from catalog.iter_macros()
+
+
+def _named_example_hosts(catalog: Catalog) -> Iterator[Table | View | Function]:
+    """Every example-bearing object whose own name an example should use.
+
+    Tables/views plus all function kinds (macro, scalar, aggregate, table
+    function) — each carries examples that ought to reference/call it by name.
+    """
+    yield from catalog.iter_table_like()
+    yield from catalog.iter_all_functions()
 
 
 @register
@@ -161,16 +183,30 @@ class ExampleReferencesObject(Rule):
     name = "example-references-object"
     category = EX
     default_severity = Severity.INFO
-    targets = (ObjectKind.TABLE, ObjectKind.VIEW)
-    summary = "An example for an object should reference that object's name."
+    targets = (
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.MACRO,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "An example for an object should reference (call) that object by name."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        for obj in ctx.catalog.iter_table_like():
+        for obj in _named_example_hosts(ctx.catalog):
+            name = obj.name
+            if not name:
+                continue
+            verb = "call" if isinstance(obj, Function) else "reference"
             for ex in obj.examples:
-                if ex.sql and obj.name and obj.name.lower() not in ex.sql.lower():
+                if blank(ex.sql):
+                    continue
+                if not _references_identifier(ex.sql or "", name):
                     yield self.finding(
                         ctx,
                         obj.id,
-                        f"example #{ex.index} does not reference {obj.name!r}",
-                        "make the example query actually use this object",
+                        f"example #{ex.index} does not {verb} {name!r}",
+                        f"make the example actually {verb} this object — an example "
+                        "that never names it is usually copied from elsewhere",
                     )

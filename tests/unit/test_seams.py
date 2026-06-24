@@ -10,7 +10,7 @@ from vgi_lint_check.connection import (
 )
 from vgi_lint_check.rules._util import QueryTimeout, is_filter_policy_error, run_with_timeout
 from vgi_lint_check.rules.constraints import _check_expression
-from vgi_lint_check.rules.examples import _references_catalog
+from vgi_lint_check.rules.examples import _references_catalog, _references_identifier
 from vgi_lint_check.rules.functions import _is_unnamed
 
 
@@ -127,6 +127,19 @@ def test_references_catalog_word_boundary():
 def test_references_catalog_ignores_string_literals():
     # 'volcanos.' only appears inside a string literal -> not a real reference
     assert not _references_catalog("SELECT 'volcanos.x' FROM eruptions", "volcanos")
+
+
+# --- VGI504 example-references-object matcher ------------------------------
+def test_references_identifier_whole_token():
+    assert _references_identifier("SELECT * FROM v.main.felt", "felt")
+    assert _references_identifier("SELECT v.main.felt(1)", "felt")  # call form
+    # substring of a larger identifier is NOT a use
+    assert not _references_identifier("SELECT * FROM v.main.unfelt", "felt")
+    assert not _references_identifier("SELECT felt_at FROM t", "felt")
+
+
+def test_references_identifier_ignores_literals_and_comments():
+    assert not _references_identifier("SELECT 'felt' FROM t  -- felt", "felt")
 
 
 # --- VGI305 unnamed-arg detection -----------------------------------------
