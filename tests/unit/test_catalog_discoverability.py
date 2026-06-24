@@ -142,12 +142,12 @@ def test_release_freshness_rules():
     assert "VGI141" in found  # no summary/notes_url
 
 
-def test_title_keywords_present_opt_in_and_quality():
-    # presence rules (VGI124 title, VGI126 keywords) are off by default
+def test_title_keywords_present_strict_default_and_quality():
+    # presence rules (VGI124 title, VGI126 keywords) are on under the strict default
     t = F.table("main", "t", comment="A table for testing title/keyword conventions")
     cat = F.catalog(F.schema("main", tables=[t]))
     base = set(codes(cat))
-    assert "VGI124" not in base and "VGI126" not in base
+    assert "VGI124" in base and "VGI126" in base
 
     # quality rules fire when the tags ARE set badly
     bad = F.table(
@@ -171,7 +171,6 @@ def test_source_url_present_opt_in_and_valid():
     )
     cat = F.catalog(F.schema("main", tables=[bad]))
     found = set(codes(cat))
-    assert "VGI128" not in found  # presence is opt-in
     assert "VGI129" in found  # invalid URL flagged when present
 
 
@@ -216,7 +215,7 @@ def test_catalog_attribution_required_tags():
     assert "VGI160" in set(codes(bare))
 
 
-def test_classifying_tag_and_units_are_opt_in():
+def test_classifying_tag_and_units_strict_default():
     untagged = F.table(
         "main",
         "t",
@@ -224,10 +223,10 @@ def test_classifying_tag_and_units_are_opt_in():
         columns=[F.col("main", "t", "depth", "the depth value", "INTEGER")],
     )
     cat = F.catalog(F.schema("main", tables=[untagged]))
-    # off by default
-    assert "VGI123" not in set(codes(cat))
-    assert "VGI131" not in set(codes(cat))
-    # opt in
-    on = codes(cat, severity_overrides={"VGI123": Severity.INFO, "VGI131": Severity.INFO})
-    assert "VGI123" in set(on)
-    assert "VGI131" in set(on)  # numeric 'depth' comment has no unit
+    # on under the strict default
+    assert "VGI123" in set(codes(cat))
+    assert "VGI131" in set(codes(cat))  # numeric 'depth' comment has no unit
+    # ...and can be turned off
+    off = codes(cat, severity_overrides={"VGI123": Severity.OFF, "VGI131": Severity.OFF})
+    assert "VGI123" not in set(off)
+    assert "VGI131" not in set(off)

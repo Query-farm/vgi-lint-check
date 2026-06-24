@@ -31,6 +31,7 @@ skipped unless `--execute` is passed.
 | `VGI010` | warning | support-links-valid | A URL in the support contact / policy must be a valid http(s) URL. |  |
 | `VGI011` | warning | catalog-not-empty | A catalog must expose at least one table, view, or function. |  |
 | `VGI012` | warning | worker-catalog-count | A worker should advertise at least one catalog and not an unbounded number. |  |
+| `VGI013` | info | license-valid-spdx | vgi.license should be an SPDX identifier (or a LicenseRef-… for custom). |  |
 
 ## Discoverability (VGI12x)
 
@@ -39,14 +40,16 @@ skipped unless `--execute` is passed.
 | `VGI120` | warning | duplicate-descriptions | Distinct objects (schemas, tables, functions, ...) must not share a description. |  |
 | `VGI121` | info | description-too-short | A description should be substantive enough to index and read well. |  |
 | `VGI122` | info | description-echoes-name | A description that just restates the name adds no searchable signal. |  |
-| `VGI123` | off | classifying-tag-present | Objects should carry a classifying tag (domain/category/...) for faceting. | opt-in |
-| `VGI124` | off | title-present | Objects should carry a 'vgi.title' display name (human/marketing). | opt-in |
+| `VGI123` | warning | classifying-tag-present | Objects should carry a classifying tag (domain/category/...) for faceting. |  |
+| `VGI124` | warning | title-present | Objects should carry a 'vgi.title' display name (human/marketing). |  |
 | `VGI125` | info | title-quality | A 'vgi.title', when set, should differ from the machine name. |  |
-| `VGI126` | off | keywords-present | Objects should carry 'vgi.keywords' (search terms / synonyms). | opt-in |
+| `VGI126` | warning | keywords-present | Objects should carry 'vgi.keywords' (search terms / synonyms). |  |
 | `VGI127` | info | keywords-well-formed | 'vgi.keywords', when set, should be non-empty with no duplicates. |  |
-| `VGI128` | off | source-url-present | Objects should link to their implementation via 'vgi.source_url'. | opt-in |
+| `VGI128` | warning | source-url-present | Objects should link to their implementation via 'vgi.source_url'. |  |
 | `VGI129` | info | source-url-valid | 'vgi.source_url', when set, should be an http(s) URL. |  |
-| `VGI131` | off | column-units | Numeric column comments should state units/definition where relevant. | opt-in |
+| `VGI130` | warning | no-placeholder-text | Descriptions/comments must not contain placeholder text (TODO/TBD/lorem ipsum/…). |  |
+| `VGI131` | warning | column-units | Numeric column comments should state units/definition where relevant. |  |
+| `VGI132` | warning | classifying-tags-reused | A classifying tag should be a small, reused vocabulary — not unique per object. |  |
 | `VGI133` | warning | join-path-documented | A table with foreign keys should explain how to join to the referenced tables. |  |
 | `VGI140` | info | release-dated | Published data-version releases should carry a release date (freshness). |  |
 | `VGI141` | info | release-documented | Releases should have a summary or notes_url ('what's new'). |  |
@@ -67,8 +70,8 @@ skipped unless `--execute` is passed.
 | --- | --- | --- | --- | --- |
 | `VGI101` | warning | schema-comment | Every schema should have a comment describing the domain it covers. |  |
 | `VGI111` | warning | table-comment | Every table should have a one-line comment describing its rows. |  |
-| `VGI112` | off | description-llm | Tables/views/functions may carry a 'vgi.description_llm' tag (opt-in). | opt-in |
-| `VGI113` | off | description-md | Tables/views/functions may carry a 'vgi.description_md' tag (opt-in). | opt-in |
+| `VGI112` | warning | description-llm | Tables/views/functions may carry a 'vgi.description_llm' tag (opt-in). |  |
+| `VGI113` | warning | description-md | Tables/views/functions may carry a 'vgi.description_md' tag (opt-in). |  |
 | `VGI114` | info | description-md-distinct | The Markdown description should be richer than the LLM one. |  |
 | `VGI115` | warning | view-comment | Every view should have a comment describing what it returns. |  |
 | `VGI116` | warning | schema-description-llm | Every schema must carry a 'vgi.description_llm' tag (required). |  |
@@ -80,8 +83,9 @@ skipped unless `--execute` is passed.
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
 | `VGI201` | warning | column-comment-coverage | A table/view should document at least the configured share of columns. |  |
-| `VGI202` | off | column-comment-required | Stricter variant: every single column must have a comment. | opt-in |
+| `VGI202` | warning | column-comment-required | Stricter variant: every single column must have a comment. |  |
 | `VGI203` | info | column-comment-not-echo | A column comment should add information, not restate the name. |  |
+| `VGI204` | info | timestamp-timezone-documented | A naive TIMESTAMP/TIME column should document its timezone assumption. |  |
 
 ## Functions & macros (VGI3xx)
 
@@ -114,10 +118,11 @@ skipped unless `--execute` is passed.
 | `VGI503` | error | example-entries-complete | Each example needs a non-empty description and sql. |  |
 | `VGI504` | info | example-references-object | An example for an object should reference (call) that object by name. |  |
 | `VGI505` | warning | example-queries-qualified | Example queries should qualify references with the catalog name (catalog.schema.table) so they run when the worker is attached. |  |
-| `VGI506` | off | schema-example-queries | Schemas should carry a vgi.example_queries tag (opt-in). | opt-in |
+| `VGI506` | warning | schema-example-queries | Schemas should carry a vgi.example_queries tag (opt-in). |  |
 | `VGI507` | error | executable-examples-well-formed | vgi.executable_examples must be a valid JSON list; each entry needs a description and at least one non-empty SQL statement. |  |
 | `VGI508` | warning | too-many-executable-examples | Warn when one object carries more executable examples than options.max_executable_examples. |  |
 | `VGI509` | warning | worker-has-executable-examples | A worker should ship at least one vgi.executable_examples (guaranteed-runnable). |  |
+| `VGI510` | warning | executable-example-deterministic | An executable example asserting output should ORDER BY so its rows are stable. |  |
 
 ## Settings (VGI6xx)
 
@@ -143,6 +148,8 @@ skipped unless `--execute` is passed.
 | `VGI804` | warning | not-null-constraints-present | A worker with constraints but no NOT NULL on any column likely forgot them. |  |
 | `VGI805` | warning | no-primary-keys | A worker with constraints but no primary keys likely forgot them. |  |
 | `VGI806` | warning | no-constraints | A worker that declares no constraints at all is likely incomplete. |  |
+| `VGI807` | warning | table-has-primary-key | Each table should declare a primary key so agents know each row's identity. |  |
+| `VGI808` | info | foreign-key-suggested | A column named like a key (<table>_id) with no FK likely needs one declared. |  |
 
 ## Structure & size limits (VGI11x/13x)
 
@@ -167,11 +174,11 @@ skipped unless `--execute` is passed.
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
 | `VGI901` | warning | example-queries-execute | Illustrative example queries should bind/execute (best-effort; warning). | requires `--execute` |
-| `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
+| `VGI902` | warning | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute` |
 | `VGI903` | error | view-executes | Every defined view must actually execute against the worker. | requires `--execute` |
 | `VGI904` | error | attach-options-accepted | Advertised attach options must actually be accepted at ATTACH time. | requires `--execute` |
 | `VGI905` | error | advertised-catalogs-attachable | Every catalog vgi_catalogs() advertises must be attachable. | requires `--execute` |
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 
-_89 rules._
+_96 rules._

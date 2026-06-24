@@ -12,7 +12,7 @@ import re
 from collections.abc import Iterator
 
 from ..findings import Category, Finding, Severity
-from ..model import ObjectKind
+from ..model import Catalog, ObjectKind
 from ._util import is_filter_policy_error, run_with_timeout
 from .base import Rule, RuleContext
 from .registry import register
@@ -234,3 +234,76 @@ def _check_expression(text: str) -> str:
             if depth == 0:
                 return text[open_paren + 1 : i].strip()
     return text[open_paren + 1 :].strip()
+
+
+@register
+class TableHasPrimaryKey(Rule):
+    code = "VGI807"
+    name = "table-has-primary-key"
+    category = CON
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE,)
+    summary = "Each table should declare a primary key so agents know each row's identity."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for t in ctx.catalog.iter_tables():
+            if not t.columns:
+                continue
+            if any(c.constraint_type == "PRIMARY KEY" for c in t.constraints):
+                continue
+            yield self.finding(
+                ctx,
+                t.id,
+                "table has no primary key",
+                "declare a primary key on the column(s) that uniquely identify a "
+                "row so agents can reference rows (or confirm none applies)",
+            )
+
+
+# Matches a foreign-key-shaped column name: <base>_id / <base>id.
+_FK_NAME = re.compile(r"^(?P<base>.+?)_?id$", re.IGNORECASE)
+
+
+@register
+class ForeignKeySuggested(Rule):
+    code = "VGI808"
+    name = "foreign-key-suggested"
+    category = CON
+    default_severity = Severity.INFO
+    targets = (ObjectKind.TABLE,)
+    summary = "A column named like a key (<table>_id) with no FK likely needs one declared."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        for t in cat.iter_tables():
+            fk_cols = {
+                col.lower()
+                for c in t.constraints
+                if c.constraint_type == "FOREIGN KEY"
+                for col in c.columns
+            }
+            for col in t.columns:
+                m = _FK_NAME.match(col.name or "")
+                if not m or col.name.lower() in fk_cols:
+                    continue
+                base = m.group("base").lower().rstrip("_")
+                if not base or base == t.name.lower():
+                    continue
+                target = self._target_table(cat, base, t.schema)
+                if target is not None:
+                    yield self.finding(
+                        ctx,
+                        t.id,
+                        f"column {col.name!r} looks like a foreign key to "
+                        f"{target!r} but no FK is declared",
+                        f"declare a FOREIGN KEY from {col.name} to {target} so the "
+                        "join is discoverable, or rename it if it isn't a reference",
+                    )
+
+    def _target_table(self, cat: Catalog, base: str, schema: str) -> str | None:
+        # Match a table named like the column base (singular or plural).
+        for cand in (base, base + "s", base.rstrip("s")):
+            for t in cat.find_table_like(cand):
+                if t.name.lower() == cand:
+                    return str(t.name)
+        return None

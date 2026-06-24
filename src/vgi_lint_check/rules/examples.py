@@ -153,7 +153,7 @@ class SchemaExampleQueries(Rule):
     code = "VGI506"
     name = "schema-example-queries"
     category = EX
-    default_severity = Severity.OFF  # opt-in: schemas rarely carry examples
+    default_severity = Severity.WARNING  # strict default
     targets = (ObjectKind.SCHEMA,)
     summary = "Schemas should carry a vgi.example_queries tag (opt-in)."
 
@@ -348,3 +348,51 @@ class ExampleReferencesObject(Rule):
                         f"make the example actually {verb} this object — an example "
                         "that never names it is usually copied from elsewhere",
                     )
+
+
+_ORDER_BY = re.compile(r"\bORDER\s+BY\b", re.IGNORECASE)
+_LIMIT = re.compile(r"\bLIMIT\b", re.IGNORECASE)
+
+
+@register
+class ExecutableExampleDeterministic(Rule):
+    code = "VGI510"
+    name = "executable-example-deterministic"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.MACRO,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "An executable example asserting output should ORDER BY so its rows are stable."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for obj_id, examples, parse_error in ctx.catalog.iter_executable_example_hosts():
+            if parse_error:
+                continue
+            for ex in examples:
+                label = ex.name or f"#{ex.index}"
+                for i, stmt in enumerate(ex.statements):
+                    if not stmt.has_expected or blank(stmt.sql):
+                        continue
+                    sql = _strip_sql_noise(stmt.sql or "")
+                    if _ORDER_BY.search(sql):
+                        continue
+                    multi_row = (
+                        isinstance(stmt.expected_result, list) and len(stmt.expected_result) > 1
+                    )
+                    if _LIMIT.search(sql) or multi_row:
+                        yield self.finding(
+                            ctx,
+                            obj_id,
+                            f"executable example {label!r} statement #{i} asserts a "
+                            "result without ORDER BY (row order is not guaranteed)",
+                            "add an ORDER BY so the rows are deterministic — "
+                            "expected_result is compared in order",
+                        )

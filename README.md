@@ -57,20 +57,28 @@ families:
 
 | Family | Codes | Examples |
 | --- | --- | --- |
-| Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty**, worker advertises 1–N catalogs |
-| Descriptions | VGI1xx | schema/table/view comment, `vgi.description_llm`, `vgi.description_md` |
-| Discoverability | VGI12x | duplicate/short/echoed descriptions, join-path docs, release freshness, example richness, units (opt-in) |
+| Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty**, worker advertises 1–N catalogs, `vgi.license` is a valid SPDX id |
+| Descriptions | VGI1xx | schema/table/view/function comment, `vgi.description_llm`, `vgi.description_md` |
+| Discoverability | VGI12x/13x | duplicate/short/echoed descriptions, **no placeholder text (TODO/TBD/…)**, classifying tag present + **reused (small vocabulary)**, title/keywords/source_url present, join-path docs, release freshness, example richness, column units |
 | Content | VGI17x | `vgi.description_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
-| Columns | VGI2xx | column-comment coverage (tables **and views**), comment-not-echo |
+| Columns | VGI2xx | column-comment coverage + **every column commented**, comment-not-echo, **naive TIMESTAMP documents its timezone** |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples, scalar-function stability (all-VOLATILE smell + per-function VOLATILE flag) |
 | Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity |
-| Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete entries, **catalog-qualified**, references the object it documents; `vgi.executable_examples` well-formed |
+| Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete, **catalog-qualified**, references its object; `vgi.executable_examples` well-formed + **deterministic (ORDER BY)** |
 | Settings | VGI6xx | setting descriptions |
 | Pragmas | VGI7xx | pragma descriptions |
-| Constraints | VGI8xx | FK/PK/check validity — references must point at real tables & columns; completeness nudges (no constraints / no PKs / no NOT NULL anywhere) |
+| Constraints | VGI8xx | FK/PK/check validity; completeness nudges (no constraints / PKs / NOT NULL anywhere); **per-table primary key**; **`<table>_id` column with no FK suggests one** |
 | Attach options | VGI10xx | every `vgi_catalogs()` attach option is documented (description present + meaningful) |
 | Structure | VGI11x/13x | **schema not empty**; warn on excessive table/function counts and over-long table/function names; schema object-count cap (opt-in) |
 | Execution | VGI9xx | illustrative examples bind (best-effort warning) & **executable examples must run + match expected output**; CHECK constraints bind; advertised attach options are accepted and advertised catalogs attach (`--execute`, **on by default**); per-query timeout so nothing runs forever |
+
+**Strict by default.** `vgi-lint` ships a strict profile: descriptions on every
+table/view/function, classifying/title/keyword/source-url tags, column
+documentation, per-table primary keys, and example coverage are all enforced by
+default. To run a lighter profile, turn rules off in config — e.g.
+`ignore = ["VGI112", "VGI113", "VGI124", "VGI126", "VGI128", "VGI202"]` — or set
+`[tool.vgi-lint-check.severity]` per code. Use `vgi-lint rules` to see every rule
+and its default.
 
 See **[RULES.md](RULES.md)** for the full per-rule reference (codes, default
 severities, and what each checks). Run `vgi-lint rules` to list them from your

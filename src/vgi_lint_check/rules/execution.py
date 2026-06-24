@@ -106,7 +106,7 @@ class ExampleQueriesReturnRows(Rule):
     code = "VGI902"
     name = "example-queries-return-rows"
     category = EXEC
-    default_severity = Severity.OFF  # opt-in even beyond --execute
+    default_severity = Severity.WARNING  # strict default
     targets = _EXAMPLE_TARGETS
     requires_connection = True
     summary = "Example queries should return at least one row (limit mode)."

@@ -59,8 +59,9 @@ def test_full_pipeline_offline():
     # catalog-qualified -> these fire
     assert "VGI116" in codes  # schema description_llm required
     assert "VGI505" in codes
-    # its constraints are all valid -> no constraint false positives
-    assert not any(c.startswith("VGI8") for c in codes)
+    # its declared constraints are all valid -> no validity false positives
+    # (VGI807/808 — missing-PK / suggested-FK nudges — may legitimately fire)
+    assert not ({"VGI801", "VGI802"} & codes)
 
     quality = scoring.compute(cat, findings)
     assert 0 <= quality.score <= 100

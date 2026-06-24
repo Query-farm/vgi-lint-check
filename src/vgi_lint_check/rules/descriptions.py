@@ -153,7 +153,7 @@ class LLMDescription(Rule):
     code = "VGI112"
     name = "description-llm"
     category = DESC
-    default_severity = Severity.OFF  # optional for tables/views/functions (opt-in)
+    default_severity = Severity.WARNING  # strict default (was opt-in for tables/views/functions)
     targets = _OPTIONAL_DESC_KINDS
     summary = "Tables/views/functions may carry a 'vgi.description_llm' tag (opt-in)."
 
@@ -173,7 +173,7 @@ class MarkdownDescription(Rule):
     code = "VGI113"
     name = "description-md"
     category = DESC
-    default_severity = Severity.OFF  # optional for tables/views/functions (opt-in)
+    default_severity = Severity.WARNING  # strict default (was opt-in for tables/views/functions)
     targets = _OPTIONAL_DESC_KINDS
     summary = "Tables/views/functions may carry a 'vgi.description_md' tag (opt-in)."
 

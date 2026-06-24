@@ -16,6 +16,7 @@ from ..findings import Category, Finding, Severity
 from ..model import (
     TAG_DESCRIPTION_LLM,
     TAG_DESCRIPTION_MD,
+    TAG_LICENSE,
     TAG_SUPPORT_CONTACT,
     TAG_SUPPORT_POLICY_URL,
     ObjectKind,
@@ -339,3 +340,56 @@ class ReleasesWithinSpec(Rule):
                     f"'{cat.data_version_spec}'",
                     "widen data_version_spec or remove/relabel the out-of-range release",
                 )
+
+
+# A small set of common SPDX license identifiers; SPDX also allows a
+# "LicenseRef-" prefix for custom/source-available licenses.
+_SPDX_IDS = frozenset(
+    {
+        "MIT",
+        "Apache-2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "ISC",
+        "MPL-2.0",
+        "GPL-2.0-only",
+        "GPL-3.0-only",
+        "LGPL-2.1-only",
+        "LGPL-3.0-only",
+        "AGPL-3.0-only",
+        "Unlicense",
+        "CC0-1.0",
+        "CC-BY-4.0",
+        "CC-BY-SA-4.0",
+        "0BSD",
+        "Zlib",
+        "BSL-1.0",
+        "EPL-2.0",
+        "Proprietary",
+    }
+)
+_SPDX_LOWER = frozenset(s.lower() for s in _SPDX_IDS)
+
+
+@register
+class LicenseValidSpdx(Rule):
+    code = "VGI013"
+    name = "license-valid-spdx"
+    category = CAT
+    default_severity = Severity.INFO
+    targets = (ObjectKind.CATALOG,)
+    summary = "vgi.license should be an SPDX identifier (or a LicenseRef-… for custom)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        value = (ctx.catalog.tags.get(TAG_LICENSE) or "").strip()
+        if not value:
+            return  # presence is VGI's licensing rule; this only checks validity
+        if value.lower() in _SPDX_LOWER or value.lower().startswith("licenseref-"):
+            return
+        yield self.finding(
+            ctx,
+            ctx.catalog.id,
+            f"vgi.license {value!r} is not a recognized SPDX identifier",
+            "use an SPDX id (e.g. MIT, Apache-2.0) or a 'LicenseRef-<name>' for a "
+            "custom/source-available license so tools can interpret it",
+        )

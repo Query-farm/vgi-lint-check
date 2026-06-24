@@ -215,7 +215,7 @@ class ClassifyingTagPresent(Rule):
     code = "VGI123"
     name = "classifying-tag-present"
     category = DISC
-    default_severity = Severity.OFF  # opt-in: not every worker uses faceting tags
+    default_severity = Severity.WARNING  # strict default
     targets = (ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
     summary = "Objects should carry a classifying tag (domain/category/...) for faceting."
 
@@ -244,7 +244,7 @@ class ColumnUnits(Rule):
     code = "VGI131"
     name = "column-units"
     category = DISC
-    default_severity = Severity.OFF  # opt-in: heuristic on numeric columns
+    default_severity = Severity.WARNING  # strict default
     targets = (ObjectKind.COLUMN,)
     summary = "Numeric column comments should state units/definition where relevant."
 
@@ -327,7 +327,7 @@ class TitlePresent(Rule):
     code = "VGI124"
     name = "title-present"
     category = DISC
-    default_severity = Severity.OFF  # opt-in: not every worker uses display titles
+    default_severity = Severity.WARNING  # strict default
     targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
     summary = "Objects should carry a 'vgi.title' display name (human/marketing)."
 
@@ -368,7 +368,7 @@ class KeywordsPresent(Rule):
     code = "VGI126"
     name = "keywords-present"
     category = DISC
-    default_severity = Severity.OFF  # opt-in
+    default_severity = Severity.WARNING  # strict default
     targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
     summary = "Objects should carry 'vgi.keywords' (search terms / synonyms)."
 
@@ -419,7 +419,7 @@ class SourceUrlPresent(Rule):
     code = "VGI128"
     name = "source-url-present"
     category = DISC
-    default_severity = Severity.OFF  # opt-in
+    default_severity = Severity.WARNING  # strict default
     targets = (ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
     summary = "Objects should link to their implementation via 'vgi.source_url'."
 
@@ -509,3 +509,94 @@ class MinimumExamples(Rule):
                 f"worker ships only {total} example queries (< {minimum})",
                 "add more example queries — they are the worker's demo for humans and agents",
             )
+
+
+# Boilerplate left in metadata — a strong "unfinished" signal.
+_PLACEHOLDER = re.compile(
+    r"\b(TODO|TBD|FIXME|XXX|HACK|lorem ipsum|changeme|placeholder|"
+    r"description here|your description|fill (this )?in|coming soon|wip|"
+    r"to be (written|done|filled)|n/?a)\b",
+    re.IGNORECASE,
+)
+
+
+@register
+class NoPlaceholderText(Rule):
+    code = "VGI130"
+    name = "no-placeholder-text"
+    category = DISC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.COLUMN,
+    )
+    summary = "Descriptions/comments must not contain placeholder text (TODO/TBD/lorem ipsum/…)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, text in _primary_descriptions(ctx):
+            m = _PLACEHOLDER.search(text)
+            if m:
+                yield self._flag(ctx, oid, m.group(0))
+        for t in ctx.catalog.iter_table_like():
+            for c in t.columns:
+                if c.comment:
+                    m = _PLACEHOLDER.search(c.comment)
+                    if m:
+                        yield self._flag(ctx, c.id, m.group(0))
+
+    def _flag(self, ctx: RuleContext, oid: ObjectId, token: str) -> Finding:
+        return self.finding(
+            ctx,
+            oid,
+            f"description contains placeholder text ({token!r})",
+            "replace the placeholder with a real description before publishing",
+        )
+
+
+@register
+class ClassifyingTagsReused(Rule):
+    code = "VGI132"
+    name = "classifying-tags-reused"
+    category = DISC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A classifying tag should be a small, reused vocabulary — not unique per object."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        keys = ctx.config.options.classifying_tag_keys
+        cap = ctx.config.options.max_distinct_categories
+        # value frequency per classifying key across every tagged object
+        freqs: dict[str, dict[str, int]] = {k: defaultdict(int) for k in keys}
+        for _id, tags, _name in _taggable(ctx):
+            for k in keys:
+                v = (tags.get(k) or "").strip()
+                if v:
+                    freqs[k][v.lower()] += 1
+        for k in keys:
+            counts = freqs[k]
+            total = sum(counts.values())
+            distinct = len(counts)
+            if total < 4:  # too few to judge a vocabulary
+                continue
+            if cap and distinct > cap:
+                yield self.finding(
+                    ctx,
+                    ctx.catalog.id,
+                    f"classifying tag {k!r} has {distinct} distinct values (> {cap})",
+                    "consolidate into a smaller, reused set of categories so objects "
+                    "cluster — or raise options.max_distinct_categories",
+                )
+            elif distinct == total:
+                yield self.finding(
+                    ctx,
+                    ctx.catalog.id,
+                    f"classifying tag {k!r} value is unique on all {total} objects",
+                    "reuse categories so related objects share one — a unique value "
+                    "per object provides no faceting",
+                )

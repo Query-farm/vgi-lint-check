@@ -56,6 +56,9 @@ class Options:
     classifying_tag_keys: list[str] = field(
         default_factory=lambda: ["domain", "category", "provider", "topic"]
     )
+    # A classifying tag should be a small, reused vocabulary. VGI132 warns when a
+    # key has more than this many distinct values, or when none are reused.
+    max_distinct_categories: int = 12
 
 
 @dataclass

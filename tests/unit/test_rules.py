@@ -56,25 +56,27 @@ def test_clean_table_no_findings():
         tags=_SCHEMA_TAGS,
         tables=[t],
     )
-    # VGI151 (catalog-wide minimum example count) is marketing, not per-object;
-    # VGI509 (worker ships executable examples) is a separate coverage nudge.
-    found = codes(F.catalog(s), ignore=["VGI151", "VGI509"])
+    # The strict "richness" rules (marketing tags, example coverage) need extra
+    # content and are exercised by their own tests; this baseline asserts the core
+    # correctness rules don't false-fire on a well-formed object.
+    richness = ["VGI124", "VGI126", "VGI128", "VGI151", "VGI506", "VGI509"]
+    found = codes(F.catalog(s), ignore=richness)
     assert found == [] or set(found) <= set()  # nothing flagged
 
 
-def test_schema_descriptions_required_table_optional():
+def test_descriptions_required_strict_default():
     t = F.table("main", "bare")  # no comment, no llm/md
     s = F.schema("main", comment="x", tags={"provider": "a", "domain": "b"}, tables=[t])
     found = set(codes(F.catalog(s)))
-    assert "VGI111" in found  # table comment still required
+    assert "VGI111" in found  # table comment required
     assert "VGI116" in found  # schema llm required
     assert "VGI118" in found  # schema md required
-    # llm/md are optional (off) for tables
-    assert "VGI112" not in found
-    assert "VGI113" not in found
-    # ...but flagged when opted in
-    on = set(codes(F.catalog(s), severity_overrides={"VGI112": Severity.WARNING}))
-    assert "VGI112" in on
+    # under the strict default, llm/md are now required on tables too
+    assert "VGI112" in found
+    assert "VGI113" in found
+    # ...but can be turned back off
+    off = set(codes(F.catalog(s), severity_overrides={"VGI112": Severity.OFF}))
+    assert "VGI112" not in off
 
 
 def test_column_coverage_threshold():

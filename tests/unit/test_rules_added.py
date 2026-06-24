@@ -225,8 +225,9 @@ def test_schema_object_count_opt_in():
     assert "VGI117" in {f.code for f in findings(F.catalog(s), cfg)}
 
 
-def test_schema_examples_opt_in():
+def test_schema_examples_strict_default():
     s = F.schema("main", comment="c")
-    assert "VGI506" not in set(codes(F.catalog(s)))
-    cfg = Config(severity_overrides={"VGI506": Severity.INFO})
-    assert "VGI506" in {f.code for f in findings(F.catalog(s), cfg)}
+    # on by default under the strict profile; can be turned off
+    assert "VGI506" in set(codes(F.catalog(s)))
+    cfg = Config(severity_overrides={"VGI506": Severity.OFF})
+    assert "VGI506" not in {f.code for f in findings(F.catalog(s), cfg)}
