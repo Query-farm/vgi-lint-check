@@ -23,6 +23,8 @@ class Options:
     min_llm_description_chars: int = 40
     min_md_description_chars: int = 80
     min_description_chars: int = 12
+    # Flag a schema with more than this many objects (0 = disabled).
+    max_schema_objects: int = 0
     # Required tags are opt-in: VGI401 only fires for keys you list here. There
     # is no universal tag every schema/table must carry.
     required_schema_tags: list[str] = field(default_factory=list)

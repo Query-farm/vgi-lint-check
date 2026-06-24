@@ -7,13 +7,22 @@ function. Table-functions are excluded — their documentation lives on the tabl
 
 from __future__ import annotations
 
+import re
+
 from ..findings import Category, Severity
 from ..model import ObjectKind
-from ._util import blank
+from ._util import blank, is_trivial_echo
 from .base import Rule
 from .registry import register
 
 FUNC = Category.FUNCTIONS
+
+# DuckDB's placeholder names for unnamed/positional parameters.
+_UNNAMED_PARAM = re.compile(r"^(col)?\d+$", re.IGNORECASE)
+
+
+def _is_unnamed(param: str) -> bool:
+    return blank(param) or bool(_UNNAMED_PARAM.match(param.strip()))
 
 
 @register
@@ -51,6 +60,79 @@ class FunctionParametersUndocumented(Rule):
                     ctx, f.id,
                     f"{f.function_type} takes parameters ({params}) but has no description",
                     "add a description covering the parameters and the return value",
+                )
+
+
+@register
+class FunctionDescriptionQuality(Rule):
+    code = "VGI304"
+    name = "function-description-quality"
+    category = FUNC
+    default_severity = Severity.INFO
+    targets = (ObjectKind.SCALAR_FUNCTION, ObjectKind.MACRO, ObjectKind.AGGREGATE)
+    summary = "A function description should be substantive, not a stub or echo."
+
+    def check(self, ctx):
+        minlen = ctx.config.options.min_description_chars
+        for f in ctx.catalog.iter_functions():
+            desc = f.description or f.comment
+            if blank(desc):
+                continue  # presence handled by VGI301/302
+            if is_trivial_echo(desc, f.name):
+                yield self.finding(
+                    ctx, f.id,
+                    f"description just restates the name ({f.name!r})",
+                    "describe what the function does and returns",
+                )
+            elif len(desc.strip()) < minlen:
+                yield self.finding(
+                    ctx, f.id,
+                    f"description is very short ({len(desc.strip())} < {minlen} chars)",
+                    "expand the description so consumers understand the function",
+                )
+
+
+@register
+class FunctionArgumentsNamed(Rule):
+    code = "VGI305"
+    name = "function-arguments-named"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.MACRO,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "All function/macro arguments should be named, not positional."
+
+    def check(self, ctx):
+        for f in ctx.catalog.iter_all_functions():
+            unnamed = [p for p in f.parameters if _is_unnamed(p)]
+            if unnamed:
+                shown = ", ".join(p or "<empty>" for p in unnamed)
+                yield self.finding(
+                    ctx, f.id,
+                    f"{f.function_type} has unnamed/positional argument(s): {shown}",
+                    "give every parameter a descriptive name",
+                )
+
+
+@register
+class FunctionExample(Rule):
+    code = "VGI306"
+    name = "function-example"
+    category = FUNC
+    default_severity = Severity.INFO
+    targets = (ObjectKind.SCALAR_FUNCTION, ObjectKind.AGGREGATE)
+    summary = "Scalar/aggregate functions should ship an example query."
+
+    def check(self, ctx):
+        for f in ctx.catalog.iter_functions():
+            if f.kind in (ObjectKind.SCALAR_FUNCTION, ObjectKind.AGGREGATE) and not f.examples:
+                yield self.finding(
+                    ctx, f.id, f"{f.function_type} function has no example query",
+                    "add a 'vgi.example_queries' tag showing the function in use",
                 )
 
 

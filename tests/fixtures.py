@@ -5,6 +5,7 @@ from __future__ import annotations
 from vgi_lint_check.model import (
     Catalog,
     Column,
+    Constraint,
     ExampleQuery,
     Function,
     ObjectId,
@@ -27,7 +28,8 @@ def col(schema, table, name, comment=None, dtype="VARCHAR"):
     )
 
 
-def table(schema, name, *, comment=None, tags=None, columns=(), examples=(), parse_error=None):
+def table(schema, name, *, comment=None, tags=None, columns=(), examples=(),
+          parse_error=None, constraints=()):
     return Table(
         id=ObjectId("v", ObjectKind.TABLE, schema=schema, name=name),
         schema=schema,
@@ -38,6 +40,21 @@ def table(schema, name, *, comment=None, tags=None, columns=(), examples=(), par
         column_count=len(columns),
         examples=list(examples),
         examples_parse_error=parse_error,
+        constraints=list(constraints),
+    )
+
+
+def constraint(schema, tbl, ctype, columns=(), referenced_table=None,
+               referenced_columns=(), expression=None):
+    return Constraint(
+        id=ObjectId("v", ObjectKind.TABLE, schema=schema, name=tbl),
+        schema=schema,
+        table=tbl,
+        constraint_type=ctype,
+        columns=list(columns),
+        referenced_table=referenced_table,
+        referenced_columns=list(referenced_columns),
+        expression=expression,
     )
 
 

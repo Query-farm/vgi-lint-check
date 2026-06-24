@@ -115,9 +115,13 @@ class Table:
     estimated_size: int | None = None
     examples: list[ExampleQuery] = field(default_factory=list)
     examples_parse_error: str | None = None
+    constraints: list["Constraint"] = field(default_factory=list)
     # The duckdb_functions() table-function row backing this table, if any.
     backing_function: "Function | None" = None
     kind: ObjectKind = ObjectKind.TABLE
+
+    def column_names(self) -> set[str]:
+        return {c.name for c in self.columns}
 
     @property
     def description_llm(self) -> str | None:
@@ -184,6 +188,25 @@ class Pragma:
     tags: TagSet = field(default_factory=TagSet)
 
 
+@dataclass(frozen=True)
+class Constraint:
+    """A table constraint from duckdb_constraints().
+
+    ``referenced_table`` carries no schema qualifier — FKs may reference a table
+    in another schema, resolved catalog-wide by name.
+    """
+
+    id: ObjectId  # the owning table's id
+    schema: str
+    table: str
+    constraint_type: str  # PRIMARY KEY | FOREIGN KEY | CHECK | UNIQUE | NOT NULL
+    columns: list[str] = field(default_factory=list)
+    referenced_table: str | None = None
+    referenced_columns: list[str] = field(default_factory=list)
+    expression: str | None = None
+    name: str | None = None
+
+
 @dataclass
 class Schema:
     id: ObjectId
@@ -242,6 +265,24 @@ class Catalog:
             for f in s.functions:
                 if f.kind is not ObjectKind.TABLE_FUNCTION:
                     yield f
+
+    def iter_all_functions(self):
+        """Every function, including table-functions."""
+        for s in self.schemas:
+            yield from s.functions
+
+    def iter_constraints(self):
+        for t in self.iter_tables():
+            for c in t.constraints:
+                yield t, c
+
+    def find_table_like(self, name, schema=None):
+        """Tables/views matching a name (any schema unless one is given)."""
+        return [
+            t
+            for t in self.iter_table_like()
+            if t.name == name and (schema is None or t.schema == schema)
+        ]
 
     def iter_macros(self):
         for f in self.iter_functions():

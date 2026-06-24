@@ -18,6 +18,7 @@ _SYSTEM_TABLES = {
     "columns": "SELECT * FROM duckdb_columns()",
     "views": "SELECT * FROM duckdb_views()",
     "functions": "SELECT * FROM duckdb_functions()",
+    "constraints": "SELECT * FROM duckdb_constraints()",
     "settings": "SELECT * FROM duckdb_settings()",
 }
 
@@ -29,6 +30,7 @@ class Snapshot:
     columns: list[dict] = field(default_factory=list)
     views: list[dict] = field(default_factory=list)
     functions: list[dict] = field(default_factory=list)
+    constraints: list[dict] = field(default_factory=list)
     settings: list[dict] = field(default_factory=list)
 
 

@@ -40,6 +40,8 @@ class Category(str, Enum):
     EXAMPLES = "examples"
     SETTINGS = "settings"
     PRAGMAS = "pragmas"
+    CONSTRAINTS = "constraints"
+    STRUCTURE = "structure"
     EXECUTION = "execution"
 
     def __str__(self) -> str:

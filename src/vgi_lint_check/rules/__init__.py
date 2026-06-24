@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from . import (  # noqa: F401  (imported for registration side effects)
     columns,
+    constraints,
     descriptions,
     examples,
     execution,
     functions,
     pragmas,
     settings,
+    structure,
     tags,
 )
 from .base import Rule, RuleContext

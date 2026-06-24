@@ -41,6 +41,9 @@ skipped unless `--execute` is passed.
 | `VGI301` | warning | function-description | Functions/macros without parameters still need a description. |  |
 | `VGI302` | warning | function-parameters-undocumented | A function that takes parameters must describe what it does. |  |
 | `VGI303` | info | macro-example | Macros should ship at least one example query showing usage. |  |
+| `VGI304` | info | function-description-quality | A function description should be substantive, not a stub or echo. |  |
+| `VGI305` | warning | function-arguments-named | All function/macro arguments should be named, not positional. |  |
+| `VGI306` | info | function-example | Scalar/aggregate functions should ship an example query. |  |
 
 ## Tags (VGI4xx)
 
@@ -59,6 +62,7 @@ skipped unless `--execute` is passed.
 | `VGI503` | error | example-entries-complete | Each example needs a non-empty description and sql. |  |
 | `VGI504` | info | example-references-object | An example for an object should reference that object's name. |  |
 | `VGI505` | warning | example-queries-qualified | Example queries should qualify references with the catalog name (catalog.schema.table) so they run when the worker is attached. |  |
+| `VGI506` | off | schema-example-queries | Schemas should carry a vgi.example_queries tag (opt-in). | opt-in |
 
 ## Settings (VGI6xx)
 
@@ -74,6 +78,20 @@ skipped unless `--execute` is passed.
 | `VGI701` | warning | pragma-description | Every worker pragma should have a description. |  |
 | `VGI702` | info | pragma-description-quality | A pragma description should explain its usage/parameters. |  |
 
+## Constraints (VGI8xx)
+
+| Code | Default | Rule | What it checks | Notes |
+| --- | --- | --- | --- | --- |
+| `VGI801` | error | foreign-key-reference-valid | A foreign key must reference a table and columns that exist. |  |
+| `VGI802` | error | constraint-columns-exist | Every constraint must reference columns that exist on the table. |  |
+| `VGI803` | error | check-constraint-binds | CHECK constraint expressions should bind against the worker. | requires `--execute` |
+
+## Structure (VGI11x)
+
+| Code | Default | Rule | What it checks | Notes |
+| --- | --- | --- | --- | --- |
+| `VGI117` | off | schema-object-count | Flag a schema with more objects than options.max_schema_objects. | opt-in |
+
 ## Execution (VGI9xx)
 
 | Code | Default | Rule | What it checks | Notes |
@@ -81,4 +99,4 @@ skipped unless `--execute` is passed.
 | `VGI901` | error | example-queries-execute | Every example query should bind/execute against the worker. | requires `--execute` |
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
 
-_26 rules._
+_34 rules._

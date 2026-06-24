@@ -51,19 +51,21 @@ with a `location`, then just run `vgi-lint` with no arguments.
 
 ## What it checks
 
-Object coverage: schemas, tables, views, columns, scalar functions, macros,
-settings, and pragmas. Rule families:
+Object coverage: schemas, tables, views, columns, scalar/aggregate functions,
+macros, settings, pragmas, and constraints. Rule families:
 
 | Family | Codes | Examples |
 | --- | --- | --- |
 | Descriptions | VGI1xx | schema/table/view comment, `vgi.description_llm`, `vgi.description_md` |
-| Columns | VGI2xx | column-comment coverage, comment-not-echo |
-| Functions | VGI3xx | function/macro description, parameter documentation, macro examples |
-| Tags | VGI4xx | required tag keys, reserved-tag validity |
+| Columns | VGI2xx | column-comment coverage (tables **and views**), comment-not-echo |
+| Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples |
+| Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity |
 | Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete entries, **catalog-qualified** |
 | Settings | VGI6xx | setting descriptions |
 | Pragmas | VGI7xx | pragma descriptions |
-| Execution | VGI9xx | example queries bind/execute (opt-in, `--execute`) |
+| Constraints | VGI8xx | foreign-key/PK/check validity — references must point at real tables & columns |
+| Structure | VGI11x | schema object-count cap (opt-in) |
+| Execution | VGI9xx | example queries & CHECK constraints bind/execute (opt-in, `--execute`) |
 
 See **[RULES.md](RULES.md)** for the full per-rule reference (codes, default
 severities, and what each checks). Run `vgi-lint rules` to list them from your

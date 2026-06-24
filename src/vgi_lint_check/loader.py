@@ -14,6 +14,7 @@ from __future__ import annotations
 from .model import (
     Catalog,
     Column,
+    Constraint,
     Function,
     ObjectId,
     ObjectKind,
@@ -161,6 +162,26 @@ def build_catalog(
             if t is not None:
                 t.backing_function = fn
         get_schema(sname).functions.append(fn)
+
+    # --- constraints (attached to their owning table) ---------------------
+    for r in _scoped(snapshot.constraints, alias):
+        sname, tname = r.get("schema_name"), r.get("table_name")
+        t = tables_by_key.get((sname, tname))
+        if t is None:
+            continue
+        t.constraints.append(
+            Constraint(
+                id=t.id,
+                schema=sname,
+                table=tname,
+                constraint_type=(r.get("constraint_type") or "").upper(),
+                columns=list(r.get("constraint_column_names") or []),
+                referenced_table=r.get("referenced_table") or None,
+                referenced_columns=list(r.get("referenced_column_names") or []),
+                expression=r.get("expression") or r.get("constraint_text"),
+                name=r.get("constraint_name"),
+            )
+        )
 
     # --- settings (diff-scoped; no catalog qualifier) ---------------------
     settings: list[Setting] = []

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..findings import Category, Severity
-from ..model import ObjectKind
+from ..model import TAG_EXAMPLE_QUERIES, ObjectKind
 from ._util import blank
 from .base import Rule
 from .registry import register
@@ -77,6 +77,24 @@ class ExampleEntriesComplete(Rule):
                         ctx, obj.id, f"example #{ex.index} has no sql",
                         "give every example a non-empty SQL statement",
                     )
+
+
+@register
+class SchemaExampleQueries(Rule):
+    code = "VGI506"
+    name = "schema-example-queries"
+    category = EX
+    default_severity = Severity.OFF  # opt-in: schemas rarely carry examples
+    targets = (ObjectKind.SCHEMA,)
+    summary = "Schemas should carry a vgi.example_queries tag (opt-in)."
+
+    def check(self, ctx):
+        for s in ctx.catalog.iter_schemas():
+            if not s.tags.has(TAG_EXAMPLE_QUERIES):
+                yield self.finding(
+                    ctx, s.id, "schema has no vgi.example_queries",
+                    "add a 'vgi.example_queries' tag with representative queries",
+                )
 
 
 @register

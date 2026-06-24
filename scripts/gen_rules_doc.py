@@ -24,6 +24,8 @@ CATEGORY_TITLES = {
     Category.EXAMPLES: "Example queries (VGI5xx)",
     Category.SETTINGS: "Settings (VGI6xx)",
     Category.PRAGMAS: "Pragmas (VGI7xx)",
+    Category.CONSTRAINTS: "Constraints (VGI8xx)",
+    Category.STRUCTURE: "Structure (VGI11x)",
     Category.EXECUTION: "Execution (VGI9xx)",
 }
 
