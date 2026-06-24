@@ -1,6 +1,6 @@
 [project]
 name = "vgi-lint-check"
-version = "0.6.1"
+version = "0.7.0"
 description = "A pydoclint-style metadata-quality linter for VGI workers."
 readme = "README.md"
 keywords = [
@@ -43,6 +43,7 @@ dependencies = [
     "click>=8.1",
     "rich>=13",
     "markdown-it-py>=3",  # parse vgi.description_md (validity + link extraction)
+    "packaging>=23",  # validate data_version_spec ranges and release versions
     # Needed by DuckDB/haybarn to materialize timezone-aware timestamps that
     # workers publish in vgi_catalogs() release metadata.
     "pytz>=2024.1",

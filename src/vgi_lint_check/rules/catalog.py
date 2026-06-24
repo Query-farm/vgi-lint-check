@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
+
 from ..findings import Category, Finding, Severity
 from ..model import (
     TAG_DESCRIPTION_LLM,
@@ -20,6 +23,20 @@ from .base import Rule, RuleContext
 from .registry import register
 
 CAT = Category.CATALOG
+
+
+def _parse_spec(spec: str) -> SpecifierSet | None:
+    try:
+        return SpecifierSet(spec)
+    except InvalidSpecifier:
+        return None
+
+
+def _parse_version(version: str) -> Version | None:
+    try:
+        return Version(version)
+    except InvalidVersion:
+        return None
 
 
 @register
@@ -103,3 +120,73 @@ class CatalogSourceUrl(Rule):
                 "advertise a source_url (repo/docs/dataset homepage) so consumers "
                 "can verify provenance and learn more",
             )
+
+
+@register
+class DataVersionSpecValid(Rule):
+    code = "VGI005"
+    name = "data-version-spec-valid"
+    category = CAT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "data_version_spec, when set, must be a valid semver version range."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        spec = ctx.catalog.data_version_spec
+        if not blank(spec) and _parse_spec(spec or "") is None:
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"data_version_spec is not a valid version range: {spec!r}",
+                "use a semver range like '>=1.0.0,<2.0.0'",
+            )
+
+
+@register
+class ReleaseVersionsValid(Rule):
+    code = "VGI006"
+    name = "release-version-valid"
+    category = CAT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "Every published data-version release must be a valid semver version."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for rel in ctx.catalog.releases:
+            if _parse_version(rel.version) is None:
+                yield self.finding(
+                    ctx,
+                    ctx.catalog.id,
+                    f"release version is not valid semver: {rel.version!r}",
+                    "use a semver version like '1.2.0'",
+                )
+
+
+@register
+class ReleasesWithinSpec(Rule):
+    code = "VGI007"
+    name = "releases-within-spec"
+    category = CAT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "Every published release must be contained by data_version_spec."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        if blank(cat.data_version_spec):
+            return
+        spec = _parse_spec(cat.data_version_spec or "")
+        if spec is None:
+            return  # VGI005 reports the invalid spec
+        for rel in cat.releases:
+            version = _parse_version(rel.version)
+            if version is None:
+                continue  # VGI006 reports the invalid version
+            if not spec.contains(version, prereleases=True):
+                yield self.finding(
+                    ctx,
+                    cat.id,
+                    f"release {rel.version!r} is not within data_version_spec "
+                    f"'{cat.data_version_spec}'",
+                    "widen data_version_spec or remove/relabel the out-of-range release",
+                )

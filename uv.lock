@@ -1030,12 +1030,13 @@ wheels = [
 
 [[package]]
 name = "vgi-lint-check"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "haybarn" },
     { name = "markdown-it-py" },
+    { name = "packaging" },
     { name = "pytz" },
     { name = "rich" },
 ]
@@ -1055,6 +1056,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "haybarn", specifier = ">=1.5.4rc1,<1.6" },
     { name = "markdown-it-py", specifier = ">=3" },
+    { name = "packaging", specifier = ">=23" },
     { name = "pytz", specifier = ">=2024.1" },
     { name = "rich", specifier = ">=13" },
 ]

@@ -27,6 +27,39 @@ def test_catalog_metadata_passes_when_present():
     assert not (found & {"VGI001", "VGI002", "VGI003", "VGI004"})
 
 
+# --- data-version semver validity (VGI005/006/007) -----------------------
+def test_data_version_spec_and_releases_valid():
+    cat = F.catalog(
+        F.schema("main"),
+        releases=[Release(version="1.0.0"), Release(version="1.5.0")],
+    )
+    cat.data_version_spec = ">=1.0.0,<2.0.0"
+    found = set(codes(cat))
+    assert not (found & {"VGI005", "VGI006", "VGI007"})
+
+
+def test_invalid_data_version_spec_flagged():
+    cat = F.catalog(F.schema("main"))
+    cat.data_version_spec = "not a spec"
+    assert "VGI005" in set(codes(cat))
+
+
+def test_invalid_release_version_flagged():
+    cat = F.catalog(F.schema("main"), releases=[Release(version="v1.2.three")])
+    assert "VGI006" in set(codes(cat))
+
+
+def test_release_outside_spec_flagged():
+    cat = F.catalog(
+        F.schema("main"),
+        releases=[Release(version="1.0.0"), Release(version="2.5.0")],
+    )
+    cat.data_version_spec = ">=1.0.0,<2.0.0"
+    found = set(codes(cat))
+    assert "VGI007" in found  # 2.5.0 is outside >=1.0.0,<2.0.0
+    assert "VGI005" not in found  # the spec itself is valid
+
+
 # --- discoverability (VGI12x) ---------------------------------------------
 def test_duplicate_descriptions_flagged():
     t1 = F.table("main", "a", comment="Reference data about the system overall")

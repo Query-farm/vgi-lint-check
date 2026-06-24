@@ -117,6 +117,7 @@ def _lint_one_version(
             catalog_name=discovery.catalog,
             source_url=discovery.source_url,
             implementation_version=discovery.implementation_version,
+            data_version_spec=discovery.data_version_spec,
             releases=releases,
             setting_rows=diff.setting_rows,
             pragma_rows=diff.pragma_rows,

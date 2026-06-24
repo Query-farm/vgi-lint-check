@@ -23,6 +23,9 @@ skipped unless `--execute` is passed.
 | `VGI002` | warning | catalog-description-llm | The catalog must carry a 'vgi.description_llm' tag for agents. |  |
 | `VGI003` | warning | catalog-description-md | The catalog must carry a 'vgi.description_md' tag for human docs. |  |
 | `VGI004` | warning | catalog-source-url | The catalog should advertise a source_url (provenance / about link). |  |
+| `VGI005` | warning | data-version-spec-valid | data_version_spec, when set, must be a valid semver version range. |  |
+| `VGI006` | warning | release-version-valid | Every published data-version release must be a valid semver version. |  |
+| `VGI007` | warning | releases-within-spec | Every published release must be contained by data_version_spec. |  |
 
 ## Discoverability (VGI12x)
 
@@ -140,4 +143,4 @@ skipped unless `--execute` is passed.
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
 | `VGI903` | error | view-executes | Every defined view must actually execute against the worker. | requires `--execute` |
 
-_60 rules._
+_63 rules._
