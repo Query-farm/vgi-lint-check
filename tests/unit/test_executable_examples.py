@@ -79,6 +79,22 @@ def test_vgi507_flags_malformed_and_incomplete():
     # the well-formed example produced no VGI507
 
 
+def test_vgi509_flags_worker_with_no_executable_examples():
+    # a worker with objects but zero executable examples is flagged
+    fn = F.func("main", "f", description="d")
+    s = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=[fn])
+    assert "VGI509" in _lint(F.catalog(s))
+    # ...but not once at least one object ships an executable example
+    fn2 = F.func(
+        "main",
+        "g",
+        description="d",
+        executable_examples=[F.exec_example(0, "demo", [("s", "SELECT v.main.g(1)")])],
+    )
+    s2 = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=[fn2])
+    assert "VGI509" not in _lint(F.catalog(s2))
+
+
 def test_vgi508_limits_example_count():
     from vgi_lint_check.config import Options
 

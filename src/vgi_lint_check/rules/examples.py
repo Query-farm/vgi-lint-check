@@ -250,6 +250,32 @@ class ExecutableExamplesWellFormed(Rule):
 
 
 @register
+class WorkerHasExecutableExamples(Rule):
+    code = "VGI509"
+    name = "worker-has-executable-examples"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A worker should ship at least one vgi.executable_examples (guaranteed-runnable)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        # An empty catalog is the bigger problem (VGI011); don't pile on.
+        if not cat.has_objects():
+            return
+        total = sum(len(examples) for _id, examples, _err in cat.iter_executable_example_hosts())
+        if total == 0:
+            yield self.finding(
+                ctx,
+                cat.id,
+                "worker ships no executable examples",
+                "add a vgi.executable_examples tag to at least one object so agents "
+                f"have a guaranteed-runnable, verified example to learn from. "
+                f"{_EXECUTABLE_SCHEMA_HINT}",
+            )
+
+
+@register
 class TooManyExecutableExamples(Rule):
     code = "VGI508"
     name = "too-many-executable-examples"

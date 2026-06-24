@@ -56,8 +56,9 @@ def test_clean_table_no_findings():
         tags=_SCHEMA_TAGS,
         tables=[t],
     )
-    # VGI151 (catalog-wide minimum example count) is marketing, not per-object.
-    found = codes(F.catalog(s), ignore=["VGI151"])
+    # VGI151 (catalog-wide minimum example count) is marketing, not per-object;
+    # VGI509 (worker ships executable examples) is a separate coverage nudge.
+    found = codes(F.catalog(s), ignore=["VGI151", "VGI509"])
     assert found == [] or set(found) <= set()  # nothing flagged
 
 
