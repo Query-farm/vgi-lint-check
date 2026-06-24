@@ -57,11 +57,13 @@ def connect_loaded(*, install: bool = True, spatial: bool = False) -> tuple[Any,
     con = haybarn.connect()
     if install:
         try:
-            con.execute("INSTALL vgi FROM community")
+            # FORCE INSTALL re-fetches the community build so we always lint
+            # against the current vgi extension, not a stale cached copy.
+            con.execute("FORCE INSTALL vgi FROM community")
         except Exception as e:  # noqa: BLE001
             con.close()
             raise WorkerConnectionError(
-                "couldn't INSTALL vgi FROM community — offline or community "
+                "couldn't FORCE INSTALL vgi FROM community — offline or community "
                 f"repo blocked? preinstall and use --no-install. ({e})"
             ) from e
     try:

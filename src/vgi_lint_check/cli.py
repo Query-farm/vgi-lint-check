@@ -61,7 +61,7 @@ def app() -> None:
 @click.option("--as", "alias", default=None, help="Local catalog alias handle.")
 @click.option("--catalog", "catalog_name", default=None, help="Worker catalog name.")
 @click.option("--spatial/--no-spatial", default=False, help="Load the spatial extension.")
-@click.option("--install/--no-install", default=True, help="INSTALL vgi from community.")
+@click.option("--install/--no-install", default=True, help="FORCE INSTALL vgi from community.")
 @click.option(
     "--data-version",
     "data_versions",
