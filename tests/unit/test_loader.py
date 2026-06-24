@@ -1,0 +1,96 @@
+from vgi_lint_check.loader import build_catalog
+from vgi_lint_check.model import ObjectKind
+from vgi_lint_check.snapshot import Snapshot
+
+
+def make_snapshot():
+    return Snapshot(
+        schemas=[
+            {"database_name": "v", "schema_name": "main", "comment": "Main schema",
+             "tags": {"provider": "acme", "domain": "demo"}},
+            {"database_name": "other", "schema_name": "x", "comment": None, "tags": {}},
+        ],
+        tables=[
+            {"database_name": "v", "schema_name": "main", "table_name": "animals",
+             "comment": "Animals", "column_count": 2, "internal": False,
+             "tags": {
+                 "vgi.description_llm": "Animals for LLMs",
+                 "vgi.example_queries": '[{"description":"all","sql":"SELECT * FROM animals"}]',
+             }},
+            {"database_name": "v", "schema_name": "main", "table_name": "broken",
+             "comment": None, "column_count": 1, "internal": True,
+             "tags": {"vgi.example_queries": "{not json"}},
+        ],
+        columns=[
+            {"database_name": "v", "schema_name": "main", "table_name": "animals",
+             "column_name": "name", "data_type": "VARCHAR", "comment": "the name"},
+            {"database_name": "v", "schema_name": "main", "table_name": "animals",
+             "column_name": "legs", "data_type": "INTEGER", "comment": None},
+        ],
+        views=[
+            {"database_name": "v", "schema_name": "main", "view_name": "av",
+             "comment": "a view", "internal": False, "tags": {}, "sql": "SELECT 1"},
+        ],
+        functions=[
+            {"database_name": "v", "schema_name": "main", "function_name": "animals",
+             "function_type": "table", "description": "scan animals", "internal": False,
+             "tags": {}, "parameters": [], "parameter_types": [], "examples": []},
+            {"database_name": "v", "schema_name": "main", "function_name": "loud",
+             "function_type": "macro", "description": None, "internal": False,
+             "tags": {}, "parameters": ["x"], "parameter_types": ["VARCHAR"],
+             "examples": [], "macro_definition": "upper(x)"},
+        ],
+        settings=[],
+    )
+
+
+def test_scoping_by_alias_keeps_internal():
+    # VGI marks worker objects internal=true, so they must be KEPT; only the
+    # alias filter excludes other catalogs.
+    cat = build_catalog(make_snapshot(), "v", "loc")
+    assert {s.name for s in cat.schemas} == {"main"}  # 'other' excluded by alias
+    tables = list(cat.iter_tables())
+    assert {t.name for t in tables} == {"animals", "broken"}
+
+
+def test_tags_and_examples():
+    cat = build_catalog(make_snapshot(), "v", "loc")
+    animals = next(t for t in cat.iter_tables() if t.name == "animals")
+    assert animals.description_llm == "Animals for LLMs"
+    assert animals.tags.plain == {}  # only reserved keys present
+    assert len(animals.examples) == 1
+    assert animals.examples[0].sql == "SELECT * FROM animals"
+    assert animals.examples_parse_error is None
+
+    broken = next(t for t in cat.iter_tables() if t.name == "broken")
+    assert broken.examples == []
+    assert broken.examples_parse_error is not None
+
+
+def test_columns_attached():
+    cat = build_catalog(make_snapshot(), "v", "loc")
+    animals = next(t for t in cat.iter_tables() if t.name == "animals")
+    assert [c.name for c in animals.columns] == ["name", "legs"]
+    assert animals.columns[0].documented and not animals.columns[1].documented
+
+
+def test_table_function_correlation():
+    cat = build_catalog(make_snapshot(), "v", "loc")
+    animals = next(t for t in cat.iter_tables() if t.name == "animals")
+    assert animals.backing_function is not None
+    assert animals.backing_function.function_type == "table"
+    # table-functions are excluded from iter_functions()
+    fns = list(cat.iter_functions())
+    assert {f.name for f in fns} == {"loud"}
+    assert next(iter(fns)).is_macro
+
+
+def test_settings_and_pragmas_diff_scoped():
+    cat = build_catalog(
+        make_snapshot(), "v", "loc",
+        setting_rows=[{"name": "v_opt", "description": "an option", "input_type": "VARCHAR", "scope": "GLOBAL", "value": "x"}],
+        pragma_rows=[{"function_name": "v_pragma", "description": None, "tags": {}}],
+    )
+    assert [s.name for s in cat.settings] == ["v_opt"]
+    assert cat.settings[0].id.kind is ObjectKind.SETTING
+    assert [p.name for p in cat.pragmas] == ["v_pragma"]

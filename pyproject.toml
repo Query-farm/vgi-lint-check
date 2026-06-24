@@ -1,0 +1,70 @@
+[project]
+name = "vgi-lint-check"
+version = "0.1.0"
+description = "A pydoclint-style metadata-quality linter for VGI workers."
+readme = "README.md"
+keywords = [
+    "vgi",
+    "duckdb",
+    "haybarn",
+    "linter",
+    "metadata",
+    "data-quality",
+    "documentation",
+    "catalog",
+    "data-engineering",
+    "cli",
+]
+license = { file = "LICENSE" }
+authors = [{ name = "Rusty Conover", email = "rusty@query.farm" }]
+maintainers = [{ name = "Query Farm LLC", email = "hello@query.farm" }]
+classifiers = [
+    "License :: Other/Proprietary License",
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
+requires-python = ">=3.11"
+dependencies = [
+    # haybarn ships only release candidates; the >=...rc1 specifier lets PEP 440
+    # installers (pip/uv) select the prerelease for this dependency.
+    "haybarn>=1.5.4rc1",
+    "click>=8.1",
+    "rich>=13",
+    # Needed by DuckDB/haybarn to materialize timezone-aware timestamps that
+    # workers publish in vgi_catalogs() release metadata.
+    "pytz>=2024.1",
+]
+
+[project.urls]
+Homepage = "https://query.farm"
+Repository = "https://github.com/Query-farm/vgi-lint-check"
+Issues = "https://github.com/Query-farm/vgi-lint-check/issues"
+
+[project.scripts]
+vgi-lint = "vgi_lint_check.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8", "twine>=5"]
+
+[tool.uv]
+prerelease = "allow"
+
+[tool.pytest.ini_options]
+markers = [
+    "live: tests that attach to a running VGI worker (network/subprocess); skipped by default",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"

@@ -1,0 +1,166 @@
+"""Configuration: rule selection, per-rule severity, tuning options, and the
+deterministic severity-resolution order rules depend on.
+
+Precedence (lowest -> highest) is applied by the loader in ``cli.py``:
+built-in defaults < pyproject.toml < dedicated file < env < CLI flags.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .findings import Severity
+
+
+@dataclass
+class Options:
+    """Rule tuning knobs (the ``[tool.vgi-lint-check.options]`` table)."""
+
+    column_comment_min_ratio: float = 0.8
+    min_llm_description_chars: int = 40
+    min_md_description_chars: int = 80
+    min_description_chars: int = 12
+    required_schema_tags: list[str] = field(default_factory=lambda: ["provider", "domain"])
+    required_table_tags: list[str] = field(default_factory=list)
+    allowed_tag_keys: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Config:
+    select: list[str] = field(default_factory=lambda: ["ALL"])
+    ignore: list[str] = field(default_factory=list)
+    categories: list[str] | None = None  # None = all categories
+    severity_overrides: dict[str, Severity] = field(default_factory=dict)
+    per_object: dict[str, list[str]] = field(default_factory=dict)  # glob -> [codes]
+    options: Options = field(default_factory=Options)
+
+    # runtime / behavioural
+    execute: bool = False
+    execute_mode: str = "explain"
+    execute_limit: int = 1
+    fail_on: Severity = Severity.ERROR
+    location: str | None = None
+    baseline: str | None = None
+
+    # ---- rule selection / severity resolution ----------------------------
+    def _code_matches(self, code: str, patterns: list[str]) -> bool:
+        for p in patterns:
+            if p.upper() == "ALL" or fnmatch.fnmatch(code, p):
+                return True
+        return False
+
+    def effective_severity(self, rule) -> Severity:
+        """Resolve a rule's severity per the documented order. OFF = disabled."""
+        # 1. execution rules need --execute
+        if getattr(rule, "requires_connection", False) and not self.execute:
+            return Severity.OFF
+        # 2. category gate
+        if self.categories is not None and str(rule.category) not in self.categories:
+            return Severity.OFF
+        # 3. select / ignore globs
+        if not self._code_matches(rule.code, self.select):
+            return Severity.OFF
+        if self._code_matches(rule.code, self.ignore):
+            return Severity.OFF
+        # 4. explicit per-rule override, else the rule default
+        return self.severity_overrides.get(rule.code, rule.default_severity)
+
+    def is_object_ignored(self, object_id, code: str) -> bool:
+        qualified = object_id.qualified()
+        for glob, codes in self.per_object.items():
+            if fnmatch.fnmatch(qualified, glob) and (
+                not codes or self._code_matches(code, codes)
+            ):
+                return True
+        return False
+
+
+# --------------------------------------------------------------------------
+# Loading / merging
+# --------------------------------------------------------------------------
+def _coerce_options(raw: dict) -> Options:
+    opts = Options()
+    for k, v in (raw or {}).items():
+        key = k.replace("-", "_")
+        if hasattr(opts, key):
+            setattr(opts, key, v)
+    return opts
+
+
+def from_table(raw: dict) -> Config:
+    """Build a Config from a parsed ``[tool.vgi-lint-check]`` table."""
+    raw = {k.replace("-", "_"): v for k, v in (raw or {}).items()}
+    cfg = Config()
+    if "select" in raw:
+        cfg.select = list(raw["select"])
+    if "ignore" in raw:
+        cfg.ignore = list(raw["ignore"])
+    if "extend_select" in raw:
+        cfg.select = cfg.select + list(raw["extend_select"])
+    if "extend_ignore" in raw:
+        cfg.ignore = cfg.ignore + list(raw["extend_ignore"])
+    if "categories" in raw:
+        cfg.categories = list(raw["categories"])
+    if "fail_on" in raw:
+        cfg.fail_on = Severity.parse(raw["fail_on"])
+    if "location" in raw:
+        cfg.location = raw["location"]
+    if "baseline" in raw:
+        cfg.baseline = raw["baseline"]
+    if "severity" in raw and isinstance(raw["severity"], dict):
+        cfg.severity_overrides = {
+            code: Severity.parse(level) for code, level in raw["severity"].items()
+        }
+    if "per_object" in raw and isinstance(raw["per_object"], dict):
+        cfg.per_object = {
+            glob: list(spec.get("ignore", []))
+            for glob, spec in raw["per_object"].items()
+        }
+    if "options" in raw:
+        cfg.options = _coerce_options(raw["options"])
+    if "execution" in raw and isinstance(raw["execution"], dict):
+        ex = raw["execution"]
+        cfg.execute = bool(ex.get("enabled", cfg.execute))
+        cfg.execute_mode = ex.get("mode", cfg.execute_mode)
+        cfg.execute_limit = int(ex.get("limit", cfg.execute_limit))
+    return cfg
+
+
+def load_config(
+    explicit_path: str | Path | None = None,
+    start_dir: str | Path | None = None,
+) -> Config:
+    """Discover and parse config.
+
+    Looks at an explicit file first, then ``vgi-lint.toml`` and
+    ``pyproject.toml`` (``[tool.vgi-lint-check]``) from ``start_dir`` upward.
+    Returns built-in defaults when nothing is found.
+    """
+    path = _discover_path(explicit_path, start_dir)
+    if path is None:
+        return Config()
+    data = tomllib.loads(Path(path).read_text())
+    if path.name == "pyproject.toml":
+        table = data.get("tool", {}).get("vgi-lint-check", {})
+    else:
+        table = data.get("tool", {}).get("vgi-lint-check", data)
+    return from_table(table)
+
+
+def _discover_path(explicit_path, start_dir) -> Path | None:
+    if explicit_path:
+        return Path(explicit_path)
+    start = Path(start_dir or Path.cwd()).resolve()
+    for d in [start, *start.parents]:
+        for name in ("vgi-lint.toml", "pyproject.toml"):
+            candidate = d / name
+            if candidate.is_file():
+                if name == "pyproject.toml":
+                    data = tomllib.loads(candidate.read_text())
+                    if "vgi-lint-check" not in data.get("tool", {}):
+                        continue
+                return candidate
+    return None

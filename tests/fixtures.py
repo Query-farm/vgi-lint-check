@@ -1,0 +1,101 @@
+"""Hand-built catalog fixtures for offline rule tests."""
+
+from __future__ import annotations
+
+from vgi_lint_check.model import (
+    Catalog,
+    Column,
+    ExampleQuery,
+    Function,
+    ObjectId,
+    ObjectKind,
+    Pragma,
+    Schema,
+    Setting,
+    Table,
+    TagSet,
+    View,
+)
+
+
+def col(schema, table, name, comment=None, dtype="VARCHAR"):
+    return Column(
+        id=ObjectId("v", ObjectKind.COLUMN, schema=schema, name=table, column=name),
+        name=name,
+        data_type=dtype,
+        comment=comment,
+    )
+
+
+def table(schema, name, *, comment=None, tags=None, columns=(), examples=(), parse_error=None):
+    return Table(
+        id=ObjectId("v", ObjectKind.TABLE, schema=schema, name=name),
+        schema=schema,
+        name=name,
+        comment=comment,
+        tags=TagSet(dict(tags or {})),
+        columns=list(columns),
+        column_count=len(columns),
+        examples=list(examples),
+        examples_parse_error=parse_error,
+    )
+
+
+def view(schema, name, *, comment=None, tags=None, columns=(), examples=()):
+    return View(
+        id=ObjectId("v", ObjectKind.VIEW, schema=schema, name=name),
+        schema=schema,
+        name=name,
+        comment=comment,
+        tags=TagSet(dict(tags or {})),
+        columns=list(columns),
+        examples=list(examples),
+    )
+
+
+def func(schema, name, ftype="scalar", *, description=None, comment=None, parameters=(), examples=()):
+    return Function(
+        id=ObjectId("v", ObjectKind.SCALAR_FUNCTION, schema=schema, name=name),
+        schema=schema,
+        name=name,
+        function_type=ftype,
+        description=description,
+        comment=comment,
+        parameters=list(parameters),
+        examples=list(examples),
+    )
+
+
+def example(i, description, sql):
+    return ExampleQuery(index=i, description=description, sql=sql, raw={})
+
+
+def setting(name, description=None):
+    return Setting(id=ObjectId("v", ObjectKind.SETTING, name=name), name=name, description=description)
+
+
+def pragma(name, description=None):
+    return Pragma(id=ObjectId("v", ObjectKind.PRAGMA, name=name), name=name, description=description)
+
+
+def schema(name, *, comment=None, tags=None, tables=(), views=(), functions=()):
+    return Schema(
+        id=ObjectId("v", ObjectKind.SCHEMA, schema=name),
+        database="v",
+        name=name,
+        comment=comment,
+        tags=TagSet(dict(tags or {})),
+        tables=list(tables),
+        views=list(views),
+        functions=list(functions),
+    )
+
+
+def catalog(*schemas, settings=(), pragmas=()):
+    return Catalog(
+        database="v",
+        location="loc",
+        schemas=list(schemas),
+        settings=list(settings),
+        pragmas=list(pragmas),
+    )
