@@ -185,6 +185,27 @@ def test_catalog_support_tags():
     assert "VGI009" in set(codes(bare))
 
 
+def test_support_contact_and_policy_url_validity():
+    # a URL-shaped support contact that isn't http(s) is flagged
+    assert "VGI010" in set(
+        codes(F.catalog(F.schema("main"), tags={"vgi.support_contact": "ftp://x"}))
+    )
+    # an email contact is fine (no URL to validate)
+    assert "VGI010" not in set(
+        codes(F.catalog(F.schema("main"), tags={"vgi.support_contact": "help@example.com"}))
+    )
+    # a valid http(s) contact URL is fine
+    assert "VGI010" not in set(
+        codes(
+            F.catalog(F.schema("main"), tags={"vgi.support_contact": "https://example.com/issues"})
+        )
+    )
+    # a support policy URL must be a real http(s) URL
+    assert "VGI010" in set(
+        codes(F.catalog(F.schema("main"), tags={"vgi.support_policy_url": "example.com/policy"}))
+    )
+
+
 def test_catalog_attribution_required_tags():
     # F.catalog defaults supply author/copyright/license -> no finding
     assert "VGI160" not in set(codes(F.catalog(F.schema("main"))))

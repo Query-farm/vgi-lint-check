@@ -41,6 +41,16 @@ def _parse_version(version: str) -> Version | None:
         return None
 
 
+def _is_http_url(value: str) -> bool:
+    return value.strip().lower().startswith(("http://", "https://"))
+
+
+def _looks_like_url_attempt(value: str) -> bool:
+    """True when a value seems intended as a URL (so a bad one should be flagged)."""
+    v = value.strip().lower()
+    return "://" in v or v.startswith("www.")
+
+
 @register
 class CatalogComment(Rule):
     code = "VGI001"
@@ -148,6 +158,36 @@ class CatalogSupport(Rule):
                 ctx.catalog.id,
                 f"catalog has no support policy URL ('{TAG_SUPPORT_POLICY_URL}')",
                 "add a 'vgi.support_policy_url' tag linking to the support/SLA policy",
+            )
+
+
+@register
+class SupportLinksValid(Rule):
+    code = "VGI010"
+    name = "support-links-valid"
+    category = CAT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A URL in the support contact / policy must be a valid http(s) URL."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        tags = ctx.catalog.tags
+        contact = tags.get(TAG_SUPPORT_CONTACT) or ""
+        # The contact may be an email; only validate it when it looks like a URL.
+        if contact and _looks_like_url_attempt(contact) and not _is_http_url(contact):
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"support contact looks like a URL but is not a valid http(s) URL: {contact!r}",
+                "use an absolute http(s) URL (or a plain email address)",
+            )
+        policy = tags.get(TAG_SUPPORT_POLICY_URL) or ""
+        if policy and not _is_http_url(policy):
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"support policy URL is not a valid http(s) URL: {policy!r}",
+                "use an absolute http(s) URL for the support policy",
             )
 
 
