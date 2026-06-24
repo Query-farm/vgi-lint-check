@@ -62,7 +62,7 @@ families:
 | Discoverability | VGI12x | duplicate/short/echoed descriptions, join-path docs, release freshness, example richness, units (opt-in) |
 | Content | VGI17x | `vgi.description_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage (tables **and views**), comment-not-echo |
-| Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples, scalar-function stability (all-VOLATILE smell; per-function audit opt-in) |
+| Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples, scalar-function stability (all-VOLATILE smell + per-function VOLATILE flag) |
 | Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity |
 | Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete entries, **catalog-qualified**, references the object it documents |
 | Settings | VGI6xx | setting descriptions |

@@ -95,7 +95,7 @@ skipped unless `--execute` is passed.
 | `VGI306` | warning | function-example | Scalar/aggregate functions should ship an example query. |  |
 | `VGI307` | warning | table-function-columns-documented | A table function with a dynamic schema (no backing table) must document its returned columns in a 'vgi.columns_md' tag. |  |
 | `VGI308` | warning | all-scalar-functions-volatile | Every scalar function being VOLATILE usually means stability was never set. |  |
-| `VGI309` | off | volatile-scalar-function | Flag each VOLATILE scalar/aggregate function for a stability audit. | opt-in |
+| `VGI309` | warning | volatile-scalar-function | Flag each VOLATILE scalar/aggregate function for a stability audit. |  |
 
 ## Tags (VGI4xx)
 

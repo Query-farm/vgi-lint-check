@@ -266,20 +266,21 @@ def test_scalar_function_stability():
         F.func("main", "f2", "scalar", description="d", stability="VOLATILE"),
     ]
     s = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=vol)
-    found = set(codes(F.catalog(s)))
+    found = codes(F.catalog(s))
     assert "VGI308" in found  # all scalar functions volatile -> probably unset
-    # VGI309 is opt-in (off by default)
-    assert "VGI309" not in found
-    on = set(codes(F.catalog(s), severity_overrides={"VGI309": Severity.WARNING}))
-    assert "VGI309" in on  # per-function flag once enabled
+    # VGI309 flags each volatile function (on by default)
+    assert found.count("VGI309") == 2
 
-    # a mix (one CONSISTENT) is a deliberate choice -> VGI308 does not fire
+    # a mix (one CONSISTENT) is a deliberate choice -> VGI308 does not fire,
+    # but VGI309 still flags the single volatile one for review.
     mixed = [
         F.func("main", "f1", "scalar", description="d", stability="VOLATILE"),
         F.func("main", "f2", "scalar", description="d", stability="CONSISTENT"),
     ]
     s2 = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=mixed)
-    assert "VGI308" not in set(codes(F.catalog(s2)))
+    found2 = codes(F.catalog(s2))
+    assert "VGI308" not in found2
+    assert found2.count("VGI309") == 1
 
 
 def test_settings_and_pragmas():

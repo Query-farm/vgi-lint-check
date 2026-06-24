@@ -231,7 +231,7 @@ class VolatileScalarFunction(Rule):
     code = "VGI309"
     name = "volatile-scalar-function"
     category = FUNC
-    default_severity = Severity.OFF  # opt-in: some functions are legitimately volatile
+    default_severity = Severity.WARNING
     targets = (ObjectKind.SCALAR_FUNCTION, ObjectKind.AGGREGATE)
     summary = "Flag each VOLATILE scalar/aggregate function for a stability audit."
 
