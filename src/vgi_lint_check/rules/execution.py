@@ -7,16 +7,18 @@ These rules require a connection and only run when ``--execute`` is set. Modes:
 
 from __future__ import annotations
 
-from ..findings import Category, Severity
-from ..model import ObjectKind
+from collections.abc import Iterator
+
+from ..findings import Category, Finding, Severity
+from ..model import Catalog, Function, ObjectKind, Table, View
 from ._util import blank
-from .base import Rule
+from .base import Rule, RuleContext
 from .registry import register
 
 EXEC = Category.EXECUTION
 
 
-def _example_hosts(catalog):
+def _example_hosts(catalog: Catalog) -> Iterator[Table | View | Function]:
     yield from catalog.iter_table_like()
     yield from catalog.iter_macros()
 
@@ -40,7 +42,7 @@ class ExampleQueriesExecute(Rule):
     requires_connection = True
     summary = "Every example query should bind/execute against the worker."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         con = ctx.connection
         if con is None:
             return
@@ -50,13 +52,15 @@ class ExampleQueriesExecute(Rule):
             for ex in obj.examples:
                 if blank(ex.sql):
                     continue
+                sql = ex.sql or ""
                 try:
-                    con.execute(_prepare(ex.sql, mode, limit))
+                    con.execute(_prepare(sql, mode, limit))
                 except Exception as e:  # noqa: BLE001 - surface engine error
                     yield self.finding(
-                        ctx, obj.id,
+                        ctx,
+                        obj.id,
                         f"example #{ex.index} failed: {type(e).__name__}: {e}",
-                        f"fix the example SQL; query: {ex.sql[:120]}",
+                        f"fix the example SQL; query: {sql[:120]}",
                     )
 
 
@@ -70,7 +74,7 @@ class ExampleQueriesReturnRows(Rule):
     requires_connection = True
     summary = "Example queries should return at least one row (limit mode)."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         con = ctx.connection
         if con is None:
             return
@@ -79,14 +83,16 @@ class ExampleQueriesReturnRows(Rule):
             for ex in obj.examples:
                 if blank(ex.sql):
                     continue
-                wrapped = f"SELECT * FROM ({ex.sql.rstrip().rstrip(';')}) AS _q LIMIT {limit}"
+                sql = ex.sql or ""
+                wrapped = f"SELECT * FROM ({sql.rstrip().rstrip(';')}) AS _q LIMIT {limit}"
                 try:
                     rows = con.execute(wrapped).fetchall()
                 except Exception:  # noqa: BLE001 - VGI901 reports execution errors
                     continue
                 if not rows:
                     yield self.finding(
-                        ctx, obj.id,
+                        ctx,
+                        obj.id,
                         f"example #{ex.index} returned no rows",
                         "use an example that returns data so consumers see output",
                     )

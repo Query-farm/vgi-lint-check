@@ -1,10 +1,9 @@
 from dataclasses import dataclass
 
+from tests import fixtures as F
 from vgi_lint_check import baseline, comparison, scoring
 from vgi_lint_check.findings import Category, Finding, Severity
 from vgi_lint_check.model import ObjectId, ObjectKind
-
-from tests import fixtures as F
 
 
 def _finding(code, sev=Severity.WARNING, name="x"):
@@ -13,9 +12,13 @@ def _finding(code, sev=Severity.WARNING, name="x"):
 
 
 def test_score_perfect_catalog():
-    t = F.table("main", "t", comment="c",
-                columns=[F.col("main", "t", "a", "doc")],
-                examples=[F.example(0, "d", "SELECT * FROM t")])
+    t = F.table(
+        "main",
+        "t",
+        comment="c",
+        columns=[F.col("main", "t", "a", "doc")],
+        examples=[F.example(0, "d", "SELECT * FROM t")],
+    )
     s = F.schema("main", comment="c", tables=[t])
     qs = scoring.compute(F.catalog(s), [])
     assert qs.score == 100
@@ -72,15 +75,16 @@ def test_comparison_deltas_and_added_objects():
     s1 = F.schema("main", comment="c", tables=[F.table("main", "t")])
     cat1 = F.catalog(s1)
     cat1.data_version = "1.0.0"
-    s2 = F.schema("main", comment="c",
-                  tables=[F.table("main", "t"), F.table("main", "t2")])
+    s2 = F.schema("main", comment="c", tables=[F.table("main", "t"), F.table("main", "t2")])
     cat2 = F.catalog(s2)
     cat2.data_version = "2.0.0"
 
-    comp = comparison.build([
-        _Result(cat1, [_finding("VGI112")], 70),
-        _Result(cat2, [_finding("VGI112")], 80),
-    ])
+    comp = comparison.build(
+        [
+            _Result(cat1, [_finding("VGI112")], 70),
+            _Result(cat2, [_finding("VGI112")], 80),
+        ]
+    )
     assert [r.data_version for r in comp.rows] == ["1.0.0", "2.0.0"]
     assert comp.rows[1].delta_score == 10
     assert "v.main.t2" in comp.rows[1].added_objects

@@ -11,7 +11,12 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .findings import Finding
 
 _BASELINE_VERSION = 1
 
@@ -28,14 +33,12 @@ def baseline_path(prefix: str, data_version: str | None) -> Path:
     A prefix ending in ``.json`` keeps its stem: ``foo.json`` -> ``foo.<v>.json``.
     """
     p = Path(prefix)
-    if p.suffix == ".json":
-        stem = p.with_suffix("")
-    else:
-        stem = p
+    stem = p.with_suffix("") if p.suffix == ".json" else p
     return Path(f"{stem}.{_safe_version(data_version)}.json")
 
 
-def fingerprint(finding) -> str:
+def fingerprint(finding: Finding) -> str:
+    r"""Stable ``code\tqualified-object`` identity for a finding."""
     return f"{finding.code}\t{finding.object_id.qualified()}"
 
 
@@ -48,7 +51,8 @@ def load(prefix: str, data_version: str | None) -> set[str] | None:
     return set(data.get("findings", []))
 
 
-def write(prefix: str, data_version: str | None, findings) -> Path:
+def write(prefix: str, data_version: str | None, findings: Iterable[Finding]) -> Path:
+    """Write the per-version baseline file and return its path."""
     path = baseline_path(prefix, data_version)
     payload = {
         "baseline_version": _BASELINE_VERSION,
@@ -60,7 +64,9 @@ def write(prefix: str, data_version: str | None, findings) -> Path:
     return path
 
 
-def classify(findings, prefix: str | None, data_version: str | None):
+def classify(
+    findings: Iterable[Finding], prefix: str | None, data_version: str | None
+) -> list[Finding]:
     """Tag each finding ``is_new`` relative to the version baseline.
 
     With no baseline configured or no baseline file, every finding is new.

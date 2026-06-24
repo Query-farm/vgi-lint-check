@@ -124,6 +124,13 @@ Precedence: defaults < `pyproject.toml` < `vgi-lint.toml` < CLI flags.
 `0` clean (or below `--fail-on`) · `1` config/tool error · `2` findings ≥
 `--fail-on` (regressions only when a baseline is set) · `3` connection error.
 
+## Security / trust boundary
+
+A subprocess `LOCATION` is **executed as a command** to launch the worker (the
+`vgi` extension spawns it). Treat `location` like any shell command: never pass
+an attacker-controlled value, and in CI never derive it from untrusted input
+(e.g. a fork PR title/branch). Prefer a fixed path or HTTP URL you control.
+
 ## GitHub Action (reusable)
 
 This repo ships a composite action so a worker repo can lint itself in CI with a

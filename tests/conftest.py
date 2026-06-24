@@ -13,7 +13,9 @@ import pytest
 
 def pytest_addoption(parser):
     parser.addoption(
-        "--run-live", action="store_true", default=False,
+        "--run-live",
+        action="store_true",
+        default=False,
         help="run @pytest.mark.live tests against real workers",
     )
 

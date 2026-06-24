@@ -3,18 +3,26 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from ..findings import Category, Finding, Severity
 from ..model import Catalog, ObjectId, ObjectKind
 
+if TYPE_CHECKING:
+    from ..config import Config
+
 
 @dataclass
 class RuleContext:
+    """Per-run context handed to each rule's ``check`` method."""
+
     catalog: Catalog
-    config: object  # vgi_lint_check.config.Config
-    connection: object | None = None
+    config: Config
+    # The live haybarn connection (typed ``Any`` — a third-party DB cursor),
+    # present only for rules with ``requires_connection``.
+    connection: Any | None = None
     # Resolved severity for the rule currently executing (set by the engine).
     severity: Severity = Severity.WARNING
 
@@ -33,9 +41,7 @@ class Rule(ABC):
         ...
 
     # Helper to build a finding at the engine-resolved severity for this rule.
-    def finding(
-        self, ctx: RuleContext, object_id: ObjectId, message: str, hint: str
-    ) -> Finding:
+    def finding(self, ctx: RuleContext, object_id: ObjectId, message: str, hint: str) -> Finding:
         return Finding(
             code=self.code,
             severity=ctx.severity,

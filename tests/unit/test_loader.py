@@ -6,39 +6,92 @@ from vgi_lint_check.snapshot import Snapshot
 def make_snapshot():
     return Snapshot(
         schemas=[
-            {"database_name": "v", "schema_name": "main", "comment": "Main schema",
-             "tags": {"provider": "acme", "domain": "demo"}},
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "comment": "Main schema",
+                "tags": {"provider": "acme", "domain": "demo"},
+            },
             {"database_name": "other", "schema_name": "x", "comment": None, "tags": {}},
         ],
         tables=[
-            {"database_name": "v", "schema_name": "main", "table_name": "animals",
-             "comment": "Animals", "column_count": 2, "internal": False,
-             "tags": {
-                 "vgi.description_llm": "Animals for LLMs",
-                 "vgi.example_queries": '[{"description":"all","sql":"SELECT * FROM animals"}]',
-             }},
-            {"database_name": "v", "schema_name": "main", "table_name": "broken",
-             "comment": None, "column_count": 1, "internal": True,
-             "tags": {"vgi.example_queries": "{not json"}},
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "table_name": "animals",
+                "comment": "Animals",
+                "column_count": 2,
+                "internal": False,
+                "tags": {
+                    "vgi.description_llm": "Animals for LLMs",
+                    "vgi.example_queries": '[{"description":"all","sql":"SELECT * FROM animals"}]',
+                },
+            },
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "table_name": "broken",
+                "comment": None,
+                "column_count": 1,
+                "internal": True,
+                "tags": {"vgi.example_queries": "{not json"},
+            },
         ],
         columns=[
-            {"database_name": "v", "schema_name": "main", "table_name": "animals",
-             "column_name": "name", "data_type": "VARCHAR", "comment": "the name"},
-            {"database_name": "v", "schema_name": "main", "table_name": "animals",
-             "column_name": "legs", "data_type": "INTEGER", "comment": None},
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "table_name": "animals",
+                "column_name": "name",
+                "data_type": "VARCHAR",
+                "comment": "the name",
+            },
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "table_name": "animals",
+                "column_name": "legs",
+                "data_type": "INTEGER",
+                "comment": None,
+            },
         ],
         views=[
-            {"database_name": "v", "schema_name": "main", "view_name": "av",
-             "comment": "a view", "internal": False, "tags": {}, "sql": "SELECT 1"},
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "view_name": "av",
+                "comment": "a view",
+                "internal": False,
+                "tags": {},
+                "sql": "SELECT 1",
+            },
         ],
         functions=[
-            {"database_name": "v", "schema_name": "main", "function_name": "animals",
-             "function_type": "table", "description": "scan animals", "internal": False,
-             "tags": {}, "parameters": [], "parameter_types": [], "examples": []},
-            {"database_name": "v", "schema_name": "main", "function_name": "loud",
-             "function_type": "macro", "description": None, "internal": False,
-             "tags": {}, "parameters": ["x"], "parameter_types": ["VARCHAR"],
-             "examples": [], "macro_definition": "upper(x)"},
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "function_name": "animals",
+                "function_type": "table",
+                "description": "scan animals",
+                "internal": False,
+                "tags": {},
+                "parameters": [],
+                "parameter_types": [],
+                "examples": [],
+            },
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "function_name": "loud",
+                "function_type": "macro",
+                "description": None,
+                "internal": False,
+                "tags": {},
+                "parameters": ["x"],
+                "parameter_types": ["VARCHAR"],
+                "examples": [],
+                "macro_definition": "upper(x)",
+            },
         ],
         settings=[],
     )
@@ -85,10 +138,65 @@ def test_table_function_correlation():
     assert next(iter(fns)).is_macro
 
 
+def test_native_examples_fallback():
+    # The VGI extension surfaces a function's Meta.examples into the native
+    # duckdb_functions().examples column (VARCHAR[]). When no vgi.example_queries
+    # tag is present, the loader must fall back to that native column so example
+    # rules (VGI306) see the examples the worker actually ships.
+    snap = Snapshot(
+        schemas=[{"database_name": "v", "schema_name": "main", "comment": None, "tags": {}}],
+        functions=[
+            # native examples only, no tag
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "function_name": "r2_score",
+                "function_type": "aggregate",
+                "description": "R^2",
+                "internal": True,
+                "tags": {},
+                "parameters": [],
+                "parameter_types": [],
+                "examples": ["SELECT main.r2_score(a, b) FROM t"],
+            },
+            # tag-encoded examples take precedence over the native column
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "function_name": "tagged",
+                "function_type": "scalar",
+                "description": "d",
+                "internal": True,
+                "tags": {"vgi.example_queries": '[{"description":"x","sql":"SELECT tag"}]'},
+                "parameters": [],
+                "parameter_types": [],
+                "examples": ["SELECT native"],
+            },
+        ],
+    )
+    cat = build_catalog(snap, "v", "loc")
+    fns = {f.name: f for f in cat.iter_functions()}
+    assert [e.sql for e in fns["r2_score"].examples] == ["SELECT main.r2_score(a, b) FROM t"]
+    assert fns["r2_score"].examples_parse_error is None
+    # the tag wins (carries a description); the native column is not appended
+    assert [e.sql for e in fns["tagged"].examples] == ["SELECT tag"]
+    assert fns["tagged"].examples[0].description == "x"
+
+
 def test_settings_and_pragmas_diff_scoped():
     cat = build_catalog(
-        make_snapshot(), "v", "loc",
-        setting_rows=[{"name": "v_opt", "description": "an option", "input_type": "VARCHAR", "scope": "GLOBAL", "value": "x"}],
+        make_snapshot(),
+        "v",
+        "loc",
+        setting_rows=[
+            {
+                "name": "v_opt",
+                "description": "an option",
+                "input_type": "VARCHAR",
+                "scope": "GLOBAL",
+                "value": "x",
+            }
+        ],
         pragma_rows=[{"function_name": "v_pragma", "description": None, "tags": {}}],
     )
     assert [s.name for s in cat.settings] == ["v_opt"]

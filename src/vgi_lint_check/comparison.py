@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .findings import Severity
+
+if TYPE_CHECKING:
+    from .findings import Finding
+    from .model import Catalog, ObjectId
+    from .result import VersionResult
 
 
 @dataclass
 class VersionRow:
+    """One row of the cross-version comparison table."""
+
     data_version: str | None
     score: int
     counts: dict[str, int]
@@ -20,10 +29,12 @@ class VersionRow:
 
 @dataclass
 class Comparison:
+    """The ordered set of per-version rows for a multi-version run."""
+
     rows: list[VersionRow] = field(default_factory=list)
 
 
-def _counts(findings) -> dict[str, int]:
+def _counts(findings: Iterable[Finding]) -> dict[str, int]:
     out = {"error": 0, "warning": 0, "info": 0}
     for f in findings:
         if f.severity is Severity.ERROR:
@@ -35,11 +46,11 @@ def _counts(findings) -> dict[str, int]:
     return out
 
 
-def _object_keys(result) -> set[str]:
+def _object_keys(result: VersionResult) -> set[str]:
     return {o.qualified() for o in _iter_object_ids(result.catalog)}
 
 
-def _iter_object_ids(cat):
+def _iter_object_ids(cat: Catalog) -> Iterator[ObjectId]:
     for s in cat.iter_schemas():
         yield s.id
     for t in cat.iter_table_like():
@@ -50,7 +61,7 @@ def _iter_object_ids(cat):
         yield f.id
 
 
-def build(results) -> Comparison:
+def build(results: Iterable[VersionResult]) -> Comparison:
     """Build a comparison from an ordered list of VersionResult-like objects.
 
     Each result must expose ``.catalog`` (with ``.data_version``), ``.findings``,
@@ -58,15 +69,18 @@ def build(results) -> Comparison:
     against the previous row.
     """
     rows: list[VersionRow] = []
-    prev = None
+    prev: VersionResult | None = None
     prev_objs: set[str] = set()
     for r in results:
         objs = _object_keys(r)
-        delta = None if prev is None else (r.score - prev.score)
-        added = sorted(objs - prev_objs) if prev is not None else []
-        removed = sorted(prev_objs - objs) if prev is not None else []
-        identical = prev is not None and not added and not removed and _same_findings(
-            r.findings, prev.findings
+        delta: int | None = None if prev is None else (r.score - prev.score)
+        added: list[str] = sorted(objs - prev_objs) if prev is not None else []
+        removed: list[str] = sorted(prev_objs - objs) if prev is not None else []
+        identical = (
+            prev is not None
+            and not added
+            and not removed
+            and _same_findings(r.findings, prev.findings)
         )
         rows.append(
             VersionRow(
@@ -84,7 +98,7 @@ def build(results) -> Comparison:
     return Comparison(rows=rows)
 
 
-def _same_findings(a, b) -> bool:
+def _same_findings(a: Iterable[Finding], b: Iterable[Finding]) -> bool:
     ka = {(f.code, f.object_id.qualified()) for f in a}
     kb = {(f.code, f.object_id.qualified()) for f in b}
     return ka == kb

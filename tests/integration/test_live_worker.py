@@ -19,12 +19,9 @@ pytestmark = pytest.mark.live
 VOLCANOS = os.path.expanduser("~/Development/vgi-volcanos")
 VGI_PYTHON = os.path.expanduser("~/Development/vgi-python")
 
-VOLCANOS_LOC = (
-    f"uv run --project {VOLCANOS} {VOLCANOS}/volcano_worker.py"
-)
+VOLCANOS_LOC = f"uv run --project {VOLCANOS} {VOLCANOS}/volcano_worker.py"
 VERSIONED_LOC = (
-    f"uv run --project {VGI_PYTHON} --with pytz "
-    f"python -m vgi._test_fixtures.versioned_tables"
+    f"uv run --project {VGI_PYTHON} --with pytz python -m vgi._test_fixtures.versioned_tables"
 )
 
 

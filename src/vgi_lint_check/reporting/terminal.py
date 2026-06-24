@@ -1,13 +1,22 @@
-"""Human-friendly terminal report (rich): object-grouped, with fix hints,
-coverage bars, a quality score, and a cross-version comparison table."""
+"""Human-friendly terminal report (rich).
+
+Object-grouped, with fix hints, coverage bars, a quality score, and a
+cross-version comparison table.
+"""
 
 from __future__ import annotations
 
 import io
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 
 from .json_reporter import to_dict
+
+if TYPE_CHECKING:
+    from rich.console import Console as RichConsole
+
+    from ..result import Report
 
 _SEV_STYLE = {"error": "bold red", "warning": "yellow", "info": "cyan"}
 
@@ -17,12 +26,11 @@ def _bar(ratio: float, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-def render_terminal(report, *, color: bool = True) -> str:
+def render_terminal(report: Report, *, color: bool = True) -> str:
+    """Render the report as a rich-formatted terminal string."""
     doc = to_dict(report)
     buf = io.StringIO()
-    con = Console(
-        file=buf, force_terminal=color, no_color=not color, width=100, highlight=False
-    )
+    con = Console(file=buf, force_terminal=color, no_color=not color, width=100, highlight=False)
 
     w = doc["worker"]
     ver = f" vgi {w['vgi_version']}" if w["vgi_version"] else ""
@@ -61,11 +69,11 @@ def render_terminal(report, *, color: bool = True) -> str:
     return buf.getvalue()
 
 
-def _print_findings(con, findings):
+def _print_findings(con: RichConsole, findings: list[dict[str, Any]]) -> None:
     if not findings:
         con.print("  [green]✓ no findings[/green]")
         return
-    by_obj: dict[str, list] = {}
+    by_obj: dict[str, list[dict[str, Any]]] = {}
     order: list[str] = []
     for f in findings:
         q = f["object"]["qualified"]
@@ -80,14 +88,11 @@ def _print_findings(con, findings):
         for f in items:
             style = _SEV_STYLE.get(f["severity"], "white")
             tag = " [dim](new)[/dim]" if f["is_new"] else ""
-            con.print(
-                f"    [{style}]{f['code']}[/{style}]  {f['severity']:<7} "
-                f"{f['message']}{tag}"
-            )
+            con.print(f"    [{style}]{f['code']}[/{style}]  {f['severity']:<7} {f['message']}{tag}")
             con.print(f"        [dim]↳ {f['fix']}[/dim]")
 
 
-def _print_coverage(con, coverage):
+def _print_coverage(con: RichConsole, coverage: dict[str, float | None]) -> None:
     parts = []
     for fam, ratio in coverage.items():
         if ratio is None:
@@ -99,7 +104,7 @@ def _print_coverage(con, coverage):
             con.print(f"    {p}")
 
 
-def _print_comparison(con, comp):
+def _print_comparison(con: RichConsole, comp: dict[str, Any]) -> None:
     from rich.table import Table
 
     con.print()
@@ -128,7 +133,7 @@ def _print_comparison(con, comp):
     con.print(table)
 
 
-def _summary_line(counts: dict) -> str:
+def _summary_line(counts: dict[str, int]) -> str:
     return (
         f"{sum(counts.values())} findings  "
         f"{counts.get('error', 0)} error · {counts.get('warning', 0)} warning · "

@@ -41,6 +41,23 @@ def test_category_gate():
     assert cfg.effective_severity(FakeRule("VGI201", category="columns")) is Severity.WARNING
 
 
+def test_extend_select_composes_and_survives_cli_select():
+    # config sets extend_select; a CLI --select replaces `select` but must NOT
+    # discard extend_select.
+    cfg = Config(select=["VGI1*"], extend_select=["VGI201"])
+    assert cfg.effective_severity(FakeRule("VGI201", category="columns")) is Severity.WARNING
+    cfg.select = ["VGI3*"]  # simulate CLI override of select only
+    assert cfg.effective_severity(FakeRule("VGI201", category="columns")) is Severity.WARNING
+
+
+def test_unknown_selectors_detected():
+    cfg = Config(select=["VGI112", "VGI999"], ignore=["NOPE*"])
+    unknown = cfg.unknown_selectors(["VGI112", "VGI201"])
+    assert "VGI999" in unknown
+    assert "NOPE*" in unknown
+    assert "VGI112" not in unknown
+
+
 def test_default_off_rule_stays_off():
     cfg = Config()
     assert cfg.effective_severity(FakeRule("VGI202", default=Severity.OFF)) is Severity.OFF
@@ -56,15 +73,17 @@ def test_per_object_ignore():
 
 
 def test_from_table_parsing():
-    cfg = from_table({
-        "select": ["ALL"],
-        "ignore": ["VGI113"],
-        "fail-on": "warning",
-        "severity": {"VGI201": "error"},
-        "options": {"column-comment-min-ratio": 0.5, "required_schema_tags": ["provider"]},
-        "per-object": {"v.hans.*": {"ignore": ["VGI112"]}},
-        "execution": {"enabled": True, "mode": "limit", "limit": 3},
-    })
+    cfg = from_table(
+        {
+            "select": ["ALL"],
+            "ignore": ["VGI113"],
+            "fail-on": "warning",
+            "severity": {"VGI201": "error"},
+            "options": {"column-comment-min-ratio": 0.5, "required_schema_tags": ["provider"]},
+            "per-object": {"v.hans.*": {"ignore": ["VGI112"]}},
+            "execution": {"enabled": True, "mode": "limit", "limit": 3},
+        }
+    )
     assert cfg.ignore == ["VGI113"]
     assert cfg.fail_on is Severity.WARNING
     assert cfg.severity_overrides["VGI201"] is Severity.ERROR

@@ -1,11 +1,7 @@
-import pytest
-
+from tests import fixtures as F
 from vgi_lint_check.config import Config, Options
-from vgi_lint_check.findings import Severity
 from vgi_lint_check.rules import run, select_rules
 from vgi_lint_check.rules.base import RuleContext
-
-from tests import fixtures as F
 
 
 def lint(cat, **cfg_kwargs):
@@ -26,12 +22,14 @@ def codes(cat, **cfg_kwargs):
 
 def test_clean_table_no_findings():
     t = F.table(
-        "main", "animals",
+        "main",
+        "animals",
         comment="Animal facts",
         tags={
             "vgi.description_llm": "Animals and their attributes for LLM consumers, etc.",
             "vgi.description_md": "## Animals\nAnimals and attributes with much more detail here.",
-            "provider": "acme", "domain": "zoo",
+            "provider": "acme",
+            "domain": "zoo",
         },
         columns=[F.col("main", "animals", "name", "the animal's common name")],
         examples=[F.example(0, "all animals", "SELECT * FROM v.main.animals")],
@@ -52,8 +50,13 @@ def test_missing_llm_and_md_and_comment():
 
 def test_column_coverage_threshold():
     cols = [F.col("main", "t", "a", "documented"), F.col("main", "t", "b", None)]
-    t = F.table("main", "t", comment="c", columns=cols,
-                tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90})
+    t = F.table(
+        "main",
+        "t",
+        comment="c",
+        columns=cols,
+        tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
+    )
     s = F.schema("main", comment="c", tags={"provider": "a", "domain": "b"}, tables=[t])
     assert "VGI201" in codes(F.catalog(s))  # 50% < 80%
     # raising threshold tolerance removes it
@@ -66,19 +69,29 @@ def test_column_coverage_threshold():
 def test_function_param_split():
     no_params = F.func("main", "f0", "scalar")
     with_params = F.func("main", "f1", "scalar", parameters=["x"])
-    s = F.schema("main", comment="c", tags={"provider": "a", "domain": "b"},
-                 functions=[no_params, with_params])
+    s = F.schema(
+        "main",
+        comment="c",
+        tags={"provider": "a", "domain": "b"},
+        functions=[no_params, with_params],
+    )
     found = set(codes(F.catalog(s)))
     assert "VGI301" in found  # no-param function lacks description
     assert "VGI302" in found  # param function lacks description
 
 
 def test_macro_example_and_examples_wellformed():
-    bad = F.table("main", "broken", comment="c", parse_error="invalid JSON: x",
-                  tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90})
+    bad = F.table(
+        "main",
+        "broken",
+        comment="c",
+        parse_error="invalid JSON: x",
+        tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
+    )
     macro = F.func("main", "m", "macro", description="does a thing")
-    s = F.schema("main", comment="c", tags={"provider": "a", "domain": "b"},
-                 tables=[bad], functions=[macro])
+    s = F.schema(
+        "main", comment="c", tags={"provider": "a", "domain": "b"}, tables=[bad], functions=[macro]
+    )
     found = set(codes(F.catalog(s)))
     assert "VGI502" in found  # malformed example json
     assert "VGI303" in found  # macro has no example
@@ -86,17 +99,22 @@ def test_macro_example_and_examples_wellformed():
 
 def test_example_qualification():
     qualified = F.table(
-        "main", "a", comment="c",
+        "main",
+        "a",
+        comment="c",
         tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
         examples=[F.example(0, "ok", "SELECT * FROM v.main.a")],
     )
     unqualified = F.table(
-        "main", "b", comment="c",
+        "main",
+        "b",
+        comment="c",
         tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
         examples=[F.example(0, "bad", "SELECT * FROM b")],
     )
-    s = F.schema("main", comment="c", tags={"provider": "a", "domain": "b"},
-                 tables=[qualified, unqualified])
+    s = F.schema(
+        "main", comment="c", tags={"provider": "a", "domain": "b"}, tables=[qualified, unqualified]
+    )
     cat = F.catalog(s)
     findings = [f for f in _findings(cat) if f.code == "VGI505"]
     flagged = {f.object_id.name for f in findings}
@@ -138,6 +156,10 @@ def test_findings_sorted_deterministically():
     t = F.table("main", "zeta")
     s = F.schema("main", tables=[t])
     fs = codes(F.catalog(s))
-    assert fs == sorted(  # already sorted by (object, -sev, code)
-        fs, key=lambda c: c
-    ) or len(fs) >= 1  # smoke: deterministic order produced
+    assert (
+        fs
+        == sorted(  # already sorted by (object, -sev, code)
+            fs, key=lambda c: c
+        )
+        or len(fs) >= 1
+    )  # smoke: deterministic order produced

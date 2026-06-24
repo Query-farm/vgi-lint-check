@@ -6,6 +6,8 @@ the connection lifecycle and returns a fully populated :class:`Report`.
 
 from __future__ import annotations
 
+from typing import Any
+
 from . import baseline as _baseline
 from . import comparison as _comparison
 from . import scoring
@@ -32,6 +34,7 @@ def lint_worker(
     all_versions: bool = False,
     update_baseline: bool = False,
 ) -> Report:
+    """Connect to a worker, lint each data version, and return a :class:`Report`."""
     config = config or Config()
     con, vgi_version = connect_loaded(install=install, spatial=spatial)
     try:
@@ -42,7 +45,13 @@ def lint_worker(
         )
         results = [
             _lint_one_version(
-                con, location, name, local_alias, dv, vgi_version, config,
+                con,
+                location,
+                name,
+                local_alias,
+                dv,
+                vgi_version,
+                config,
                 update_baseline,
             )
             for dv in versions
@@ -62,25 +71,31 @@ def lint_worker(
     )
 
 
-def _discover_catalog_name(con, location: str) -> str:
+def _discover_catalog_name(con: Any, location: str) -> str:
     catalogs = discover_catalogs(con, location)
     if not catalogs:
-        raise RuntimeError(
-            f"worker at {location!r} advertised no catalogs via vgi_catalogs()"
-        )
+        raise RuntimeError(f"worker at {location!r} advertised no catalogs via vgi_catalogs()")
     return catalogs[0].catalog
 
 
 def _lint_one_version(
-    con, location, catalog_name, alias, data_version, vgi_version, config,
-    update_baseline,
+    con: Any,
+    location: str,
+    catalog_name: str,
+    alias: str,
+    data_version: str | None,
+    vgi_version: str | None,
+    config: Config,
+    update_baseline: bool,
 ) -> VersionResult:
     before = take_snapshot(con)
     with attached(con, location, catalog_name, alias, data_version=data_version):
         after = take_snapshot(con)
         diff = diff_snapshots(before, after, alias)
         catalog = build_catalog(
-            after, alias, location,
+            after,
+            alias,
+            location,
             vgi_version=vgi_version,
             data_version=data_version,
             catalog_name=catalog_name,

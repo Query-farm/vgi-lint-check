@@ -8,8 +8,23 @@ diverge.
 from __future__ import annotations
 
 import json
+from functools import lru_cache
+from importlib.resources import files
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..findings import Finding
+    from ..result import Report
 
 SCHEMA_VERSION = 1
+
+
+@lru_cache(maxsize=1)
+def report_schema() -> dict[str, Any]:
+    """Return the parsed JSON Schema for the ``schema_version`` 1 report."""
+    text = (files("vgi_lint_check") / "schema" / "report-v1.json").read_text()
+    data: dict[str, Any] = json.loads(text)
+    return data
 
 
 def _rule_summaries() -> dict[str, str]:
@@ -18,7 +33,7 @@ def _rule_summaries() -> dict[str, str]:
     return {code: (cls.summary or "") for code, cls in REGISTRY.items()}
 
 
-def _finding_dict(f, summaries) -> dict:
+def _finding_dict(f: Finding, summaries: dict[str, str]) -> dict[str, Any]:
     oid = f.object_id
     return {
         "code": f.code,
@@ -41,7 +56,8 @@ def _finding_dict(f, summaries) -> dict:
     }
 
 
-def to_dict(report) -> dict:
+def to_dict(report: Report) -> dict[str, Any]:
+    """Build the stable JSON-contract document for a report."""
     summaries = _rule_summaries()
     results = []
     for r in report.results:
@@ -76,7 +92,7 @@ def to_dict(report) -> dict:
     return doc
 
 
-def _comparison_dict(comp) -> object:
+def _comparison_dict(comp: Any) -> dict[str, Any] | None:
     if comp is None:
         return None
     return {
@@ -95,11 +111,12 @@ def _comparison_dict(comp) -> object:
     }
 
 
-def render_json(report) -> str:
+def render_json(report: Report) -> str:
+    """Render the report as a pretty-printed JSON document."""
     return json.dumps(to_dict(report), indent=2)
 
 
-def render_jsonl(report) -> str:
+def render_jsonl(report: Report) -> str:
     """One JSON object per line: the summary, then each finding (with version)."""
     summaries = _rule_summaries()
     lines = [json.dumps({"type": "summary", **to_dict(report)["summary"]})]

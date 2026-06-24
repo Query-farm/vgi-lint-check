@@ -1,9 +1,9 @@
+import pytest
+
 from vgi_lint_check.connection import attach_statement, sql_str, validate_alias
 from vgi_lint_check.diff import diff_snapshots
 from vgi_lint_check.snapshot import Snapshot
 from vgi_lint_check.versions import _parse_releases, resolve_versions
-
-import pytest
 
 
 def test_sql_str_escapes_quotes():
@@ -49,10 +49,12 @@ def test_diff_scopes_settings_and_pragmas():
 
 def test_diff_summary_counts_added_tables():
     before = Snapshot(tables=[])
-    after = Snapshot(tables=[
-        {"database_name": "v", "schema_name": "main", "table_name": "a"},
-        {"database_name": "other", "schema_name": "main", "table_name": "z"},
-    ])
+    after = Snapshot(
+        tables=[
+            {"database_name": "v", "schema_name": "main", "table_name": "a"},
+            {"database_name": "other", "schema_name": "main", "table_name": "z"},
+        ]
+    )
     d = diff_snapshots(before, after, "v")
     assert d.summary["tables"] == 1  # 'other' catalog excluded
 
@@ -89,6 +91,13 @@ def test_resolve_versions_default_is_none():
 def test_resolve_versions_all_from_discovery():
     con = _FakeCon(
         rows=[("c", "", "", "[]", '[{"version":"2.0.0"},{"version":"1.0.0"}]', None)],
-        cols=["catalog", "implementation_version", "data_version_spec", "attach_options", "releases", "source_url"],
+        cols=[
+            "catalog",
+            "implementation_version",
+            "data_version_spec",
+            "attach_options",
+            "releases",
+            "source_url",
+        ],
     )
     assert resolve_versions(con, "loc", all_versions=True) == ["2.0.0", "1.0.0"]

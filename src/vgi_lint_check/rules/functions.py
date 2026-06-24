@@ -8,11 +8,12 @@ function. Table-functions are excluded — their documentation lives on the tabl
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 
-from ..findings import Category, Severity
+from ..findings import Category, Finding, Severity
 from ..model import ObjectKind
 from ._util import blank, is_trivial_echo
-from .base import Rule
+from .base import Rule, RuleContext
 from .registry import register
 
 FUNC = Category.FUNCTIONS
@@ -34,11 +35,13 @@ class FunctionDescription(Rule):
     targets = (ObjectKind.SCALAR_FUNCTION, ObjectKind.MACRO, ObjectKind.AGGREGATE)
     summary = "Functions/macros without parameters still need a description."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for f in ctx.catalog.iter_functions():
             if not f.parameters and blank(f.description) and blank(f.comment):
                 yield self.finding(
-                    ctx, f.id, f"{f.function_type} has no description",
+                    ctx,
+                    f.id,
+                    f"{f.function_type} has no description",
                     "add a description (or COMMENT) explaining what it returns",
                 )
 
@@ -52,12 +55,13 @@ class FunctionParametersUndocumented(Rule):
     targets = (ObjectKind.SCALAR_FUNCTION, ObjectKind.MACRO, ObjectKind.AGGREGATE)
     summary = "A function that takes parameters must describe what it does."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for f in ctx.catalog.iter_functions():
             if f.parameters and blank(f.description) and blank(f.comment):
                 params = ", ".join(f.parameters)
                 yield self.finding(
-                    ctx, f.id,
+                    ctx,
+                    f.id,
                     f"{f.function_type} takes parameters ({params}) but has no description",
                     "add a description covering the parameters and the return value",
                 )
@@ -72,7 +76,7 @@ class FunctionDescriptionQuality(Rule):
     targets = (ObjectKind.SCALAR_FUNCTION, ObjectKind.MACRO, ObjectKind.AGGREGATE)
     summary = "A function description should be substantive, not a stub or echo."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         minlen = ctx.config.options.min_description_chars
         for f in ctx.catalog.iter_functions():
             desc = f.description or f.comment
@@ -80,14 +84,16 @@ class FunctionDescriptionQuality(Rule):
                 continue  # presence handled by VGI301/302
             if is_trivial_echo(desc, f.name):
                 yield self.finding(
-                    ctx, f.id,
+                    ctx,
+                    f.id,
                     f"description just restates the name ({f.name!r})",
                     "describe what the function does and returns",
                 )
-            elif len(desc.strip()) < minlen:
+            elif len((desc or "").strip()) < minlen:
                 yield self.finding(
-                    ctx, f.id,
-                    f"description is very short ({len(desc.strip())} < {minlen} chars)",
+                    ctx,
+                    f.id,
+                    f"description is very short ({len((desc or '').strip())} < {minlen} chars)",
                     "expand the description so consumers understand the function",
                 )
 
@@ -106,13 +112,14 @@ class FunctionArgumentsNamed(Rule):
     )
     summary = "All function/macro arguments should be named, not positional."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for f in ctx.catalog.iter_all_functions():
             unnamed = [p for p in f.parameters if _is_unnamed(p)]
             if unnamed:
                 shown = ", ".join(p or "<empty>" for p in unnamed)
                 yield self.finding(
-                    ctx, f.id,
+                    ctx,
+                    f.id,
                     f"{f.function_type} has unnamed/positional argument(s): {shown}",
                     "give every parameter a descriptive name",
                 )
@@ -127,11 +134,13 @@ class FunctionExample(Rule):
     targets = (ObjectKind.SCALAR_FUNCTION, ObjectKind.AGGREGATE)
     summary = "Scalar/aggregate functions should ship an example query."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for f in ctx.catalog.iter_functions():
             if f.kind in (ObjectKind.SCALAR_FUNCTION, ObjectKind.AGGREGATE) and not f.examples:
                 yield self.finding(
-                    ctx, f.id, f"{f.function_type} function has no example query",
+                    ctx,
+                    f.id,
+                    f"{f.function_type} function has no example query",
                     "add a 'vgi.example_queries' tag showing the function in use",
                 )
 
@@ -145,10 +154,12 @@ class MacroExample(Rule):
     targets = (ObjectKind.MACRO,)
     summary = "Macros should ship at least one example query showing usage."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for m in ctx.catalog.iter_macros():
             if not m.examples:
                 yield self.finding(
-                    ctx, m.id, "macro has no example query",
+                    ctx,
+                    m.id,
+                    "macro has no example query",
                     "add a 'vgi.example_queries' tag showing the macro in use",
                 )

@@ -7,10 +7,16 @@ fix and an inline rule summary, grouped by object, with coverage and score.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from .json_reporter import to_dict
 
+if TYPE_CHECKING:
+    from ..result import Report
 
-def render_agent(report) -> str:
+
+def render_agent(report: Report) -> str:
+    """Render ``report`` as compact, agent-friendly Markdown."""
     doc = to_dict(report)
     out: list[str] = []
     w = doc["worker"]
@@ -27,9 +33,7 @@ def render_agent(report) -> str:
             out.append(f"## data version {r['data_version']} — score {r['score']}")
         else:
             out.append(f"## score {r['score']}")
-        cov = ", ".join(
-            f"{k} {int(v * 100)}%" for k, v in r["coverage"].items() if v is not None
-        )
+        cov = ", ".join(f"{k} {int(v * 100)}%" for k, v in r["coverage"].items() if v is not None)
         if cov:
             out.append(f"coverage: {cov}")
         out.append("")
@@ -37,7 +41,7 @@ def render_agent(report) -> str:
             out.append("No findings. ✓")
             out.append("")
             continue
-        by_obj: dict[str, list] = {}
+        by_obj: dict[str, list[Any]] = {}
         for f in r["findings"]:
             by_obj.setdefault(f["object"]["qualified"], []).append(f)
         for obj, items in by_obj.items():
@@ -45,9 +49,7 @@ def render_agent(report) -> str:
             out.append(f"### {obj} ({kind})")
             for f in items:
                 new = " [new]" if f["is_new"] else ""
-                out.append(
-                    f"- **{f['code']}** ({f['severity']}){new}: {f['message']}"
-                )
+                out.append(f"- **{f['code']}** ({f['severity']}){new}: {f['message']}")
                 out.append(f"  - fix: {f['fix']}")
                 if f["rule"]["summary"]:
                     out.append(f"  - rule: {f['rule']['summary']}")

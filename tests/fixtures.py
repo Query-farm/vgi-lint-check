@@ -28,8 +28,17 @@ def col(schema, table, name, comment=None, dtype="VARCHAR"):
     )
 
 
-def table(schema, name, *, comment=None, tags=None, columns=(), examples=(),
-          parse_error=None, constraints=()):
+def table(
+    schema,
+    name,
+    *,
+    comment=None,
+    tags=None,
+    columns=(),
+    examples=(),
+    parse_error=None,
+    constraints=(),
+):
     return Table(
         id=ObjectId("v", ObjectKind.TABLE, schema=schema, name=name),
         schema=schema,
@@ -44,8 +53,9 @@ def table(schema, name, *, comment=None, tags=None, columns=(), examples=(),
     )
 
 
-def constraint(schema, tbl, ctype, columns=(), referenced_table=None,
-               referenced_columns=(), expression=None):
+def constraint(
+    schema, tbl, ctype, columns=(), referenced_table=None, referenced_columns=(), expression=None
+):
     return Constraint(
         id=ObjectId("v", ObjectKind.TABLE, schema=schema, name=tbl),
         schema=schema,
@@ -70,7 +80,9 @@ def view(schema, name, *, comment=None, tags=None, columns=(), examples=()):
     )
 
 
-def func(schema, name, ftype="scalar", *, description=None, comment=None, parameters=(), examples=()):
+def func(
+    schema, name, ftype="scalar", *, description=None, comment=None, parameters=(), examples=()
+):
     return Function(
         id=ObjectId("v", ObjectKind.SCALAR_FUNCTION, schema=schema, name=name),
         schema=schema,
@@ -88,11 +100,15 @@ def example(i, description, sql):
 
 
 def setting(name, description=None):
-    return Setting(id=ObjectId("v", ObjectKind.SETTING, name=name), name=name, description=description)
+    return Setting(
+        id=ObjectId("v", ObjectKind.SETTING, name=name), name=name, description=description
+    )
 
 
 def pragma(name, description=None):
-    return Pragma(id=ObjectId("v", ObjectKind.PRAGMA, name=name), name=name, description=description)
+    return Pragma(
+        id=ObjectId("v", ObjectKind.PRAGMA, name=name), name=name, description=description
+    )
 
 
 def schema(name, *, comment=None, tags=None, tables=(), views=(), functions=()):

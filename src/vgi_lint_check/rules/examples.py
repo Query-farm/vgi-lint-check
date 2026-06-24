@@ -2,16 +2,34 @@
 
 from __future__ import annotations
 
-from ..findings import Category, Severity
-from ..model import TAG_EXAMPLE_QUERIES, ObjectKind
+import re
+from collections.abc import Iterator
+
+from ..findings import Category, Finding, Severity
+from ..model import TAG_EXAMPLE_QUERIES, Catalog, Function, ObjectKind, Table, View
 from ._util import blank
-from .base import Rule
+from .base import Rule, RuleContext
 from .registry import register
 
 EX = Category.EXAMPLES
 
+# Strip single-quoted string literals and -- / /* */ comments so a qualifier
+# mentioned only inside a literal/comment does not count as a real reference.
+_SQL_LITERAL_OR_COMMENT = re.compile(r"'(?:[^']|'')*'|--[^\n]*|/\*.*?\*/", re.DOTALL)
 
-def _example_hosts(catalog):
+
+def _strip_sql_noise(sql: str) -> str:
+    return _SQL_LITERAL_OR_COMMENT.sub(" ", sql)
+
+
+def _references_catalog(sql: str, qualifier: str) -> bool:
+    """True if ``sql`` qualifies an identifier with ``qualifier.`` (word-bounded)."""
+    code = _strip_sql_noise(sql)
+    pattern = rf"(?<![\w.]){re.escape(qualifier)}\s*\.\s*\w"
+    return re.search(pattern, code, re.IGNORECASE) is not None
+
+
+def _example_hosts(catalog: Catalog) -> Iterator[Table | View | Function]:
     """Objects that may carry vgi.example_queries: tables, views, macros."""
     yield from catalog.iter_table_like()
     yield from catalog.iter_macros()
@@ -26,12 +44,14 @@ class ExampleQueriesPresent(Rule):
     targets = (ObjectKind.TABLE, ObjectKind.VIEW)
     summary = "Tables/views should ship example queries (macros are covered by VGI303)."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         # macros have their own example rule (VGI303); avoid double-flagging.
         for obj in ctx.catalog.iter_table_like():
             if not obj.examples and obj.examples_parse_error is None:
                 yield self.finding(
-                    ctx, obj.id, "no vgi.example_queries",
+                    ctx,
+                    obj.id,
+                    "no vgi.example_queries",
                     "add a 'vgi.example_queries' tag with at least one example",
                 )
 
@@ -45,11 +65,12 @@ class ExampleQueriesWellFormed(Rule):
     targets = (ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MACRO)
     summary = "The vgi.example_queries tag must be a valid JSON list of objects."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for obj in _example_hosts(ctx.catalog):
             if obj.examples_parse_error:
                 yield self.finding(
-                    ctx, obj.id,
+                    ctx,
+                    obj.id,
                     f"vgi.example_queries is not valid: {obj.examples_parse_error}",
                     'use a JSON list of {"description": "...", "sql": "..."} objects',
                 )
@@ -64,17 +85,21 @@ class ExampleEntriesComplete(Rule):
     targets = (ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.MACRO)
     summary = "Each example needs a non-empty description and sql."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for obj in _example_hosts(ctx.catalog):
             for ex in obj.examples:
                 if blank(ex.description):
                     yield self.finding(
-                        ctx, obj.id, f"example #{ex.index} has no description",
+                        ctx,
+                        obj.id,
+                        f"example #{ex.index} has no description",
                         "give every example a human-readable description",
                     )
                 if blank(ex.sql):
                     yield self.finding(
-                        ctx, obj.id, f"example #{ex.index} has no sql",
+                        ctx,
+                        obj.id,
+                        f"example #{ex.index} has no sql",
                         "give every example a non-empty SQL statement",
                     )
 
@@ -88,11 +113,13 @@ class SchemaExampleQueries(Rule):
     targets = (ObjectKind.SCHEMA,)
     summary = "Schemas should carry a vgi.example_queries tag (opt-in)."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for s in ctx.catalog.iter_schemas():
             if not s.tags.has(TAG_EXAMPLE_QUERIES):
                 yield self.finding(
-                    ctx, s.id, "schema has no vgi.example_queries",
+                    ctx,
+                    s.id,
+                    "schema has no vgi.example_queries",
                     "add a 'vgi.example_queries' tag with representative queries",
                 )
 
@@ -109,18 +136,18 @@ class ExampleQueriesQualified(Rule):
         "(catalog.schema.table) so they run when the worker is attached."
     )
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         qualifier = ctx.catalog.qualifier
         if not qualifier:
             return
-        needle = f"{qualifier.lower()}."
         for obj in _example_hosts(ctx.catalog):
             for ex in obj.examples:
                 if blank(ex.sql):
                     continue
-                if needle not in ex.sql.lower():
+                if not _references_catalog(ex.sql or "", qualifier):
                     yield self.finding(
-                        ctx, obj.id,
+                        ctx,
+                        obj.id,
                         f"example #{ex.index} does not qualify references with "
                         f"the catalog ({qualifier!r})",
                         f"qualify tables/macros as {qualifier}.schema.name so the "
@@ -137,12 +164,13 @@ class ExampleReferencesObject(Rule):
     targets = (ObjectKind.TABLE, ObjectKind.VIEW)
     summary = "An example for an object should reference that object's name."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for obj in ctx.catalog.iter_table_like():
             for ex in obj.examples:
                 if ex.sql and obj.name and obj.name.lower() not in ex.sql.lower():
                     yield self.finding(
-                        ctx, obj.id,
+                        ctx,
+                        obj.id,
                         f"example #{ex.index} does not reference {obj.name!r}",
                         "make the example query actually use this object",
                     )

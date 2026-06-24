@@ -9,11 +9,13 @@ string (a list of ``{"description", "sql"}`` objects) that we decode defensively
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
+from typing import Any
 
 from .model import TAG_EXAMPLE_QUERIES, ExampleQuery, TagSet
 
 
-def to_tagset(raw) -> TagSet:
+def to_tagset(raw: Any) -> TagSet:
     """Coerce a duckdb tags value into a TagSet.
 
     Accepts a dict (the common haybarn case), a list of (key, value) pairs, or
@@ -21,16 +23,17 @@ def to_tagset(raw) -> TagSet:
     """
     if raw is None:
         return TagSet({})
+    items: Iterable[tuple[Any, Any]]
     if isinstance(raw, dict):
         items = raw.items()
     elif isinstance(raw, (list, tuple)):
-        items = []
+        pairs: list[tuple[Any, Any]] = []
         for entry in raw:
             if isinstance(entry, (list, tuple)) and len(entry) == 2:
-                items.append((entry[0], entry[1]))
+                pairs.append((entry[0], entry[1]))
             elif isinstance(entry, dict) and "key" in entry and "value" in entry:
-                items.append((entry["key"], entry["value"]))
-        items = list(items)
+                pairs.append((entry["key"], entry["value"]))
+        items = pairs
     else:  # unexpected shape; treat as empty rather than crash
         return TagSet({})
     out: dict[str, str] = {}

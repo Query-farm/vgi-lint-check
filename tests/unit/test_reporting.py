@@ -1,5 +1,6 @@
 import json
 
+from tests import fixtures as F
 from vgi_lint_check import reporting, scoring
 from vgi_lint_check.config import Config
 from vgi_lint_check.findings import Severity
@@ -7,23 +8,28 @@ from vgi_lint_check.result import Report, VersionResult
 from vgi_lint_check.rules import run, select_rules
 from vgi_lint_check.rules.base import RuleContext
 
-from tests import fixtures as F
-
 
 def build_report(cat, fail_on=Severity.ERROR):
     cfg = Config()
     findings = run(select_rules(cfg), RuleContext(cat, cfg))
     quality = scoring.compute(cat, findings)
-    vr = VersionResult(catalog=cat, findings=findings, quality=quality,
-                       diff_summary={"tables": 1})
-    return Report(location="loc", alias="v", vgi_version="x", results=[vr],
-                  fail_on=fail_on)
+    vr = VersionResult(catalog=cat, findings=findings, quality=quality, diff_summary={"tables": 1})
+    return Report(location="loc", alias="v", vgi_version="x", results=[vr], fail_on=fail_on)
 
 
 def sample_catalog():
     t = F.table("main", "bare")
     s = F.schema("main", tables=[t])
     return F.catalog(s)
+
+
+def test_json_validates_against_published_schema():
+    import jsonschema
+
+    from vgi_lint_check.reporting.json_reporter import report_schema
+
+    doc = json.loads(reporting.render_json(build_report(sample_catalog())))
+    jsonschema.validate(doc, report_schema())  # raises on any drift
 
 
 def test_json_schema_and_invariants():

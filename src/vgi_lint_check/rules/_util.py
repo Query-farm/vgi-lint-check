@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 
-def blank(s) -> bool:
+def blank(s: Any) -> bool:
+    """True when ``s`` is None, empty, or only whitespace."""
     return not (s and str(s).strip())
 
 
-def _normalize(s: str) -> str:
+def _normalize(s: str | None) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 

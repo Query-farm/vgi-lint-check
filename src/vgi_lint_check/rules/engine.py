@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from ..findings import Finding, Severity
-from .base import RuleContext
+from .base import Rule, RuleContext
 
 
-def run(rules, ctx: RuleContext) -> list[Finding]:
+def run(rules: Iterable[Rule], ctx: RuleContext) -> list[Finding]:
     findings: list[Finding] = []
     config = ctx.config
     for rule in rules:

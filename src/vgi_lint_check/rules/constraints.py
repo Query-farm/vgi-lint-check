@@ -8,12 +8,18 @@ that exist. CHECK expressions can additionally be bound against the worker
 
 from __future__ import annotations
 
-from ..findings import Category, Severity
+import re
+from collections.abc import Iterator
+
+from ..findings import Category, Finding, Severity
 from ..model import ObjectKind
-from .base import Rule
+from .base import Rule, RuleContext
 from .registry import register
 
 CON = Category.CONSTRAINTS
+
+# Matches a leading ``CHECK(`` token (not ``CHECKSUM(`` etc.).
+_CHECK_PREFIX = re.compile(r"^\s*CHECK\s*\(", re.IGNORECASE)
 
 
 @register
@@ -25,7 +31,7 @@ class ForeignKeyReferenceValid(Rule):
     targets = (ObjectKind.TABLE,)
     summary = "A foreign key must reference a table and columns that exist."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         cat = ctx.catalog
         for table, c in cat.iter_constraints():
             if c.constraint_type != "FOREIGN KEY":
@@ -35,7 +41,8 @@ class ForeignKeyReferenceValid(Rule):
             missing_local = [col for col in c.columns if col not in cols]
             if missing_local:
                 yield self.finding(
-                    ctx, table.id,
+                    ctx,
+                    table.id,
                     f"foreign key references local column(s) not on the table: "
                     f"{', '.join(missing_local)}",
                     "fix the foreign-key column list to match the table's columns",
@@ -45,9 +52,9 @@ class ForeignKeyReferenceValid(Rule):
             targets = cat.find_table_like(c.referenced_table)
             if not targets:
                 yield self.finding(
-                    ctx, table.id,
-                    f"foreign key references unknown table "
-                    f"{c.referenced_table!r}",
+                    ctx,
+                    table.id,
+                    f"foreign key references unknown table {c.referenced_table!r}",
                     "point the foreign key at a table that exists in the catalog",
                 )
                 continue
@@ -57,7 +64,8 @@ class ForeignKeyReferenceValid(Rule):
             missing_ref = [col for col in c.referenced_columns if col not in ref_cols]
             if missing_ref:
                 yield self.finding(
-                    ctx, table.id,
+                    ctx,
+                    table.id,
                     f"foreign key references column(s) not on "
                     f"{c.referenced_table!r}: {', '.join(missing_ref)}",
                     "reference columns that exist on the target table",
@@ -73,7 +81,7 @@ class ConstraintColumnsExist(Rule):
     targets = (ObjectKind.TABLE,)
     summary = "Every constraint must reference columns that exist on the table."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for table, c in ctx.catalog.iter_constraints():
             if c.constraint_type == "FOREIGN KEY":
                 continue  # local FK columns handled by VGI801
@@ -82,7 +90,8 @@ class ConstraintColumnsExist(Rule):
             if missing:
                 label = c.constraint_type.lower()
                 yield self.finding(
-                    ctx, table.id,
+                    ctx,
+                    table.id,
                     f"{label} constraint references column(s) not on the table: "
                     f"{', '.join(missing)}",
                     "fix the constraint to reference existing columns",
@@ -99,7 +108,7 @@ class CheckConstraintBinds(Rule):
     requires_connection = True
     summary = "CHECK constraint expressions should bind against the worker."
 
-    def check(self, ctx):
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
         con = ctx.connection
         if con is None:
             return
@@ -113,17 +122,30 @@ class CheckConstraintBinds(Rule):
                 con.execute(f"EXPLAIN SELECT 1 FROM {relation} WHERE ({expr}) LIMIT 0")
             except Exception as e:  # noqa: BLE001
                 yield self.finding(
-                    ctx, table.id,
+                    ctx,
+                    table.id,
                     f"CHECK constraint does not bind: {type(e).__name__}: {e}",
                     f"fix the CHECK expression: {expr[:120]}",
                 )
 
 
 def _check_expression(text: str) -> str:
-    """Strip a leading ``CHECK(...)`` wrapper if present, leaving the predicate."""
-    t = text.strip()
-    upper = t.upper()
-    if upper.startswith("CHECK") and "(" in t:
-        inner = t[t.index("(") + 1 : t.rfind(")")]
-        return inner.strip()
-    return t
+    """Strip a leading ``CHECK(...)`` wrapper if present, leaving the predicate.
+
+    Anchors on ``CHECK(`` as a whole token (so ``CHECKSUM(x) > 0`` is left alone)
+    and balance-matches the wrapper's parentheses (so ``CHECK((a) AND (b))``
+    yields ``(a) AND (b)`` rather than over-/under-capturing with ``rfind``).
+    """
+    m = _CHECK_PREFIX.match(text)
+    if not m:
+        return text.strip()
+    open_paren = m.end() - 1
+    depth = 0
+    for i in range(open_paren, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return text[open_paren + 1 : i].strip()
+    return text[open_paren + 1 :].strip()

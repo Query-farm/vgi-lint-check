@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
 class Release:
+    """A published data version (a row of the ``releases`` JSON array)."""
+
     version: str
     released_at: str | None = None
     summary: str = ""
@@ -25,6 +28,8 @@ class Release:
 
 @dataclass(frozen=True)
 class CatalogDiscovery:
+    """A worker catalog and the data versions it advertises."""
+
     catalog: str
     implementation_version: str | None
     data_version_spec: str | None
@@ -32,13 +37,13 @@ class CatalogDiscovery:
     releases: list[Release]
 
 
-def discover_catalogs(con, location: str) -> list[CatalogDiscovery]:
+def discover_catalogs(con: Any, location: str) -> list[CatalogDiscovery]:
     """Run ``vgi_catalogs(location)`` and parse the rows (incl. JSON releases)."""
     cur = con.execute("SELECT * FROM vgi_catalogs(?)", [location])
     names = [d[0] for d in cur.description]
     out: list[CatalogDiscovery] = []
     for row in cur.fetchall():
-        r = dict(zip(names, row))
+        r: Any = dict(zip(names, row, strict=False))
         out.append(
             CatalogDiscovery(
                 catalog=r.get("catalog"),
@@ -51,14 +56,14 @@ def discover_catalogs(con, location: str) -> list[CatalogDiscovery]:
     return out
 
 
-def _blank_to_none(v):
+def _blank_to_none(v: Any) -> str | None:
     if v is None:
         return None
     s = str(v).strip()
     return s or None
 
 
-def _parse_releases(raw) -> list[Release]:
+def _parse_releases(raw: Any) -> list[Release]:
     if not raw:
         return []
     if isinstance(raw, str):
@@ -84,12 +89,12 @@ def _parse_releases(raw) -> list[Release]:
     return releases
 
 
-def _stringify(v):
+def _stringify(v: Any) -> str | None:
     return None if v is None else str(v)
 
 
 def resolve_versions(
-    con,
+    con: Any,
     location: str,
     *,
     explicit: list[str] | None = None,
@@ -105,7 +110,7 @@ def resolve_versions(
     if not all_versions:
         return [None]
     catalogs = discover_catalogs(con, location)
-    versions: list[str] = []
+    versions: list[str | None] = []
     for c in catalogs:
         for rel in c.releases:
             if rel.version not in versions:

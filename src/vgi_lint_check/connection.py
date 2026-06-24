@@ -12,9 +12,12 @@ The ATTACH *name* must be the worker's catalog name (discovered via
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
+from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 ALIAS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 log = logging.getLogger("vgi_lint_check")
@@ -30,10 +33,9 @@ def sql_str(value: str) -> str:
 
 
 def validate_alias(alias: str) -> str:
+    """Return ``alias`` unchanged if it is a safe SQL identifier, else raise."""
     if not ALIAS_RE.match(alias or ""):
-        raise ValueError(
-            f"invalid catalog alias {alias!r}; must match {ALIAS_RE.pattern}"
-        )
+        raise ValueError(f"invalid catalog alias {alias!r}; must match {ALIAS_RE.pattern}")
     return alias
 
 
@@ -45,7 +47,7 @@ def derive_alias(catalog_name: str) -> str:
     return slug
 
 
-def connect_loaded(*, install: bool = True, spatial: bool = False):
+def connect_loaded(*, install: bool = True, spatial: bool = False) -> tuple[Any, str | None]:
     """Open a haybarn connection with the vgi extension loaded.
 
     Returns ``(con, vgi_version)``.
@@ -76,54 +78,46 @@ def connect_loaded(*, install: bool = True, spatial: bool = False):
     return con, _vgi_version(con)
 
 
-def _vgi_version(con) -> str | None:
+def _vgi_version(con: Any) -> str | None:
     try:
         row = con.execute(
-            "SELECT extension_version FROM duckdb_extensions() "
-            "WHERE extension_name = 'vgi'"
+            "SELECT extension_version FROM duckdb_extensions() WHERE extension_name = 'vgi'"
         ).fetchone()
         return row[0] if row else None
     except Exception:  # noqa: BLE001 - best-effort metadata
         return None
 
 
-def attach_statement(
-    location: str, catalog_name: str, alias: str, data_version: str | None
-) -> str:
+def attach_statement(location: str, catalog_name: str, alias: str, data_version: str | None) -> str:
+    """Build the ``ATTACH ... (TYPE vgi, ...)`` statement for a worker catalog."""
     validate_alias(alias)
     dv = f", data_version_spec {sql_str(data_version)}" if data_version else ""
-    return (
-        f"ATTACH {sql_str(catalog_name)} AS {alias} "
-        f"(TYPE vgi, LOCATION {sql_str(location)}{dv})"
-    )
+    return f"ATTACH {sql_str(catalog_name)} AS {alias} (TYPE vgi, LOCATION {sql_str(location)}{dv})"
 
 
 @contextmanager
 def attached(
-    con,
+    con: Any,
     location: str,
     catalog_name: str,
     alias: str,
     *,
     data_version: str | None = None,
-):
+) -> Iterator[Any]:
     """ATTACH a catalog on ``con`` for the body, DETACH on exit."""
     try:
         con.execute(attach_statement(location, catalog_name, alias, data_version))
     except Exception as e:  # noqa: BLE001
-        raise WorkerConnectionError(
-            _explain_attach_failure(location, data_version, e)
-        ) from e
+        raise WorkerConnectionError(_explain_attach_failure(location, data_version, e)) from e
     try:
         yield con
     finally:
-        try:
+        # Best-effort cleanup; a detach failure must not mask the real result.
+        with contextlib.suppress(Exception):
             con.execute(f"DETACH {alias}")
-        except Exception:  # noqa: BLE001 - best-effort cleanup
-            pass
 
 
-def _explain_attach_failure(location: str, data_version, e: Exception) -> str:
+def _explain_attach_failure(location: str, data_version: str | None, e: Exception) -> str:
     msg = str(e)
     low = msg.lower()
     if "authentication" in low or "401" in low or "oauth" in low:
@@ -132,10 +126,7 @@ def _explain_attach_failure(location: str, data_version, e: Exception) -> str:
             f"does not support (no-auth workers only). ({msg})"
         )
     if "unsupported data_version" in low or (data_version and "data_version" in low):
-        return (
-            f"worker at {location!r} does not serve data version "
-            f"{data_version!r}. ({msg})"
-        )
+        return f"worker at {location!r} does not serve data version {data_version!r}. ({msg})"
     if any(s in low for s in ("connection", "refused", "could not", "io error")):
         return (
             f"couldn't reach {location!r} — is the worker running? For a local "

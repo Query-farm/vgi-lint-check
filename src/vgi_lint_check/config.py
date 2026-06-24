@@ -1,18 +1,26 @@
-"""Configuration: rule selection, per-rule severity, tuning options, and the
+"""Configuration: rule selection, severity, tuning options, resolution order.
+
+Configuration covers rule selection, per-rule severity, tuning options, and the
 deterministic severity-resolution order rules depend on.
 
 Precedence (lowest -> highest) is applied by the loader in ``cli.py``:
-built-in defaults < pyproject.toml < dedicated file < env < CLI flags.
+built-in defaults < pyproject.toml < dedicated file < CLI flags.
 """
 
 from __future__ import annotations
 
 import fnmatch
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from .findings import Severity
+
+if TYPE_CHECKING:
+    from .model import ObjectId
+    from .rules.base import Rule
 
 
 @dataclass
@@ -34,8 +42,14 @@ class Options:
 
 @dataclass
 class Config:
+    """Resolved lint configuration: selection, severities, and tuning options."""
+
     select: list[str] = field(default_factory=lambda: ["ALL"])
     ignore: list[str] = field(default_factory=list)
+    # extend_* compose with select/ignore so a CLI --select (which replaces
+    # `select`) does not silently discard config-level additions.
+    extend_select: list[str] = field(default_factory=list)
+    extend_ignore: list[str] = field(default_factory=list)
     categories: list[str] | None = None  # None = all categories
     severity_overrides: dict[str, Severity] = field(default_factory=dict)
     per_object: dict[str, list[str]] = field(default_factory=dict)  # glob -> [codes]
@@ -50,13 +64,18 @@ class Config:
     baseline: str | None = None
 
     # ---- rule selection / severity resolution ----------------------------
-    def _code_matches(self, code: str, patterns: list[str]) -> bool:
-        for p in patterns:
-            if p.upper() == "ALL" or fnmatch.fnmatch(code, p):
-                return True
-        return False
+    @property
+    def _selectors(self) -> list[str]:
+        return self.select + self.extend_select
 
-    def effective_severity(self, rule) -> Severity:
+    @property
+    def _ignorers(self) -> list[str]:
+        return self.ignore + self.extend_ignore
+
+    def _code_matches(self, code: str, patterns: list[str]) -> bool:
+        return any(p.upper() == "ALL" or fnmatch.fnmatch(code, p) for p in patterns)
+
+    def effective_severity(self, rule: Rule | type[Rule]) -> Severity:
         """Resolve a rule's severity per the documented order. OFF = disabled."""
         # 1. execution rules need --execute
         if getattr(rule, "requires_connection", False) and not self.execute:
@@ -64,20 +83,30 @@ class Config:
         # 2. category gate
         if self.categories is not None and str(rule.category) not in self.categories:
             return Severity.OFF
-        # 3. select / ignore globs
-        if not self._code_matches(rule.code, self.select):
+        # 3. select / ignore globs (select and extend-select compose)
+        if not self._code_matches(rule.code, self._selectors):
             return Severity.OFF
-        if self._code_matches(rule.code, self.ignore):
+        if self._code_matches(rule.code, self._ignorers):
             return Severity.OFF
         # 4. explicit per-rule override, else the rule default
         return self.severity_overrides.get(rule.code, rule.default_severity)
 
-    def is_object_ignored(self, object_id, code: str) -> bool:
+    def unknown_selectors(self, known_codes: Iterable[str]) -> list[str]:
+        """Selector/ignore globs that match no known rule code (likely typos)."""
+        known = list(known_codes)
+        unknown = []
+        for pat in self._selectors + self._ignorers + list(self.severity_overrides):
+            if pat.upper() == "ALL":
+                continue
+            if not any(fnmatch.fnmatch(code, pat) for code in known):
+                unknown.append(pat)
+        return sorted(set(unknown))
+
+    def is_object_ignored(self, object_id: ObjectId, code: str) -> bool:
+        """True when ``code`` is suppressed for ``object_id`` by a per-object rule."""
         qualified = object_id.qualified()
         for glob, codes in self.per_object.items():
-            if fnmatch.fnmatch(qualified, glob) and (
-                not codes or self._code_matches(code, codes)
-            ):
+            if fnmatch.fnmatch(qualified, glob) and (not codes or self._code_matches(code, codes)):
                 return True
         return False
 
@@ -85,7 +114,7 @@ class Config:
 # --------------------------------------------------------------------------
 # Loading / merging
 # --------------------------------------------------------------------------
-def _coerce_options(raw: dict) -> Options:
+def _coerce_options(raw: dict[str, Any]) -> Options:
     opts = Options()
     for k, v in (raw or {}).items():
         key = k.replace("-", "_")
@@ -94,7 +123,7 @@ def _coerce_options(raw: dict) -> Options:
     return opts
 
 
-def from_table(raw: dict) -> Config:
+def from_table(raw: dict[str, Any]) -> Config:
     """Build a Config from a parsed ``[tool.vgi-lint-check]`` table."""
     raw = {k.replace("-", "_"): v for k, v in (raw or {}).items()}
     cfg = Config()
@@ -103,9 +132,9 @@ def from_table(raw: dict) -> Config:
     if "ignore" in raw:
         cfg.ignore = list(raw["ignore"])
     if "extend_select" in raw:
-        cfg.select = cfg.select + list(raw["extend_select"])
+        cfg.extend_select = list(raw["extend_select"])
     if "extend_ignore" in raw:
-        cfg.ignore = cfg.ignore + list(raw["extend_ignore"])
+        cfg.extend_ignore = list(raw["extend_ignore"])
     if "categories" in raw:
         cfg.categories = list(raw["categories"])
     if "fail_on" in raw:
@@ -120,8 +149,7 @@ def from_table(raw: dict) -> Config:
         }
     if "per_object" in raw and isinstance(raw["per_object"], dict):
         cfg.per_object = {
-            glob: list(spec.get("ignore", []))
-            for glob, spec in raw["per_object"].items()
+            glob: list(spec.get("ignore", [])) for glob, spec in raw["per_object"].items()
         }
     if "options" in raw:
         cfg.options = _coerce_options(raw["options"])
@@ -154,7 +182,7 @@ def load_config(
     return from_table(table)
 
 
-def _discover_path(explicit_path, start_dir) -> Path | None:
+def _discover_path(explicit_path: str | Path | None, start_dir: str | Path | None) -> Path | None:
     if explicit_path:
         return Path(explicit_path)
     start = Path(start_dir or Path.cwd()).resolve()

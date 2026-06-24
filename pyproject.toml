@@ -1,6 +1,6 @@
 [project]
 name = "vgi-lint-check"
-version = "0.2.0"
+version = "0.2.1"
 description = "A pydoclint-style metadata-quality linter for VGI workers."
 readme = "README.md"
 keywords = [
@@ -37,8 +37,9 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = [
     # haybarn ships only release candidates; the >=...rc1 specifier lets PEP 440
-    # installers (pip/uv) select the prerelease for this dependency.
-    "haybarn>=1.5.4rc1",
+    # installers (pip/uv) select the prerelease. Cap the minor so a future
+    # breaking RC can't silently be pulled into installs of this version.
+    "haybarn>=1.5.4rc1,<1.6",
     "click>=8.1",
     "rich>=13",
     # Needed by DuckDB/haybarn to materialize timezone-aware timestamps that
@@ -55,7 +56,14 @@ Issues = "https://github.com/Query-farm/vgi-lint-check/issues"
 vgi-lint = "vgi_lint_check.cli:app"
 
 [dependency-groups]
-dev = ["pytest>=8", "twine>=5"]
+dev = [
+    "pytest>=8",
+    "twine>=5",
+    "jsonschema>=4",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pydoclint>=0.5",
+]
 
 [tool.uv]
 prerelease = "allow"
@@ -64,6 +72,49 @@ prerelease = "allow"
 markers = [
     "live: tests that attach to a running VGI worker (network/subprocess); skipped by default",
 ]
+
+# --- tooling adopted from vgi-python --------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests, scripts, and the generated-doc script don't need full docstrings.
+"tests/**" = ["D"]
+"scripts/**" = ["D"]
+# Rule classes are declarative and self-documenting via their code/name/summary/
+# targets attributes (surfaced by `vgi-lint rules`/`explain` and RULES.md), so
+# the missing-docstring rules add no value there.
+"src/vgi_lint_check/rules/**" = ["D101", "D102", "D103", "D106"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+files = ["src/vgi_lint_check"]
+
+[[tool.mypy.overrides]]
+module = ["haybarn", "haybarn.*"]
+ignore_missing_imports = true
+
+[tool.pydoclint]
+style = "google"
+arg_type_hints_in_docstring = false
+check_return_types = false
+check_yield_types = false
+check_class_attributes = false
+skip_checking_raises = true
+allow_init_docstring = true
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

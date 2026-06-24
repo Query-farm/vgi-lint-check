@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from .agent_reporter import render_agent
 from .json_reporter import render_json, render_jsonl, to_dict
 from .terminal import render_terminal
 
+if TYPE_CHECKING:
+    from ..result import Report
+
 FORMATS = ("terminal", "json", "agent", "jsonl")
 
 
-def render(report, fmt: str, *, color: bool = True) -> str:
+def render(report: Report, fmt: str, *, color: bool = True) -> str:
+    """Render ``report`` in the requested format (terminal/json/jsonl/agent)."""
     if fmt == "terminal":
         return render_terminal(report, color=color)
     if fmt == "json":

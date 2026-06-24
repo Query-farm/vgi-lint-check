@@ -1,16 +1,31 @@
 """Per-family coverage and a 0-100 Catalog Quality Score.
 
 Coverage is computed structurally from the catalog (independent of which rules
-are enabled) so the score is stable run-to-run. The score is a weighted mean of
-family coverages with a small penalty for ERROR-severity findings.
+are enabled) so the score is stable run-to-run.
+
+Formula::
+
+    base    = 100 * weighted_mean(family_coverage, FAMILY_WEIGHTS)
+              # weights renormalized over the families that apply to the catalog
+    penalty = min(MAX_ERROR_PENALTY,   ERROR_PENALTY   * #error_findings)
+            + min(MAX_WARNING_PENALTY, WARNING_PENALTY * #warning_findings)
+    score   = clamp(round(base - penalty), 0, 100)
+
+INFO findings do not affect the score. Penalties keep a catalog with full
+coverage but many real defects from scoring 100.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .findings import Severity
 from .model import Catalog
+
+if TYPE_CHECKING:
+    from .findings import Finding
 
 # Family weights (sum need not be 1; normalized over present families).
 FAMILY_WEIGHTS = {
@@ -21,16 +36,22 @@ FAMILY_WEIGHTS = {
 }
 ERROR_PENALTY = 2.0  # points off per ERROR finding (capped)
 MAX_ERROR_PENALTY = 30.0
+WARNING_PENALTY = 0.5  # points off per WARNING finding (capped)
+MAX_WARNING_PENALTY = 15.0
 
 
 @dataclass
 class Coverage:
+    """Per-family documentation coverage ratios."""
+
     # family -> ratio in [0,1], or None when the family is not applicable
     families: dict[str, float | None] = field(default_factory=dict)
 
 
 @dataclass
 class QualityScore:
+    """A 0-100 catalog quality score plus its coverage breakdown."""
+
     score: int
     coverage: Coverage
 
@@ -42,6 +63,7 @@ def _ratio(documented: int, total: int) -> float | None:
 
 
 def compute_coverage(cat: Catalog) -> Coverage:
+    """Compute per-family documentation coverage for a catalog."""
     # descriptions: schemas + tables/views with a comment
     desc_total = desc_ok = 0
     for s in cat.iter_schemas():
@@ -90,7 +112,8 @@ def compute_coverage(cat: Catalog) -> Coverage:
     )
 
 
-def compute(cat: Catalog, findings) -> QualityScore:
+def compute(cat: Catalog, findings: Iterable[Finding]) -> QualityScore:
+    """Compute the quality score from coverage and finding penalties."""
     coverage = compute_coverage(cat)
     weighted_sum = 0.0
     weight_total = 0.0
@@ -103,6 +126,9 @@ def compute(cat: Catalog, findings) -> QualityScore:
     base = (weighted_sum / weight_total * 100.0) if weight_total else 100.0
 
     errors = sum(1 for f in findings if f.severity is Severity.ERROR)
-    penalty = min(MAX_ERROR_PENALTY, errors * ERROR_PENALTY)
+    warnings = sum(1 for f in findings if f.severity is Severity.WARNING)
+    penalty = min(MAX_ERROR_PENALTY, errors * ERROR_PENALTY) + min(
+        MAX_WARNING_PENALTY, warnings * WARNING_PENALTY
+    )
     score = max(0, min(100, round(base - penalty)))
     return QualityScore(score=score, coverage=coverage)

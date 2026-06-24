@@ -11,10 +11,13 @@ Responsibilities:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from .model import (
     Catalog,
     Column,
     Constraint,
+    ExampleQuery,
     Function,
     ObjectId,
     ObjectKind,
@@ -26,8 +29,11 @@ from .model import (
 )
 from .tags import decode_example_queries, to_tagset
 
+if TYPE_CHECKING:
+    from .snapshot import Snapshot
 
-def _scoped(rows, alias):
+
+def _scoped(rows: list[dict[str, Any]], alias: str) -> list[Any]:
     """Rows belonging to the attached catalog.
 
     Scoping is by ``database_name == alias`` only. We do NOT drop
@@ -38,17 +44,30 @@ def _scoped(rows, alias):
     return [r for r in rows if r.get("database_name") == alias]
 
 
+def _native_examples(raw: Any) -> list[ExampleQuery]:
+    """Build ``ExampleQuery`` objects from the native examples column.
+
+    The native ``duckdb_functions().examples`` column is a ``VARCHAR[]`` of SQL
+    strings. The VGI extension surfaces a function's ``Meta.examples`` into this
+    native column for every function type, while the ``vgi.example_queries`` tag
+    is the alternative carrier. These SQL strings have no per-example description.
+    """
+    sqls = [str(sql) for sql in (raw or []) if sql is not None]
+    return [ExampleQuery(index=i, description=None, sql=sql) for i, sql in enumerate(sqls)]
+
+
 def build_catalog(
-    snapshot,
+    snapshot: Snapshot,
     alias: str,
     location: str,
     *,
     vgi_version: str | None = None,
     data_version: str | None = None,
     catalog_name: str | None = None,
-    setting_rows: list[dict] | None = None,
-    pragma_rows: list[dict] | None = None,
+    setting_rows: list[dict[str, Any]] | None = None,
+    pragma_rows: list[dict[str, Any]] | None = None,
 ) -> Catalog:
+    """Build a normalized :class:`Catalog` from a post-attach snapshot."""
     schemas: dict[str, Schema] = {}
 
     def get_schema(name: str) -> Schema:
@@ -121,9 +140,7 @@ def build_catalog(
             continue
         target.columns.append(
             Column(
-                id=ObjectId(
-                    alias, ObjectKind.COLUMN, schema=sname, name=tname, column=cname
-                ),
+                id=ObjectId(alias, ObjectKind.COLUMN, schema=sname, name=tname, column=cname),
                 name=cname,
                 data_type=r.get("data_type"),
                 comment=r.get("comment"),
@@ -141,6 +158,12 @@ def build_catalog(
             continue
         tags = to_tagset(r.get("tags"))
         examples, err = decode_example_queries(tags)
+        if not examples and err is None:
+            # Fall back to the native duckdb_functions().examples column, which
+            # the VGI extension populates from the worker's Meta.examples. The
+            # vgi.example_queries tag is the legacy carrier; prefer it (it can
+            # carry descriptions) but don't miss examples that only ship natively.
+            examples = _native_examples(r.get("examples"))
         fn = Function(
             id=ObjectId(alias, _function_objectkind(ftype), schema=sname, name=fname),
             schema=sname,
@@ -158,20 +181,20 @@ def build_catalog(
         # Correlate a table-function to its table so column/desc rules use the
         # richer table row rather than flagging the bare function.
         if fn.kind is ObjectKind.TABLE_FUNCTION:
-            t = tables_by_key.get((sname, fname))
-            if t is not None:
-                t.backing_function = fn
+            backing = tables_by_key.get((sname, fname))
+            if backing is not None:
+                backing.backing_function = fn
         get_schema(sname).functions.append(fn)
 
     # --- constraints (attached to their owning table) ---------------------
     for r in _scoped(snapshot.constraints, alias):
         sname, tname = r.get("schema_name"), r.get("table_name")
-        t = tables_by_key.get((sname, tname))
-        if t is None:
+        owner = tables_by_key.get((sname, tname))
+        if owner is None:
             continue
-        t.constraints.append(
+        owner.constraints.append(
             Constraint(
-                id=t.id,
+                id=owner.id,
                 schema=sname,
                 table=tname,
                 constraint_type=(r.get("constraint_type") or "").upper(),
@@ -185,7 +208,9 @@ def build_catalog(
 
     # --- settings (diff-scoped; no catalog qualifier) ---------------------
     settings: list[Setting] = []
-    for r in setting_rows or []:
+    setting_row: Any
+    for setting_row in setting_rows or []:
+        r = setting_row
         name = r.get("name")
         settings.append(
             Setting(
@@ -200,7 +225,9 @@ def build_catalog(
 
     # --- pragmas (diff-scoped; from duckdb_functions where type='pragma') -
     pragmas: list[Pragma] = []
-    for r in pragma_rows or []:
+    pragma_row: Any
+    for pragma_row in pragma_rows or []:
+        r = pragma_row
         name = r.get("function_name")
         pragmas.append(
             Pragma(

@@ -9,6 +9,7 @@ diff (see ``diff.py``).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 # (attribute, sql) — one bulk query each. Selecting * keeps us resilient to
 # column additions; the loader reads columns by name with .get().
@@ -25,20 +26,23 @@ _SYSTEM_TABLES = {
 
 @dataclass
 class Snapshot:
-    schemas: list[dict] = field(default_factory=list)
-    tables: list[dict] = field(default_factory=list)
-    columns: list[dict] = field(default_factory=list)
-    views: list[dict] = field(default_factory=list)
-    functions: list[dict] = field(default_factory=list)
-    constraints: list[dict] = field(default_factory=list)
-    settings: list[dict] = field(default_factory=list)
+    """Raw system-table rows captured from one connection state."""
+
+    schemas: list[dict[str, Any]] = field(default_factory=list)
+    tables: list[dict[str, Any]] = field(default_factory=list)
+    columns: list[dict[str, Any]] = field(default_factory=list)
+    views: list[dict[str, Any]] = field(default_factory=list)
+    functions: list[dict[str, Any]] = field(default_factory=list)
+    constraints: list[dict[str, Any]] = field(default_factory=list)
+    settings: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _rows(con, sql: str) -> list[dict]:
+def _rows(con: Any, sql: str) -> list[dict[str, Any]]:
     cur = con.execute(sql)
     names = [d[0] for d in cur.description]
-    return [dict(zip(names, row)) for row in cur.fetchall()]
+    return [dict(zip(names, row, strict=False)) for row in cur.fetchall()]
 
 
-def take_snapshot(con) -> Snapshot:
+def take_snapshot(con: Any) -> Snapshot:
+    """Read all tracked system tables into a :class:`Snapshot`."""
     return Snapshot(**{attr: _rows(con, sql) for attr, sql in _SYSTEM_TABLES.items()})
