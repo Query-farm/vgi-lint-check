@@ -100,6 +100,33 @@ class ConstraintColumnsExist(Rule):
 
 
 @register
+class NotNullConstraintsPresent(Rule):
+    code = "VGI804"
+    name = "not-null-constraints-present"
+    category = CON
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A worker with no NOT NULL constraints on any column likely forgot them."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        has_columns = any(t.columns for t in ctx.catalog.iter_tables())
+        if not has_columns:
+            return
+        not_null = sum(
+            1 for _t, c in ctx.catalog.iter_constraints() if c.constraint_type == "NOT NULL"
+        )
+        if not_null == 0:
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                "no NOT NULL constraints on any table in the catalog",
+                "declare NOT NULL on columns that are always populated — agents "
+                "rely on nullability to write correct queries (or confirm they "
+                "were intentionally omitted)",
+            )
+
+
+@register
 class CheckConstraintBinds(Rule):
     code = "VGI803"
     name = "check-constraint-binds"

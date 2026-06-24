@@ -123,6 +123,32 @@ class CatalogSourceUrl(Rule):
 
 
 @register
+class DefaultSchemaValid(Rule):
+    code = "VGI008"
+    name = "default-schema-valid"
+    category = CAT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "The catalog's default schema must resolve to a schema that exists."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        ds = cat.default_schema
+        if blank(ds):
+            return  # could not determine the default schema; don't guess
+        names = {s.name for s in cat.iter_schemas()}
+        if ds not in names:
+            yield self.finding(
+                ctx,
+                cat.id,
+                f"default schema {ds!r} is not a schema in this catalog "
+                f"(available: {', '.join(sorted(names)) or 'none'})",
+                "set the worker's default schema to one it actually exposes, so "
+                "agents that land on it without a schema find data",
+            )
+
+
+@register
 class DataVersionSpecValid(Rule):
     code = "VGI005"
     name = "data-version-spec-valid"

@@ -57,9 +57,9 @@ families:
 
 | Family | Codes | Examples |
 | --- | --- | --- |
-| Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url` (the worker's "listing") |
+| Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it |
 | Descriptions | VGI1xx | schema/table/view comment, `vgi.description_llm`, `vgi.description_md` |
-| Discoverability | VGI12x | duplicate/short/echoed descriptions, release freshness, example richness, units (opt-in) |
+| Discoverability | VGI12x | duplicate/short/echoed descriptions, join-path docs, release freshness, example richness, units (opt-in) |
 | Content | VGI17x | `vgi.description_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage (tables **and views**), comment-not-echo |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples |
@@ -67,7 +67,7 @@ families:
 | Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete entries, **catalog-qualified** |
 | Settings | VGI6xx | setting descriptions |
 | Pragmas | VGI7xx | pragma descriptions |
-| Constraints | VGI8xx | foreign-key/PK/check validity — references must point at real tables & columns |
+| Constraints | VGI8xx | foreign-key/PK/check validity — references must point at real tables & columns; NOT NULL coverage nudge |
 | Structure | VGI11x | schema object-count cap (opt-in) |
 | Execution | VGI9xx | example queries & CHECK constraints bind/execute (opt-in, `--execute`) |
 

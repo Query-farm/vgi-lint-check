@@ -45,6 +45,7 @@ def test_clean_table_no_findings():
         examples=[
             F.example(0, "two-legged animals", "SELECT name FROM v.main.animals WHERE legs = 2")
         ],
+        constraints=[F.constraint("main", "animals", "NOT NULL", columns=["name"])],
     )
     s = F.schema(
         "main",

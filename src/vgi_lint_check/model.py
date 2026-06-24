@@ -287,6 +287,7 @@ class Catalog:
     source_url: str | None = None
     implementation_version: str | None = None
     data_version_spec: str | None = None  # semver range the catalog serves
+    default_schema: str | None = None  # the worker's declared default schema
     releases: list[Release] = field(default_factory=list)
     schemas: list[Schema] = field(default_factory=list)
     settings: list[Setting] = field(default_factory=list)

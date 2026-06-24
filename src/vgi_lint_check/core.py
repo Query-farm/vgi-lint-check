@@ -12,7 +12,13 @@ from . import baseline as _baseline
 from . import comparison as _comparison
 from . import scoring
 from .config import Config
-from .connection import attached, connect_loaded, derive_alias, validate_alias
+from .connection import (
+    attached,
+    connect_loaded,
+    derive_alias,
+    read_default_schema,
+    validate_alias,
+)
 from .diff import diff_snapshots
 from .linkcheck import make_link_resolver
 from .loader import build_catalog
@@ -108,6 +114,7 @@ def _lint_one_version(
     with attached(con, location, discovery.catalog, alias, data_version=data_version):
         after = take_snapshot(con)
         diff = diff_snapshots(before, after, alias)
+        default_schema = read_default_schema(con, alias)
         catalog = build_catalog(
             after,
             alias,
@@ -118,6 +125,7 @@ def _lint_one_version(
             source_url=discovery.source_url,
             implementation_version=discovery.implementation_version,
             data_version_spec=discovery.data_version_spec,
+            default_schema=default_schema,
             releases=releases,
             setting_rows=diff.setting_rows,
             pragma_rows=diff.pragma_rows,

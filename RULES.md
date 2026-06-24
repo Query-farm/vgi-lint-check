@@ -26,6 +26,7 @@ skipped unless `--execute` is passed.
 | `VGI005` | warning | data-version-spec-valid | data_version_spec, when set, must be a valid semver version range. |  |
 | `VGI006` | warning | release-version-valid | Every published data-version release must be a valid semver version. |  |
 | `VGI007` | warning | releases-within-spec | Every published release must be contained by data_version_spec. |  |
+| `VGI008` | warning | default-schema-valid | The catalog's default schema must resolve to a schema that exists. |  |
 
 ## Discoverability (VGI12x)
 
@@ -42,6 +43,7 @@ skipped unless `--execute` is passed.
 | `VGI128` | off | source-url-present | Objects should link to their implementation via 'vgi.source_url'. | opt-in |
 | `VGI129` | info | source-url-valid | 'vgi.source_url', when set, should be an http(s) URL. |  |
 | `VGI131` | off | column-units | Numeric column comments should state units/definition where relevant. | opt-in |
+| `VGI133` | warning | join-path-documented | A table with foreign keys should explain how to join to the referenced tables. |  |
 | `VGI140` | info | release-dated | Published data-version releases should carry a release date (freshness). |  |
 | `VGI141` | info | release-documented | Releases should have a summary or notes_url ('what's new'). |  |
 | `VGI150` | info | examples-not-trivial | Example queries should demonstrate value, not only `SELECT * FROM x`. |  |
@@ -128,6 +130,7 @@ skipped unless `--execute` is passed.
 | `VGI801` | error | foreign-key-reference-valid | A foreign key must reference a table and columns that exist. |  |
 | `VGI802` | error | constraint-columns-exist | Every constraint must reference columns that exist on the table. |  |
 | `VGI803` | error | check-constraint-binds | CHECK constraint expressions should bind against the worker. | requires `--execute` |
+| `VGI804` | warning | not-null-constraints-present | A worker with no NOT NULL constraints on any column likely forgot them. |  |
 
 ## Structure (VGI11x)
 
@@ -143,4 +146,4 @@ skipped unless `--execute` is passed.
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
 | `VGI903` | error | view-executes | Every defined view must actually execute against the worker. | requires `--execute` |
 
-_63 rules._
+_66 rules._

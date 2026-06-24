@@ -173,6 +173,44 @@ class DescriptionEchoesName(Rule):
 
 
 @register
+class JoinPathDocumented(Rule):
+    code = "VGI133"
+    name = "join-path-documented"
+    category = DISC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = "A table with foreign keys should explain how to join to the referenced tables."
+
+    _JOIN_KW = ("join", "foreign key", "references", "related", "relationship", "->")
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for t in ctx.catalog.iter_table_like():
+            refs = sorted(
+                {
+                    c.referenced_table
+                    for c in t.constraints
+                    if c.constraint_type == "FOREIGN KEY" and c.referenced_table
+                }
+            )
+            if not refs:
+                continue
+            text = " ".join(
+                x for x in (t.comment, t.description_llm, t.description_md) if x
+            ).lower()
+            if any(kw in text for kw in self._JOIN_KW):
+                continue
+            missing = [r for r in refs if r.lower() not in text]
+            if missing:
+                yield self.finding(
+                    ctx,
+                    t.id,
+                    f"join path(s) to {', '.join(missing)} are not documented",
+                    "describe how to join to the referenced table(s) so agents can "
+                    "compose multi-table queries",
+                )
+
+
+@register
 class ClassifyingTagPresent(Rule):
     code = "VGI123"
     name = "classifying-tag-present"

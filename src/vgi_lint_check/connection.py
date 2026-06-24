@@ -119,6 +119,25 @@ def attached(
             con.execute(f"DETACH {alias}")
 
 
+def read_default_schema(con: Any, alias: str) -> str | None:
+    """Return the worker's declared default schema (via current_schema()).
+
+    Switches the session to the catalog to read its default, then restores the
+    prior current catalog/schema. Returns None if it can't be determined.
+    """
+    try:
+        prev_db = con.execute("SELECT current_database()").fetchone()[0]
+        prev_schema = con.execute("SELECT current_schema()").fetchone()[0]
+        con.execute(f"USE {alias}")
+        schema = con.execute("SELECT current_schema()").fetchone()[0]
+    except Exception:  # noqa: BLE001 - best-effort metadata
+        return None
+    finally:
+        with contextlib.suppress(Exception):
+            con.execute(f'USE "{prev_db}"."{prev_schema}"')
+    return str(schema) if schema is not None else None
+
+
 def _explain_attach_failure(location: str, data_version: str | None, e: Exception) -> str:
     msg = str(e)
     low = msg.lower()
