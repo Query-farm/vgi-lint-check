@@ -71,7 +71,7 @@ class Config:
     options: Options = field(default_factory=Options)
 
     # runtime / behavioural
-    execute: bool = False
+    execute: bool = True  # run execution rules (VGI9xx); --no-execute opts out
     execute_mode: str = "explain"
     execute_limit: int = 1
     execute_timeout: float = 30.0  # per-query wall-clock cap (seconds; 0 = off)

@@ -8,6 +8,8 @@ from vgi_lint_check.model import (
     Column,
     Constraint,
     ExampleQuery,
+    ExampleStatement,
+    ExecutableExample,
     Function,
     ObjectId,
     ObjectKind,
@@ -18,6 +20,25 @@ from vgi_lint_check.model import (
     TagSet,
     View,
 )
+
+
+def exec_example(index, description, statements, *, name=None):
+    """Build an ExecutableExample.
+
+    ``statements`` is a list of (description, sql) or (description, sql, expected)
+    tuples — a 3-tuple sets that statement's expected_result.
+    """
+    stmts = []
+    for step in statements:
+        if len(step) == 3:
+            d, q, exp = step
+            stmts.append(
+                ExampleStatement(description=d, sql=q, expected_result=exp, has_expected=True)
+            )
+        else:
+            d, q = step
+            stmts.append(ExampleStatement(description=d, sql=q))
+    return ExecutableExample(index=index, name=name, description=description, statements=stmts)
 
 
 def col(schema, table, name, comment=None, dtype="VARCHAR"):
@@ -92,6 +113,8 @@ def func(
     examples=(),
     tags=None,
     stability=None,
+    executable_examples=(),
+    exec_parse_error=None,
 ):
     return Function(
         id=ObjectId("v", ObjectKind.SCALAR_FUNCTION, schema=schema, name=name),
@@ -104,6 +127,8 @@ def func(
         parameters=list(parameters),
         examples=list(examples),
         stability=stability,
+        executable_examples=list(executable_examples),
+        executable_examples_parse_error=exec_parse_error,
     )
 
 

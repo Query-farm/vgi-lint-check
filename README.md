@@ -64,13 +64,13 @@ families:
 | Columns | VGI2xx | column-comment coverage (tables **and views**), comment-not-echo |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples, scalar-function stability (all-VOLATILE smell + per-function VOLATILE flag) |
 | Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity |
-| Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete entries, **catalog-qualified**, references the object it documents |
+| Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete entries, **catalog-qualified**, references the object it documents; `vgi.executable_examples` well-formed |
 | Settings | VGI6xx | setting descriptions |
 | Pragmas | VGI7xx | pragma descriptions |
 | Constraints | VGI8xx | FK/PK/check validity — references must point at real tables & columns; completeness nudges (no constraints / no PKs / no NOT NULL anywhere) |
 | Attach options | VGI10xx | every `vgi_catalogs()` attach option is documented (description present + meaningful) |
 | Structure | VGI11x/13x | **schema not empty**; warn on excessive table/function counts and over-long table/function names; schema object-count cap (opt-in) |
-| Execution | VGI9xx | example queries & CHECK constraints bind/execute; advertised attach options are accepted and advertised catalogs attach (opt-in, `--execute`); per-query timeout so nothing runs forever |
+| Execution | VGI9xx | illustrative examples bind (best-effort warning) & **executable examples must run + match expected output**; CHECK constraints bind; advertised attach options are accepted and advertised catalogs attach (`--execute`, **on by default**); per-query timeout so nothing runs forever |
 
 See **[RULES.md](RULES.md)** for the full per-rule reference (codes, default
 severities, and what each checks). Run `vgi-lint rules` to list them from your
@@ -82,18 +82,47 @@ if they 404. Only definitive client errors (4xx) are reported — timeouts, DNS
 failures, 5xx, and access-gated codes are skipped so CI isn't flaky. Disable
 with `--no-check-links` (or run fully offline).
 
-**Executing example queries** (`--execute`, opt-in) runs every example a worker
-ships against the live catalog. Examples are collected from **both** carriers —
-the `vgi.example_queries` tag *and* a function's native `Meta.examples`
-(DuckDB's `duckdb_functions().examples` column) — deduped by SQL, across tables,
-views, macros, and scalar/aggregate/table functions. Each query runs under a
-per-query wall-clock cap (`execute_timeout`, default 30s) and is cancelled if it
-exceeds it, so a runaway example can never hang a lint run:
+**Execution is on by default** (`--no-execute` for a static-only lint). Execution
+rules run against the live worker under a per-query wall-clock cap
+(`execute_timeout`, default 30s) so a runaway query can never hang a lint run.
+
+There are **two tiers of examples**:
+
+- **Illustrative** — `vgi.example_queries` *and* a function's native
+  `Meta.examples` (DuckDB's `duckdb_functions().examples`), deduped by SQL across
+  tables, views, macros, and scalar/aggregate/table functions. These teach usage
+  shape and may reference data or context not present at lint time, so a failure
+  to bind is a **warning** (VGI901), never a gate.
+- **Executable** — `vgi.executable_examples`: self-contained, must-run examples
+  that are the contract and the highest-quality material for LLMs. **VGI906**
+  runs every statement in order (ERROR if any fails — not filter-skipped, they
+  must be self-contained); **VGI907** asserts a statement's output against its
+  optional `expected_result` (warning). `expected_result` lives on the
+  individual statement, so a multi-statement example can assert any step.
+
+```jsonc
+// vgi.executable_examples on any object (catalog, schema, table, view, function)
+[
+  {
+    "name": "classify a strong quake",
+    "description": "magnitude_class buckets a Richter value; 6.2 -> 'strong'.",
+    "sql": [                                  // string | [string] | [{description, sql, expected_result?}]
+      {"description": "set up a session option", "sql": "SET threads=2"},
+      {"description": "Classify magnitude 6.2",
+       "sql": "SELECT volcanos.main.magnitude_class(6.2) AS class",
+       "expected_result": [{"class": "strong"}]}   // optional; cells compare as strings, rows in order
+    ]
+  }
+]
+```
+
+Executable examples should be **re-runnable** (e.g. use `CREATE OR REPLACE`),
+since VGI906 and VGI907 each run the statement sequence.
 
 ```toml
 [tool.vgi-lint-check.execution]
-enabled = true       # same as --execute
-mode    = "explain"  # explain (bind-only, cheapest) | limit | run
+enabled = true       # default; --no-execute to disable
+mode    = "explain"  # explain (bind-only, cheapest) | limit | run — for VGI901
 limit   = 1          # row cap for limit/VGI902 modes
 timeout = 30.0       # per-query seconds; 0 disables the guard
 ```
@@ -122,7 +151,8 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | --- | --- |
 | `vgi.description_llm` | Concise description aimed at LLMs/agents (tool selection) |
 | `vgi.description_md` | Markdown description for human docs / listing pages |
-| `vgi.example_queries` | JSON list of `{"description","sql"}` example queries |
+| `vgi.example_queries` | JSON list of `{"description","sql"}` *illustrative* example queries |
+| `vgi.executable_examples` | JSON list of self-contained, **must-run** examples (see below) |
 | `vgi.title` | Human/marketing display name (vs. the machine name) |
 | `vgi.keywords` | Comma-separated search keywords / synonyms |
 | `vgi.columns_md` | Markdown doc of a table function's returned columns (for dynamic schemas DuckDB can't expose) |
@@ -226,7 +256,7 @@ in the publish workflow:
         with:
           location: "$PWD/target/release/units-worker"
           fail-on: error
-          execute: true        # also run example queries / CHECK constraints (VGI9xx)
+          # execution rules (VGI9xx) run by default; set execute: false for static-only
 ```
 
 Key inputs: `location` (required), `fail-on` (default `error`), `version` (pin the

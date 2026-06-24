@@ -16,6 +16,7 @@ from enum import StrEnum
 TAG_DESCRIPTION_LLM = "vgi.description_llm"
 TAG_DESCRIPTION_MD = "vgi.description_md"
 TAG_EXAMPLE_QUERIES = "vgi.example_queries"
+TAG_EXECUTABLE_EXAMPLES = "vgi.executable_examples"  # self-contained, must-run examples
 TAG_TITLE = "vgi.title"  # human/marketing display name (vs the machine name)
 TAG_KEYWORDS = "vgi.keywords"  # comma-separated search keywords / synonyms
 TAG_COLUMNS_MD = "vgi.columns_md"  # Markdown doc of a table function's returned columns
@@ -30,6 +31,7 @@ RESERVED_TAG_KEYS = frozenset(
         TAG_DESCRIPTION_LLM,
         TAG_DESCRIPTION_MD,
         TAG_EXAMPLE_QUERIES,
+        TAG_EXECUTABLE_EXAMPLES,
         TAG_TITLE,
         TAG_KEYWORDS,
         TAG_COLUMNS_MD,
@@ -122,6 +124,37 @@ class ExampleQuery:
 
 
 @dataclass(frozen=True)
+class ExampleStatement:
+    """One SQL step of an executable example (run in order).
+
+    ``expected_result`` is an optional JSON value to assert this statement's
+    output against (``has_expected`` records whether the key was present, so a
+    declared ``null`` expectation is distinguishable from an omitted one).
+    """
+
+    description: str | None
+    sql: str | None
+    expected_result: object = None
+    has_expected: bool = False
+
+
+@dataclass(frozen=True)
+class ExecutableExample:
+    """A self-contained, must-run example from ``vgi.executable_examples``.
+
+    Unlike :class:`ExampleQuery` (illustrative), every statement here must
+    execute against the live worker, and any statement may carry an
+    ``expected_result`` to assert its output.
+    """
+
+    index: int
+    name: str | None
+    description: str | None
+    statements: list[ExampleStatement]
+    raw: object = None
+
+
+@dataclass(frozen=True)
 class Column:
     """A column of a table or view."""
 
@@ -150,6 +183,8 @@ class Table:
     estimated_size: int | None = None
     examples: list[ExampleQuery] = field(default_factory=list)
     examples_parse_error: str | None = None
+    executable_examples: list[ExecutableExample] = field(default_factory=list)
+    executable_examples_parse_error: str | None = None
     constraints: list[Constraint] = field(default_factory=list)
     # The duckdb_functions() table-function row backing this table, if any.
     backing_function: Function | None = None
@@ -193,6 +228,8 @@ class Function:
     parameter_types: list[str] = field(default_factory=list)
     examples: list[ExampleQuery] = field(default_factory=list)
     examples_parse_error: str | None = None
+    executable_examples: list[ExecutableExample] = field(default_factory=list)
+    executable_examples_parse_error: str | None = None
     macro_definition: str | None = None
     # DuckDB function stability: CONSISTENT (deterministic), VOLATILE, or
     # CONSISTENT_WITHIN_QUERY. None for macros/table-functions (not applicable).
@@ -292,6 +329,8 @@ class Schema:
     tables: list[Table] = field(default_factory=list)
     views: list[View] = field(default_factory=list)
     functions: list[Function] = field(default_factory=list)
+    executable_examples: list[ExecutableExample] = field(default_factory=list)
+    executable_examples_parse_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -331,6 +370,9 @@ class Catalog:
     attach_options: list[AttachOption] = field(default_factory=list)
     # Names of every catalog vgi_catalogs() advertised at this location.
     advertised_catalogs: list[str] = field(default_factory=list)
+    # Catalog-level vgi.executable_examples (walkthroughs spanning the catalog).
+    executable_examples: list[ExecutableExample] = field(default_factory=list)
+    executable_examples_parse_error: str | None = None
     # Lazily-built {name: [tables/views]} index for FK reference resolution.
     _name_index: dict[str, list[Table | View]] | None = field(
         default=None, init=False, repr=False, compare=False
@@ -419,6 +461,24 @@ class Catalog:
     def iter_attach_options(self) -> Iterator[AttachOption]:
         """Iterate the catalog's advertised attach-time options."""
         return iter(self.attach_options)
+
+    def iter_executable_example_hosts(
+        self,
+    ) -> Iterator[tuple[ObjectId, list[ExecutableExample], str | None]]:
+        """Yield (object_id, executable_examples, parse_error) for every host.
+
+        Executable examples can live on the catalog, any schema, table, view, or
+        function — every object that carries tags.
+        """
+        yield self.id, self.executable_examples, self.executable_examples_parse_error
+        for s in self.schemas:
+            yield s.id, s.executable_examples, s.executable_examples_parse_error
+            for t in s.tables:
+                yield t.id, t.executable_examples, t.executable_examples_parse_error
+            for v in s.views:
+                yield v.id, v.executable_examples, v.executable_examples_parse_error
+            for f in s.functions:
+                yield f.id, f.executable_examples, f.executable_examples_parse_error
 
     def has_objects(self) -> bool:
         """True when the catalog exposes at least one table, view, or function."""

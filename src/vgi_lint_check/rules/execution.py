@@ -70,10 +70,13 @@ class ExampleQueriesExecute(Rule):
     code = "VGI901"
     name = "example-queries-execute"
     category = EXEC
-    default_severity = Severity.ERROR
+    # Illustrative examples (vgi.example_queries / Meta.examples) may need data or
+    # context not present at lint time, so a failure is a warning, not a gate.
+    # For must-run examples use vgi.executable_examples (VGI906, ERROR).
+    default_severity = Severity.WARNING
     targets = _EXAMPLE_TARGETS
     requires_connection = True
-    summary = "Every example query should bind/execute against the worker."
+    summary = "Illustrative example queries should bind/execute (best-effort; warning)."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         con = ctx.connection
@@ -92,7 +95,8 @@ class ExampleQueriesExecute(Rule):
                     ctx,
                     obj.id,
                     f"example #{ex.index} failed: {type(e).__name__}: {e}",
-                    f"fix the example SQL (or raise execute_timeout); query: {sql[:120]}",
+                    "fix the example SQL, or move must-run examples to "
+                    f"vgi.executable_examples (VGI906); query: {sql[:120]}",
                 )
 
 
@@ -325,3 +329,152 @@ class AdvertisedCatalogsAttachable(Rule):
                     "fix the worker so every catalog it lists in vgi_catalogs() "
                     "can be attached, or stop advertising it",
                 )
+
+
+# --- executable examples (VGI906 / VGI907) --------------------------------
+def _run_executable(con: Any, ex: Any, timeout: float) -> dict[int, tuple[list[str], list[Any]]]:
+    """Run every statement of an executable example in order.
+
+    Returns a map of statement index -> (columns, rows) for each statement that
+    declares an ``expected_result`` (others are executed but not materialized).
+    Raises on any failure — the examples are a must-run contract, so a
+    mandatory-filter rejection is a real failure (the example wasn't
+    self-contained), not a skip.
+    """
+    captured: dict[int, tuple[list[str], list[Any]]] = {}
+    for i, stmt in enumerate(ex.statements):
+        sql = (stmt.sql or "").strip().rstrip(";")
+        if not sql:
+            continue
+        result = run_with_timeout(con, lambda q=sql: con.execute(q), timeout)
+        if getattr(stmt, "has_expected", False):
+            rows = run_with_timeout(con, lambda r=result: r.fetchall(), timeout)
+            cols = [d[0] for d in result.description] if result.description else []
+            captured[i] = (cols, list(rows or []))
+    return captured
+
+
+def _stringify_tree(x: Any) -> Any:
+    """Coerce a JSON/result value to a comparable tree (leaves as strings)."""
+    if isinstance(x, dict):
+        return {str(k): _stringify_tree(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_stringify_tree(v) for v in x]
+    return None if x is None else str(x)
+
+
+def _result_matches(expected: Any, cols: list[str], rows: list[Any]) -> bool:
+    """True when ``expected`` (JSON) matches the result, comparing string leaves.
+
+    Accepts a scalar (1x1 result), a row object / list of row objects (dicts
+    keyed by column), a list of rows (lists), or a list of scalars (one column,
+    or one row). Cell values are stringified so 6 and "6" compare equal.
+    """
+    exp = _stringify_tree(expected)
+    actual_dicts = _stringify_tree([dict(zip(cols, r, strict=False)) for r in rows])
+    actual_lists = _stringify_tree([list(r) for r in rows])
+    if not isinstance(expected, (list, dict)):  # scalar
+        return len(rows) == 1 and len(rows[0]) == 1 and _stringify_tree(rows[0][0]) == exp
+    if isinstance(expected, dict):  # a single row object
+        return len(actual_dicts) == 1 and actual_dicts[0] == exp
+    if exp in (actual_dicts, actual_lists):  # list of rows
+        return True
+    if all(not isinstance(e, (list, dict)) for e in exp):  # list of scalars
+        if [[c] for c in exp] == actual_lists:  # one column, N rows
+            return True
+        if len(rows) == 1 and actual_lists[0] == exp:  # one row, N columns
+            return True
+    return False
+
+
+@register
+class ExecutableExamplesExecute(Rule):
+    code = "VGI906"
+    name = "executable-examples-execute"
+    category = EXEC
+    default_severity = Severity.ERROR
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.MACRO,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    requires_connection = True
+    summary = "Every vgi.executable_examples statement must run against the worker."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        con = ctx.connection
+        if con is None:
+            return
+        timeout = ctx.config.execute_timeout
+        for obj_id, examples, parse_error in ctx.catalog.iter_executable_example_hosts():
+            if parse_error:  # VGI507 reports malformed tags
+                continue
+            for ex in examples:
+                if not any((s.sql or "").strip() for s in ex.statements):
+                    continue
+                label = ex.name or f"#{ex.index}"
+                try:
+                    _run_executable(con, ex, timeout)
+                except Exception as e:  # noqa: BLE001 - surface engine/timeout error
+                    yield self.finding(
+                        ctx,
+                        obj_id,
+                        f"executable example {label!r} failed: {type(e).__name__}: {e}",
+                        "make the example self-contained and runnable as written "
+                        "(catalog-qualify references; include any required filters)",
+                    )
+
+
+@register
+class ExecutableExampleResultMatches(Rule):
+    code = "VGI907"
+    name = "executable-example-result-matches"
+    category = EXEC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.MACRO,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    requires_connection = True
+    summary = "Each executable-example statement's output should match its expected_result."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        con = ctx.connection
+        if con is None:
+            return
+        timeout = ctx.config.execute_timeout
+        for obj_id, examples, parse_error in ctx.catalog.iter_executable_example_hosts():
+            if parse_error:
+                continue
+            for ex in examples:
+                if not any(s.has_expected for s in ex.statements):
+                    continue
+                try:
+                    captured = _run_executable(con, ex, timeout)
+                except Exception:  # noqa: BLE001 - VGI906 reports execution failures
+                    continue
+                label = ex.name or f"#{ex.index}"
+                for i, stmt in enumerate(ex.statements):
+                    if not stmt.has_expected or i not in captured:
+                        continue
+                    cols, rows = captured[i]
+                    if not _result_matches(stmt.expected_result, cols, rows):
+                        yield self.finding(
+                            ctx,
+                            obj_id,
+                            f"executable example {label!r} statement #{i} output "
+                            "does not match expected_result",
+                            "update expected_result to the actual output, or fix the "
+                            "statement; values compare as strings, rows in order",
+                        )

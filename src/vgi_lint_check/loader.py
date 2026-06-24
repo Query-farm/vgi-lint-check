@@ -29,7 +29,7 @@ from .model import (
     Table,
     View,
 )
-from .tags import decode_example_queries, to_tagset
+from .tags import decode_example_queries, decode_executable_examples, to_tagset
 
 if TYPE_CHECKING:
     from .snapshot import Snapshot
@@ -106,6 +106,7 @@ def build_catalog(
         catalog_comment = r.get("comment")
         catalog_tags = to_tagset(r.get("tags"))
         break
+    catalog_exec_ex, catalog_exec_err = decode_executable_examples(catalog_tags)
 
     def get_schema(name: str) -> Schema:
         if name not in schemas:
@@ -124,6 +125,9 @@ def build_catalog(
         s = get_schema(name)
         s.comment = r.get("comment")
         s.tags = to_tagset(r.get("tags"))
+        s.executable_examples, s.executable_examples_parse_error = decode_executable_examples(
+            s.tags
+        )
 
     # --- tables -----------------------------------------------------------
     tables_by_key: dict[tuple[str, str], Table] = {}
@@ -131,6 +135,7 @@ def build_catalog(
         sname, tname = r.get("schema_name"), r.get("table_name")
         tags = to_tagset(r.get("tags"))
         examples, err = decode_example_queries(tags)
+        exec_ex, exec_err = decode_executable_examples(tags)
         t = Table(
             id=ObjectId(alias, ObjectKind.TABLE, schema=sname, name=tname),
             schema=sname,
@@ -141,6 +146,8 @@ def build_catalog(
             estimated_size=r.get("estimated_size"),
             examples=examples,
             examples_parse_error=err,
+            executable_examples=exec_ex,
+            executable_examples_parse_error=exec_err,
         )
         tables_by_key[(sname, tname)] = t
         get_schema(sname).tables.append(t)
@@ -151,6 +158,7 @@ def build_catalog(
         sname, vname = r.get("schema_name"), r.get("view_name")
         tags = to_tagset(r.get("tags"))
         examples, err = decode_example_queries(tags)
+        exec_ex, exec_err = decode_executable_examples(tags)
         v = View(
             id=ObjectId(alias, ObjectKind.VIEW, schema=sname, name=vname),
             schema=sname,
@@ -160,6 +168,8 @@ def build_catalog(
             column_count=r.get("column_count") or 0,
             examples=examples,
             examples_parse_error=err,
+            executable_examples=exec_ex,
+            executable_examples_parse_error=exec_err,
             sql_definition=r.get("sql"),
         )
         views_by_key[(sname, vname)] = v
@@ -200,6 +210,7 @@ def build_catalog(
         # native column are independent carriers — run examples from both so
         # Meta.examples are exercised by --execute, not just tag-carried ones.
         examples = _merge_examples(examples, _native_examples(r.get("examples")))
+        exec_ex, exec_err = decode_executable_examples(tags)
         fn = Function(
             id=ObjectId(alias, _function_objectkind(ftype), schema=sname, name=fname),
             schema=sname,
@@ -212,6 +223,8 @@ def build_catalog(
             parameter_types=list(r.get("parameter_types") or []),
             examples=examples,
             examples_parse_error=err,
+            executable_examples=exec_ex,
+            executable_examples_parse_error=exec_err,
             macro_definition=r.get("macro_definition"),
             stability=r.get("stability"),
         )
@@ -310,6 +323,8 @@ def build_catalog(
         pragmas=pragmas,
         attach_options=opts,
         advertised_catalogs=list(advertised_catalogs or []),
+        executable_examples=catalog_exec_ex,
+        executable_examples_parse_error=catalog_exec_err,
     )
 
 

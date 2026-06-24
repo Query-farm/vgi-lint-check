@@ -71,7 +71,12 @@ def app() -> None:
 @click.option(
     "--all-data-versions", is_flag=True, help="Discover and lint every published version."
 )
-@click.option("--execute", is_flag=True, help="Run example queries (enables VGI9xx).")
+@click.option(
+    "--execute/--no-execute",
+    default=None,
+    help="Run execution rules (VGI9xx) against the worker. On by default; "
+    "--no-execute skips them for a static-only lint.",
+)
 @click.option("--execute-mode", type=click.Choice(["explain", "limit", "run"]), default=None)
 @click.option("--execute-limit", type=int, default=None)
 @click.option(
@@ -114,7 +119,7 @@ def lint(
     install: bool,
     data_versions: tuple[str, ...],
     all_data_versions: bool,
-    execute: bool,
+    execute: bool | None,
     execute_mode: str | None,
     execute_limit: int | None,
     check_links: bool | None,
@@ -334,7 +339,7 @@ def _apply_cli_overrides(
     extend_ignore: str | None,
     categories: str | None,
     severities: tuple[str, ...],
-    execute: bool,
+    execute: bool | None,
     execute_mode: str | None,
     execute_limit: int | None,
     check_links: bool | None,
@@ -356,8 +361,8 @@ def _apply_cli_overrides(
             raise click.UsageError(f"--severity expects CODE=LEVEL, got {item!r}")
         code, level = item.split("=", 1)
         cfg.severity_overrides[code.strip()] = Severity.parse(level)
-    if execute:
-        cfg.execute = True
+    if execute is not None:
+        cfg.execute = execute
     if execute_mode is not None:
         cfg.execute_mode = execute_mode
     if execute_limit is not None:

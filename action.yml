@@ -45,9 +45,9 @@ inputs:
     required: false
     default: ""
   execute:
-    description: "Execute example queries / CHECK constraints to enable the VGI9xx execution rules (passes --execute)."
+    description: "Run the VGI9xx execution rules against the worker. On by default; set 'false' for a static-only lint (passes --no-execute)."
     required: false
-    default: "false"
+    default: "true"
   format:
     description: "Output format: terminal | json | agent | jsonl. Use agent/json for machine-readable findings."
     required: false
@@ -120,7 +120,7 @@ runs:
         fi
         [ -n "${VGILC_BASELINE}" ] && flags+=( --baseline "${VGILC_BASELINE}" )
         [ -n "${VGILC_CONFIG}" ]   && flags+=( --config "${VGILC_CONFIG}" )
-        [ "${VGILC_EXECUTE}" = "true" ] && flags+=( --execute )
+        if [ "${VGILC_EXECUTE}" = "false" ]; then flags+=( --no-execute ); else flags+=( --execute ); fi
 
         echo "::group::vgi-lint lint ${VGILC_LOCATION}"
         echo "+ uvx --prerelease=allow --from ${spec} vgi-lint lint <location> ${flags[*]} ${VGILC_ARGS}"

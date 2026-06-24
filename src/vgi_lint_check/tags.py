@@ -12,7 +12,14 @@ import json
 from collections.abc import Iterable
 from typing import Any
 
-from .model import TAG_EXAMPLE_QUERIES, ExampleQuery, TagSet
+from .model import (
+    TAG_EXAMPLE_QUERIES,
+    TAG_EXECUTABLE_EXAMPLES,
+    ExampleQuery,
+    ExampleStatement,
+    ExecutableExample,
+    TagSet,
+)
 
 
 def to_tagset(raw: Any) -> TagSet:
@@ -81,4 +88,74 @@ def decode_example_queries(tags: TagSet) -> tuple[list[ExampleQuery], str | None
             )
         else:
             return [], f"entry #{i} is not an object ({type(item).__name__})"
+    return examples, None
+
+
+def _decode_statements(raw_sql: Any) -> tuple[list[ExampleStatement], str | None]:
+    """Normalize an example's ``sql`` (string | [string] | [{description, sql, ...}]).
+
+    A statement object may carry an ``expected_result`` to assert that step's
+    output; string statements carry none.
+    """
+    if raw_sql is None:
+        return [], "missing 'sql'"
+    if isinstance(raw_sql, str):
+        return [ExampleStatement(description=None, sql=raw_sql)], None
+    if not isinstance(raw_sql, list):
+        return [], f"'sql' must be a string or a list, got {type(raw_sql).__name__}"
+    statements: list[ExampleStatement] = []
+    for j, step in enumerate(raw_sql):
+        if isinstance(step, str):
+            statements.append(ExampleStatement(description=None, sql=step))
+        elif isinstance(step, dict):
+            sql = step.get("sql")
+            desc = step.get("description")
+            statements.append(
+                ExampleStatement(
+                    description=None if desc is None else str(desc),
+                    sql=None if sql is None else str(sql),
+                    expected_result=step.get("expected_result"),
+                    has_expected="expected_result" in step,
+                )
+            )
+        else:
+            return [], f"statement #{j} must be a string or object ({type(step).__name__})"
+    return statements, None
+
+
+def decode_executable_examples(tags: TagSet) -> tuple[list[ExecutableExample], str | None]:
+    """Decode the ``vgi.executable_examples`` tag into (examples, parse_error).
+
+    Each entry is ``{name?, description, sql}`` where ``sql`` is a string, a list
+    of strings, or a list of ``{description, sql, expected_result?}`` steps run in
+    order. Returns ([], None) when the tag is absent; ([], "<reason>") on a
+    malformed value so a rule can flag it.
+    """
+    raw = tags.get(TAG_EXECUTABLE_EXAMPLES)
+    if raw is None or not str(raw).strip():
+        return [], None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        return [], f"invalid JSON: {e}"
+    if not isinstance(data, list):
+        return [], f"expected a JSON list of objects, got {type(data).__name__}"
+    examples: list[ExecutableExample] = []
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            return [], f"entry #{i} is not an object ({type(item).__name__})"
+        statements, serr = _decode_statements(item.get("sql"))
+        if serr is not None:
+            return [], f"entry #{i}: {serr}"
+        name = item.get("name")
+        desc = item.get("description")
+        examples.append(
+            ExecutableExample(
+                index=i,
+                name=None if name is None else str(name),
+                description=None if desc is None else str(desc),
+                statements=statements,
+                raw=item,
+            )
+        )
     return examples, None

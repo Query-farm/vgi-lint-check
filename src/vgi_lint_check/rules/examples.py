@@ -6,7 +6,14 @@ import re
 from collections.abc import Iterator
 
 from ..findings import Category, Finding, Severity
-from ..model import TAG_EXAMPLE_QUERIES, Catalog, Function, ObjectKind, Table, View
+from ..model import (
+    TAG_EXAMPLE_QUERIES,
+    Catalog,
+    Function,
+    ObjectKind,
+    Table,
+    View,
+)
 from ._util import blank
 from .base import Rule, RuleContext
 from .registry import register
@@ -174,6 +181,55 @@ class ExampleQueriesQualified(Rule):
                         f"the catalog ({qualifier!r})",
                         f"qualify tables/macros as {qualifier}.schema.name so the "
                         "example runs when the worker is attached as a catalog",
+                    )
+
+
+@register
+class ExecutableExamplesWellFormed(Rule):
+    code = "VGI507"
+    name = "executable-examples-well-formed"
+    category = EX
+    default_severity = Severity.ERROR
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.MACRO,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = (
+        "vgi.executable_examples must be a valid JSON list; each entry needs a "
+        "description and at least one non-empty SQL statement."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for obj_id, examples, parse_error in ctx.catalog.iter_executable_example_hosts():
+            if parse_error:
+                yield self.finding(
+                    ctx,
+                    obj_id,
+                    f"vgi.executable_examples is not valid: {parse_error}",
+                    'use a JSON list of {"description","sql"} objects; sql may be a '
+                    "string or a list of {description, sql} steps",
+                )
+                continue
+            for ex in examples:
+                if blank(ex.description):
+                    yield self.finding(
+                        ctx,
+                        obj_id,
+                        f"executable example #{ex.index} has no description",
+                        "describe what the example demonstrates so LLMs can learn from it",
+                    )
+                if not ex.statements or all(blank(s.sql) for s in ex.statements):
+                    yield self.finding(
+                        ctx,
+                        obj_id,
+                        f"executable example #{ex.index} has no SQL statement",
+                        "give the example at least one non-empty SQL statement to run",
                     )
 
 
