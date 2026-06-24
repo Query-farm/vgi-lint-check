@@ -1,0 +1,147 @@
+name: "VGI Lint Check"
+description: >-
+  Run vgi-lint-check, the metadata-quality linter, against a VGI worker and gate
+  on a quality level. Language-agnostic: point it at any subprocess command,
+  binary path, or no-auth HTTP URL.
+author: "Query.Farm"
+branding:
+  icon: "check-circle"
+  color: "purple"
+
+inputs:
+  location:
+    description: >-
+      Worker location to lint: a subprocess command / binary path
+      (e.g. "$PWD/target/release/units-worker" or "uv run worker.py") or a
+      no-auth HTTP URL (e.g. "http://localhost:9009"). The worker must already
+      be built/available; this action does not build it.
+    required: true
+  fail-on:
+    description: "Minimum finding severity that fails the run: info | warning | error | never."
+    required: false
+    default: "error"
+  version:
+    description: >-
+      vgi-lint-check version to run. A bare version pins exactly ("0.2.0"); a
+      requirement operator is honored verbatim (">=0.2,<0.3"); empty installs
+      the latest release.
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory to run in — used for config ([tool.vgi-lint-check] / vgi-lint.toml) and baseline discovery."
+    required: false
+    default: "."
+  data-version:
+    description: "Lint a specific worker data version (passes --data-version). Ignored when all-data-versions is true."
+    required: false
+    default: ""
+  all-data-versions:
+    description: "Lint every published data version (passes --all-data-versions)."
+    required: false
+    default: "false"
+  baseline:
+    description: "Baseline file prefix (passes --baseline). With a baseline set, only NEW findings count toward fail-on."
+    required: false
+    default: ""
+  execute:
+    description: "Execute example queries / CHECK constraints to enable the VGI9xx execution rules (passes --execute)."
+    required: false
+    default: "false"
+  format:
+    description: "Output format: terminal | json | agent | jsonl. Use agent/json for machine-readable findings."
+    required: false
+    default: "terminal"
+  config:
+    description: "Explicit config file (passes --config). Empty uses normal discovery."
+    required: false
+    default: ""
+  args:
+    description: "Extra raw arguments appended to the vgi-lint invocation (word-split)."
+    required: false
+    default: ""
+  uv-version:
+    description: "uv version to install via astral-sh/setup-uv."
+    required: false
+    default: "0.11.7"
+  summary:
+    description: "Append the lint output to the GitHub Actions job summary."
+    required: false
+    default: "true"
+
+outputs:
+  exit-code:
+    description: "The vgi-lint exit code: 0 clean / below fail-on · 1 config error · 2 findings >= fail-on · 3 connection error."
+    value: ${{ steps.lint.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        version: ${{ inputs.uv-version }}
+        enable-cache: true
+
+    - name: Run vgi-lint-check
+      id: lint
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VGILC_LOCATION: ${{ inputs.location }}
+        VGILC_FAIL_ON: ${{ inputs.fail-on }}
+        VGILC_VERSION: ${{ inputs.version }}
+        VGILC_DATA_VERSION: ${{ inputs.data-version }}
+        VGILC_ALL_DATA_VERSIONS: ${{ inputs.all-data-versions }}
+        VGILC_BASELINE: ${{ inputs.baseline }}
+        VGILC_EXECUTE: ${{ inputs.execute }}
+        VGILC_FORMAT: ${{ inputs.format }}
+        VGILC_CONFIG: ${{ inputs.config }}
+        VGILC_ARGS: ${{ inputs.args }}
+        VGILC_SUMMARY: ${{ inputs.summary }}
+      run: |
+        set -uo pipefail
+
+        # Resolve the package spec for `uvx --from`.
+        spec="vgi-lint-check"
+        if [ -n "${VGILC_VERSION}" ]; then
+          case "${VGILC_VERSION}" in
+            *[\<\>=~!\ ]*) spec="vgi-lint-check${VGILC_VERSION}" ;;  # already a requirement
+            *)             spec="vgi-lint-check==${VGILC_VERSION}" ;; # bare version → pin exactly
+          esac
+        fi
+
+        # Assemble flags.
+        flags=( --fail-on "${VGILC_FAIL_ON}" --format "${VGILC_FORMAT}" )
+        if [ "${VGILC_ALL_DATA_VERSIONS}" = "true" ]; then
+          flags+=( --all-data-versions )
+        elif [ -n "${VGILC_DATA_VERSION}" ]; then
+          flags+=( --data-version "${VGILC_DATA_VERSION}" )
+        fi
+        [ -n "${VGILC_BASELINE}" ] && flags+=( --baseline "${VGILC_BASELINE}" )
+        [ -n "${VGILC_CONFIG}" ]   && flags+=( --config "${VGILC_CONFIG}" )
+        [ "${VGILC_EXECUTE}" = "true" ] && flags+=( --execute )
+
+        echo "::group::vgi-lint lint ${VGILC_LOCATION}"
+        echo "+ uvx --prerelease=allow --from ${spec} vgi-lint lint <location> ${flags[*]} ${VGILC_ARGS}"
+        # haybarn (a transitive dep) is RC-only → --prerelease=allow is required.
+        # The linter INSTALLs the signed `vgi` community extension itself.
+        uvx --prerelease=allow --from "${spec}" \
+          vgi-lint lint "${VGILC_LOCATION}" "${flags[@]}" ${VGILC_ARGS} 2>&1 | tee vgi-lint-output.txt
+        status=${PIPESTATUS[0]}
+        echo "::endgroup::"
+
+        echo "exit-code=${status}" >> "${GITHUB_OUTPUT}"
+
+        if [ "${VGILC_SUMMARY}" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+          {
+            echo "### vgi-lint-check — \`${VGILC_LOCATION}\`"
+            echo ""
+            echo "\`fail-on=${VGILC_FAIL_ON}\` · exit code \`${status}\`"
+            echo ""
+            echo '```'
+            cat vgi-lint-output.txt
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+        fi
+
+        exit "${status}"
