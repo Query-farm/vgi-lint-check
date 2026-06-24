@@ -124,6 +124,40 @@ Precedence: defaults < `pyproject.toml` < `vgi-lint.toml` < CLI flags.
 `0` clean (or below `--fail-on`) · `1` config/tool error · `2` findings ≥
 `--fail-on` (regressions only when a baseline is set) · `3` connection error.
 
+## GitHub Action (reusable)
+
+This repo ships a composite action so a worker repo can lint itself in CI with a
+single step — it installs `uv`, runs the linter (the signed `vgi` community
+extension is installed automatically), gates on `fail-on`, and posts the findings
+to the job summary. **Build the worker first**, then point the action at it:
+
+```yaml
+# .github/workflows/ci.yml — inside a job that has already built the worker
+      - name: VGI metadata quality
+        uses: Query-farm/vgi-lint-check@v1
+        with:
+          location: "$PWD/target/release/units-worker"   # binary, command, or HTTP URL
+          fail-on: warning                                 # info | warning | error | never
+```
+
+Gate releases harder than everyday CI — e.g. `fail-on: warning` on push/PR while
+the worker's quality is being raised, and `fail-on: error` (plus `execute: true`)
+in the publish workflow:
+
+```yaml
+      - uses: Query-farm/vgi-lint-check@v1
+        with:
+          location: "$PWD/target/release/units-worker"
+          fail-on: error
+          execute: true        # also run example queries / CHECK constraints (VGI9xx)
+```
+
+Key inputs: `location` (required), `fail-on` (default `error`), `version` (pin the
+linter, e.g. `0.2.0`), `working-directory`, `data-version` / `all-data-versions`,
+`baseline`, `execute`, `format` (`terminal|json|agent|jsonl`), `config`, `args`,
+`summary`. The action's `exit-code` is exposed as an output. The action ref `@v1`
+tracks the latest v1.x of the action; pin to a tag or SHA for full reproducibility.
+
 ## Development
 
 ```bash
