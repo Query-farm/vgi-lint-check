@@ -130,7 +130,9 @@ skipped unless `--execute` is passed.
 | `VGI801` | error | foreign-key-reference-valid | A foreign key must reference a table and columns that exist. |  |
 | `VGI802` | error | constraint-columns-exist | Every constraint must reference columns that exist on the table. |  |
 | `VGI803` | error | check-constraint-binds | CHECK constraint expressions should bind against the worker. | requires `--execute` |
-| `VGI804` | warning | not-null-constraints-present | A worker with no NOT NULL constraints on any column likely forgot them. |  |
+| `VGI804` | warning | not-null-constraints-present | A worker with constraints but no NOT NULL on any column likely forgot them. |  |
+| `VGI805` | warning | no-primary-keys | A worker with constraints but no primary keys likely forgot them. |  |
+| `VGI806` | warning | no-constraints | A worker that declares no constraints at all is likely incomplete. |  |
 
 ## Structure (VGI11x)
 
@@ -146,4 +148,4 @@ skipped unless `--execute` is passed.
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
 | `VGI903` | error | view-executes | Every defined view must actually execute against the worker. | requires `--execute` |
 
-_66 rules._
+_68 rules._

@@ -99,6 +99,62 @@ class ConstraintColumnsExist(Rule):
                 )
 
 
+def _constraint_counts(ctx: RuleContext) -> tuple[bool, int, int, int]:
+    """(has_columns, total_constraints, primary_keys, not_nulls) for the catalog."""
+    has_columns = any(t.columns for t in ctx.catalog.iter_tables())
+    total = pk = not_null = 0
+    for _t, c in ctx.catalog.iter_constraints():
+        total += 1
+        if c.constraint_type == "PRIMARY KEY":
+            pk += 1
+        elif c.constraint_type == "NOT NULL":
+            not_null += 1
+    return has_columns, total, pk, not_null
+
+
+@register
+class NoConstraintsAtAll(Rule):
+    code = "VGI806"
+    name = "no-constraints"
+    category = CON
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A worker that declares no constraints at all is likely incomplete."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        has_columns, total, _pk, _nn = _constraint_counts(ctx)
+        if has_columns and total == 0:
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                "no constraints of any kind are declared on any table",
+                "declare primary keys, NOT NULL, foreign keys, etc. — their "
+                "absence usually means the metadata is unfinished",
+            )
+
+
+@register
+class NoPrimaryKeys(Rule):
+    code = "VGI805"
+    name = "no-primary-keys"
+    category = CON
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A worker with constraints but no primary keys likely forgot them."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        has_columns, total, pk, _nn = _constraint_counts(ctx)
+        # When there are no constraints at all, VGI806 reports the broader gap.
+        if has_columns and total > 0 and pk == 0:
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                "no primary keys on any table (other constraints exist)",
+                "declare a primary key on tables that have a stable identity so "
+                "agents know each row's key (or confirm none applies)",
+            )
+
+
 @register
 class NotNullConstraintsPresent(Rule):
     code = "VGI804"
@@ -106,20 +162,16 @@ class NotNullConstraintsPresent(Rule):
     category = CON
     default_severity = Severity.WARNING
     targets = (ObjectKind.CATALOG,)
-    summary = "A worker with no NOT NULL constraints on any column likely forgot them."
+    summary = "A worker with constraints but no NOT NULL on any column likely forgot them."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        has_columns = any(t.columns for t in ctx.catalog.iter_tables())
-        if not has_columns:
-            return
-        not_null = sum(
-            1 for _t, c in ctx.catalog.iter_constraints() if c.constraint_type == "NOT NULL"
-        )
-        if not_null == 0:
+        has_columns, total, _pk, not_null = _constraint_counts(ctx)
+        # When there are no constraints at all, VGI806 reports the broader gap.
+        if has_columns and total > 0 and not_null == 0:
             yield self.finding(
                 ctx,
                 ctx.catalog.id,
-                "no NOT NULL constraints on any table in the catalog",
+                "no NOT NULL constraints on any table (other constraints exist)",
                 "declare NOT NULL on columns that are always populated — agents "
                 "rely on nullability to write correct queries (or confirm they "
                 "were intentionally omitted)",

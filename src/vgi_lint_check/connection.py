@@ -73,7 +73,8 @@ def connect_loaded(*, install: bool = True, spatial: bool = False) -> tuple[Any,
         raise WorkerConnectionError(f"couldn't LOAD the vgi extension: {e}") from e
     if spatial:
         try:
-            con.execute("INSTALL spatial")
+            if install:
+                con.execute("INSTALL spatial")
             con.execute("LOAD spatial")
         except Exception as e:  # noqa: BLE001
             log.warning("spatial extension unavailable; continuing (%s)", e)

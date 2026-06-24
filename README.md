@@ -67,7 +67,7 @@ families:
 | Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete entries, **catalog-qualified** |
 | Settings | VGI6xx | setting descriptions |
 | Pragmas | VGI7xx | pragma descriptions |
-| Constraints | VGI8xx | foreign-key/PK/check validity — references must point at real tables & columns; NOT NULL coverage nudge |
+| Constraints | VGI8xx | FK/PK/check validity — references must point at real tables & columns; completeness nudges (no constraints / no PKs / no NOT NULL anywhere) |
 | Structure | VGI11x | schema object-count cap (opt-in) |
 | Execution | VGI9xx | example queries & CHECK constraints bind/execute (opt-in, `--execute`) |
 

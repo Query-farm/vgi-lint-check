@@ -60,25 +60,58 @@ def test_join_path_documented_passes():
     assert "VGI133" not in set(codes(cat))
 
 
-# --- VGI804 NOT NULL constraints present ----------------------------------
-def test_no_not_null_anywhere_flagged():
-    t = F.table(
+# --- VGI804/805/806 constraint-completeness (partitioned) ------------------
+def _table(name, *constraints):
+    return F.table(
         "main",
-        "t",
-        comment="A table with columns but no constraints",
-        columns=[F.col("main", "t", "a", "the a value")],
+        name,
+        comment=f"A {name} table for constraint-completeness tests here",
+        columns=[F.col("main", name, "a", "the a value")],
+        constraints=list(constraints),
     )
-    cat = F.catalog(F.schema("main", tables=[t]))
-    assert "VGI804" in set(codes(cat))
 
 
-def test_not_null_present_passes():
-    t = F.table(
-        "main",
-        "t",
-        comment="A table with a NOT NULL constraint declared",
-        columns=[F.col("main", "t", "a", "the a value")],
-        constraints=[F.constraint("main", "t", "NOT NULL", columns=["a"])],
+def test_no_constraints_at_all_flagged():
+    cat = F.catalog(F.schema("main", tables=[_table("t")]))  # no constraints
+    found = set(codes(cat))
+    assert "VGI806" in found  # nothing at all
+    assert "VGI804" not in found and "VGI805" not in found  # broader rule wins
+
+
+def test_no_primary_keys_flagged():
+    # has a NOT NULL but no PK -> VGI805, not VGI806 (constraints exist)
+    cat = F.catalog(
+        F.schema("main", tables=[_table("t", F.constraint("main", "t", "NOT NULL", columns=["a"]))])
     )
-    cat = F.catalog(F.schema("main", tables=[t]))
-    assert "VGI804" not in set(codes(cat))
+    found = set(codes(cat))
+    assert "VGI805" in found
+    assert "VGI806" not in found and "VGI804" not in found
+
+
+def test_no_not_null_flagged():
+    # has a PK but no NOT NULL -> VGI804, not VGI805/806
+    cat = F.catalog(
+        F.schema(
+            "main", tables=[_table("t", F.constraint("main", "t", "PRIMARY KEY", columns=["a"]))]
+        )
+    )
+    found = set(codes(cat))
+    assert "VGI804" in found
+    assert "VGI805" not in found and "VGI806" not in found
+
+
+def test_complete_constraints_pass():
+    cat = F.catalog(
+        F.schema(
+            "main",
+            tables=[
+                _table(
+                    "t",
+                    F.constraint("main", "t", "PRIMARY KEY", columns=["a"]),
+                    F.constraint("main", "t", "NOT NULL", columns=["a"]),
+                )
+            ],
+        )
+    )
+    found = set(codes(cat))
+    assert not (found & {"VGI804", "VGI805", "VGI806"})
