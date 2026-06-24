@@ -27,6 +27,7 @@ skipped unless `--execute` is passed.
 | `VGI006` | warning | release-version-valid | Every published data-version release must be a valid semver version. |  |
 | `VGI007` | warning | releases-within-spec | Every published release must be contained by data_version_spec. |  |
 | `VGI008` | warning | default-schema-valid | The catalog's default schema must resolve to a schema that exists. |  |
+| `VGI009` | info | catalog-support | The catalog should advertise a support contact and support policy URL. |  |
 
 ## Discoverability (VGI12x)
 
@@ -149,4 +150,4 @@ skipped unless `--execute` is passed.
 | `VGI902` | off | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute`, opt-in |
 | `VGI903` | error | view-executes | Every defined view must actually execute against the worker. | requires `--execute` |
 
-_69 rules._
+_70 rules._

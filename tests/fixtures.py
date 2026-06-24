@@ -151,6 +151,8 @@ def catalog(
             "vgi.author": "Test Author",
             "vgi.copyright": "(c) 2026 Test",
             "vgi.license": "MIT",
+            "vgi.support_contact": "support@example.com",
+            "vgi.support_policy_url": "https://example.com/support",
         }
     return Catalog(
         database="v",

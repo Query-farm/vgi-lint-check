@@ -98,6 +98,8 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | `vgi.author` | Author / maintainer attribution (catalog) |
 | `vgi.copyright` | Copyright notice (catalog) |
 | `vgi.license` | License name or SPDX identifier (catalog) |
+| `vgi.support_contact` | Where to report issues/bugs — email or URL (catalog) |
+| `vgi.support_policy_url` | Link to the support / SLA policy (catalog) |
 
 `vgi.description_llm`/`_md` are **required on the catalog and every schema**
 (the catalog is the worker's listing; schemas are its sections). They're

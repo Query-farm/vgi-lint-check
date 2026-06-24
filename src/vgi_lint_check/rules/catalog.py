@@ -16,6 +16,8 @@ from ..findings import Category, Finding, Severity
 from ..model import (
     TAG_DESCRIPTION_LLM,
     TAG_DESCRIPTION_MD,
+    TAG_SUPPORT_CONTACT,
+    TAG_SUPPORT_POLICY_URL,
     ObjectKind,
 )
 from ._util import blank
@@ -119,6 +121,33 @@ class CatalogSourceUrl(Rule):
                 "catalog has no source_url",
                 "advertise a source_url (repo/docs/dataset homepage) so consumers "
                 "can verify provenance and learn more",
+            )
+
+
+@register
+class CatalogSupport(Rule):
+    code = "VGI009"
+    name = "catalog-support"
+    category = CAT
+    default_severity = Severity.INFO
+    targets = (ObjectKind.CATALOG,)
+    summary = "The catalog should advertise a support contact and support policy URL."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        tags = ctx.catalog.tags
+        if not tags.has(TAG_SUPPORT_CONTACT):
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"catalog has no support contact ('{TAG_SUPPORT_CONTACT}')",
+                "add a 'vgi.support_contact' tag (email or URL) for issues and bugs",
+            )
+        if not tags.has(TAG_SUPPORT_POLICY_URL):
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"catalog has no support policy URL ('{TAG_SUPPORT_POLICY_URL}')",
+                "add a 'vgi.support_policy_url' tag linking to the support/SLA policy",
             )
 
 

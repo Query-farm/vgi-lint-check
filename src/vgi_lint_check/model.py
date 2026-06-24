@@ -23,6 +23,8 @@ TAG_SOURCE_URL = "vgi.source_url"  # link to where this object is implemented (r
 TAG_AUTHOR = "vgi.author"  # author / maintainer attribution
 TAG_COPYRIGHT = "vgi.copyright"  # copyright notice
 TAG_LICENSE = "vgi.license"  # license name or SPDX identifier
+TAG_SUPPORT_CONTACT = "vgi.support_contact"  # where to report issues/bugs (email or URL)
+TAG_SUPPORT_POLICY_URL = "vgi.support_policy_url"  # link to the support/SLA policy
 RESERVED_TAG_KEYS = frozenset(
     {
         TAG_DESCRIPTION_LLM,
@@ -35,6 +37,8 @@ RESERVED_TAG_KEYS = frozenset(
         TAG_AUTHOR,
         TAG_COPYRIGHT,
         TAG_LICENSE,
+        TAG_SUPPORT_CONTACT,
+        TAG_SUPPORT_POLICY_URL,
     }
 )
 

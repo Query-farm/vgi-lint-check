@@ -14,6 +14,8 @@ from ..model import (
     TAG_DESCRIPTION_LLM,
     TAG_DESCRIPTION_MD,
     TAG_SOURCE_URL,
+    TAG_SUPPORT_CONTACT,
+    TAG_SUPPORT_POLICY_URL,
     ObjectId,
     ObjectKind,
 )
@@ -100,6 +102,14 @@ def _iter_urls(ctx: RuleContext) -> Iterator[tuple[ObjectId, str, str]]:
     cat = ctx.catalog
     if not blank(cat.source_url):
         yield cat.id, cat.source_url or "", "source_url"
+    # Catalog support links (the contact may be a mailto/email; only resolve URLs).
+    for tag, label in (
+        (TAG_SUPPORT_POLICY_URL, "vgi.support_policy_url"),
+        (TAG_SUPPORT_CONTACT, "vgi.support_contact"),
+    ):
+        value = cat.tags.get(tag) or ""
+        if value.startswith(("http://", "https://")):
+            yield cat.id, value, label
     for oid, comment, llm, md, src_tag in _described(ctx):
         if not blank(src_tag):
             yield oid, src_tag or "", "vgi.source_url"
