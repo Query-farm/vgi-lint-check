@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
+import threading
+from collections.abc import Callable
 from typing import Any
 
 
@@ -43,3 +46,37 @@ def is_filter_policy_error(error: object) -> bool:
     from false-failing on workers that require WHERE predicates by policy.
     """
     return bool(_FILTER_POLICY.search(str(error)))
+
+
+class QueryTimeout(Exception):
+    """A worker query exceeded its execution-rule time budget and was cancelled."""
+
+
+def run_with_timeout(con: Any, fn: Callable[..., Any], timeout: float) -> Any:
+    """Run ``fn`` (which executes SQL on ``con``) under a wall-clock timeout.
+
+    On timeout, the in-flight query is cancelled via ``con.interrupt()`` so an
+    example query can never run forever, and :class:`QueryTimeout` is raised.
+    A non-positive timeout disables the guard.
+    """
+    if not timeout or timeout <= 0:
+        return fn()
+    box: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            box["value"] = fn()
+        except BaseException as e:  # noqa: BLE001 - relayed to the caller's thread
+            box["error"] = e
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        with contextlib.suppress(Exception):
+            con.interrupt()
+        thread.join(5)
+        raise QueryTimeout(f"query exceeded {timeout:g}s and was cancelled")
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")

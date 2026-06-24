@@ -69,7 +69,7 @@ families:
 | Pragmas | VGI7xx | pragma descriptions |
 | Constraints | VGI8xx | FK/PK/check validity — references must point at real tables & columns; completeness nudges (no constraints / no PKs / no NOT NULL anywhere) |
 | Structure | VGI11x | schema object-count cap (opt-in) |
-| Execution | VGI9xx | example queries & CHECK constraints bind/execute (opt-in, `--execute`) |
+| Execution | VGI9xx | example queries & CHECK constraints bind/execute (opt-in, `--execute`); per-query timeout so nothing runs forever |
 
 See **[RULES.md](RULES.md)** for the full per-rule reference (codes, default
 severities, and what each checks). Run `vgi-lint rules` to list them from your
@@ -80,6 +80,22 @@ and `source_url`/`vgi.source_url` repo links, are resolved over HTTP and flagged
 if they 404. Only definitive client errors (4xx) are reported — timeouts, DNS
 failures, 5xx, and access-gated codes are skipped so CI isn't flaky. Disable
 with `--no-check-links` (or run fully offline).
+
+**Executing example queries** (`--execute`, opt-in) runs every example a worker
+ships against the live catalog. Examples are collected from **both** carriers —
+the `vgi.example_queries` tag *and* a function's native `Meta.examples`
+(DuckDB's `duckdb_functions().examples` column) — deduped by SQL, across tables,
+views, macros, and scalar/aggregate/table functions. Each query runs under a
+per-query wall-clock cap (`execute_timeout`, default 30s) and is cancelled if it
+exceeds it, so a runaway example can never hang a lint run:
+
+```toml
+[tool.vgi-lint-check.execution]
+enabled = true       # same as --execute
+mode    = "explain"  # explain (bind-only, cheapest) | limit | run
+limit   = 1          # row cap for limit/VGI902 modes
+timeout = 30.0       # per-query seconds; 0 disables the guard
+```
 
 ## Reserved tags
 

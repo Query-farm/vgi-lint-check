@@ -65,6 +65,7 @@ class Config:
     execute: bool = False
     execute_mode: str = "explain"
     execute_limit: int = 1
+    execute_timeout: float = 30.0  # per-query wall-clock cap (seconds; 0 = off)
     check_links: bool = False  # enable network rules (validate description URLs)
     link_timeout: float = 10.0
     fail_on: Severity = Severity.ERROR
@@ -172,6 +173,7 @@ def from_table(raw: dict[str, Any]) -> Config:
         cfg.execute = bool(ex.get("enabled", cfg.execute))
         cfg.execute_mode = ex.get("mode", cfg.execute_mode)
         cfg.execute_limit = int(ex.get("limit", cfg.execute_limit))
+        cfg.execute_timeout = float(ex.get("timeout", cfg.execute_timeout))
     return cfg
 
 

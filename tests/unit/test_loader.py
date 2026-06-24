@@ -138,11 +138,11 @@ def test_table_function_correlation():
     assert next(iter(fns)).is_macro
 
 
-def test_native_examples_fallback():
+def test_native_examples_merged():
     # The VGI extension surfaces a function's Meta.examples into the native
-    # duckdb_functions().examples column (VARCHAR[]). When no vgi.example_queries
-    # tag is present, the loader must fall back to that native column so example
-    # rules (VGI306) see the examples the worker actually ships.
+    # duckdb_functions().examples column (VARCHAR[]). The vgi.example_queries tag
+    # is an independent carrier; the loader merges BOTH (deduped by SQL) so every
+    # example the worker ships is seen by static rules and run by --execute.
     snap = Snapshot(
         schemas=[{"database_name": "v", "schema_name": "main", "comment": None, "tags": {}}],
         functions=[
@@ -170,7 +170,7 @@ def test_native_examples_fallback():
                 "tags": {"vgi.example_queries": '[{"description":"x","sql":"SELECT tag"}]'},
                 "parameters": [],
                 "parameter_types": [],
-                "examples": ["SELECT native"],
+                "examples": ["SELECT native", "SELECT tag"],  # 2nd dups the tag query
             },
         ],
     )
@@ -178,9 +178,11 @@ def test_native_examples_fallback():
     fns = {f.name: f for f in cat.iter_functions()}
     assert [e.sql for e in fns["r2_score"].examples] == ["SELECT main.r2_score(a, b) FROM t"]
     assert fns["r2_score"].examples_parse_error is None
-    # the tag wins (carries a description); the native column is not appended
-    assert [e.sql for e in fns["tagged"].examples] == ["SELECT tag"]
+    # tag first (it carries a description), then the distinct native query; the
+    # native entry that duplicates the tag SQL is dropped, and indexes are 0..n.
+    assert [e.sql for e in fns["tagged"].examples] == ["SELECT tag", "SELECT native"]
     assert fns["tagged"].examples[0].description == "x"
+    assert [e.index for e in fns["tagged"].examples] == [0, 1]
 
 
 def test_settings_and_pragmas_diff_scoped():

@@ -8,7 +8,7 @@ from vgi_lint_check.connection import (
     derive_alias,
     sql_str,
 )
-from vgi_lint_check.rules._util import is_filter_policy_error
+from vgi_lint_check.rules._util import QueryTimeout, is_filter_policy_error, run_with_timeout
 from vgi_lint_check.rules.constraints import _check_expression
 from vgi_lint_check.rules.examples import _references_catalog
 from vgi_lint_check.rules.functions import _is_unnamed
@@ -28,6 +28,40 @@ from vgi_lint_check.rules.functions import _is_unnamed
 )
 def test_is_filter_policy_error(msg, expected):
     assert is_filter_policy_error(Exception(msg)) is expected
+
+
+def test_run_with_timeout_returns_value():
+    assert run_with_timeout(object(), lambda: 42, 5.0) == 42
+
+
+def test_run_with_timeout_propagates_error():
+    def boom():
+        raise ValueError("nope")
+
+    with pytest.raises(ValueError, match="nope"):
+        run_with_timeout(object(), boom, 5.0)
+
+
+def test_run_with_timeout_cancels_slow_query():
+    import time
+
+    interrupted = []
+
+    class SlowCon:
+        def execute(self, *a):
+            time.sleep(0.4)
+
+        def interrupt(self):
+            interrupted.append(True)
+
+    con = SlowCon()
+    with pytest.raises(QueryTimeout):
+        run_with_timeout(con, lambda: con.execute("SELECT 1"), 0.05)
+    assert interrupted  # con.interrupt() was called to cancel
+
+
+def test_run_with_timeout_disabled_when_zero():
+    assert run_with_timeout(object(), lambda: "ok", 0) == "ok"
 
 
 # --- connection -----------------------------------------------------------

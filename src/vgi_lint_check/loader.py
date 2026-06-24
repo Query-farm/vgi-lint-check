@@ -57,6 +57,26 @@ def _native_examples(raw: Any) -> list[ExampleQuery]:
     return [ExampleQuery(index=i, description=None, sql=sql) for i, sql in enumerate(sqls)]
 
 
+def _merge_examples(tagged: list[ExampleQuery], native: list[ExampleQuery]) -> list[ExampleQuery]:
+    """Union tag-carried and native ``Meta.examples``, deduped by SQL, reindexed.
+
+    The ``vgi.example_queries`` tag and the native ``duckdb_functions().examples``
+    column are independent carriers — a function may use either or both. We keep
+    every distinct query (tag entries first, since they can carry a description)
+    so ``--execute`` runs them all. SQL strings are compared case- and
+    whitespace-insensitively so the same query surfaced by both carriers runs once.
+    """
+    merged: list[ExampleQuery] = []
+    seen: set[str] = set()
+    for ex in [*tagged, *native]:
+        key = " ".join((ex.sql or "").split()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(ExampleQuery(index=len(merged), description=ex.description, sql=ex.sql))
+    return merged
+
+
 def build_catalog(
     snapshot: Snapshot,
     alias: str,
@@ -172,12 +192,11 @@ def build_catalog(
             continue
         tags = to_tagset(r.get("tags"))
         examples, err = decode_example_queries(tags)
-        if not examples and err is None:
-            # Fall back to the native duckdb_functions().examples column, which
-            # the VGI extension populates from the worker's Meta.examples. The
-            # vgi.example_queries tag is the legacy carrier; prefer it (it can
-            # carry descriptions) but don't miss examples that only ship natively.
-            examples = _native_examples(r.get("examples"))
+        # Merge in the native duckdb_functions().examples column, which the VGI
+        # extension populates from the worker's Meta.examples. The tag and the
+        # native column are independent carriers — run examples from both so
+        # Meta.examples are exercised by --execute, not just tag-carried ones.
+        examples = _merge_examples(examples, _native_examples(r.get("examples")))
         fn = Function(
             id=ObjectId(alias, _function_objectkind(ftype), schema=sname, name=fname),
             schema=sname,

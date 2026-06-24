@@ -13,7 +13,7 @@ from collections.abc import Iterator
 
 from ..findings import Category, Finding, Severity
 from ..model import ObjectKind
-from ._util import is_filter_policy_error
+from ._util import is_filter_policy_error, run_with_timeout
 from .base import Rule, RuleContext
 from .registry import register
 
@@ -198,8 +198,9 @@ class CheckConstraintBinds(Rule):
                 continue
             expr = _check_expression(c.expression)
             relation = f'"{qualifier}"."{table.schema}"."{table.name}"'
+            sql = f"EXPLAIN SELECT 1 FROM {relation} WHERE ({expr}) LIMIT 0"
             try:
-                con.execute(f"EXPLAIN SELECT 1 FROM {relation} WHERE ({expr}) LIMIT 0")
+                run_with_timeout(con, lambda q=sql: con.execute(q), ctx.config.execute_timeout)
             except Exception as e:  # noqa: BLE001
                 # The probe adds no required filter; a mandatory-filter rejection
                 # is the worker's scan policy, not a bad CHECK expression.
