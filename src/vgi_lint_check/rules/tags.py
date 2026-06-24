@@ -125,7 +125,13 @@ class DeprecatedTagKey(Rule):
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         cat = ctx.catalog
-        objects: Iterable[tuple[ObjectId, TagSet]] = [(cat.id, cat.tags), *_tagged_objects(cat)]
+        objects: list[tuple[ObjectId, TagSet]] = [(cat.id, cat.tags)]
+        for s in cat.iter_schemas():
+            objects.append((s.id, s.tags))
+        for t in cat.iter_table_like():
+            objects.append((t.id, t.tags))
+        for f in cat.iter_all_functions():  # include table-functions (columns_md)
+            objects.append((f.id, f.tags))
         for oid, tags in objects:
             for old, new in tags.deprecated_keys().items():
                 yield self.finding(

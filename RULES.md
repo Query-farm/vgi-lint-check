@@ -63,6 +63,7 @@ skipped unless `--execute` is passed.
 | --- | --- | --- | --- | --- |
 | `VGI170` | info | markdown-well-formed | vgi.doc_md should be valid Markdown (no empty/broken links). |  |
 | `VGI171` | warning | description-links-resolve | Links/images and source URLs in descriptions must resolve (no 404). |  |
+| `VGI172` | error | doc-links-well-formed | vgi.doc_links must be a JSON array of http(s) URLs (or {title?, url} objects). |  |
 
 ## Descriptions (VGI1xx)
 
@@ -98,7 +99,7 @@ skipped unless `--execute` is passed.
 | `VGI304` | info | function-description-quality | A function description should be substantive, not a stub or echo. |  |
 | `VGI305` | warning | function-arguments-named | All function/macro arguments should be named, not positional. |  |
 | `VGI306` | warning | function-example | Scalar/aggregate functions should ship an example query. |  |
-| `VGI307` | warning | table-function-columns-documented | A table function with a dynamic schema (no backing table) must document its returned columns in a 'vgi.columns_md' tag. |  |
+| `VGI307` | warning | table-function-columns-documented | A table function with a dynamic schema (no backing table) must document its returned columns in a 'vgi.result_columns_md' tag. |  |
 | `VGI308` | warning | all-scalar-functions-volatile | Every scalar function being VOLATILE usually means stability was never set. |  |
 | `VGI309` | warning | volatile-scalar-function | Flag each VOLATILE scalar/aggregate function for a stability audit. |  |
 
@@ -183,4 +184,4 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 
-_98 rules._
+_99 rules._

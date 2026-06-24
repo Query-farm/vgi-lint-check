@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterator
 
 from ..findings import Category, Finding, Severity
-from ..model import TAG_COLUMNS_MD, ObjectKind
+from ..model import TAG_RESULT_COLUMNS_MD, ObjectKind
 from ._util import blank, is_trivial_echo
 from .base import Rule, RuleContext
 from .registry import register
@@ -154,7 +154,7 @@ class TableFunctionColumnsDocumented(Rule):
     targets = (ObjectKind.TABLE_FUNCTION,)
     summary = (
         "A table function with a dynamic schema (no backing table) must document "
-        "its returned columns in a 'vgi.columns_md' tag."
+        "its returned columns in a 'vgi.result_columns_md' tag."
     )
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
@@ -166,13 +166,13 @@ class TableFunctionColumnsDocumented(Rule):
             # documented via that table's column comments.
             if cat.find_table_like(f.name, f.schema):
                 continue
-            if not f.tags.has(TAG_COLUMNS_MD):
+            if not f.tags.has(TAG_RESULT_COLUMNS_MD):
                 yield self.finding(
                     ctx,
                     f.id,
-                    f"table function has no documented return columns ('{TAG_COLUMNS_MD}')",
+                    f"table function has no documented return columns ('{TAG_RESULT_COLUMNS_MD}')",
                     "DuckDB can't expose a dynamic table-function schema — add a "
-                    "'vgi.columns_md' tag with a Markdown table of the returned "
+                    "'vgi.result_columns_md' tag with a Markdown table of the returned "
                     "columns (note any columns that vary by argument)",
                 )
 

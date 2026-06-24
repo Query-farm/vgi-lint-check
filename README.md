@@ -173,11 +173,12 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | --- | --- |
 | `vgi.doc_llm` | LLM-oriented narrative doc — what the object is and when to use it (tool selection). *Complements, doesn't duplicate, the object's own `description`/comment.* |
 | `vgi.doc_md` | Richer Markdown narrative doc for human docs / listing pages |
+| `vgi.doc_links` | JSON array of links to more docs — URL strings or `{"title","url"}` objects (validated + resolved) |
 | `vgi.example_queries` | JSON list of `{"description","sql"}` *illustrative* example queries |
 | `vgi.executable_examples` | JSON list of self-contained, **must-run** examples (see below) |
 | `vgi.title` | Human/marketing display name (vs. the machine name) |
 | `vgi.keywords` | Comma-separated search keywords / synonyms |
-| `vgi.columns_md` | Markdown doc of a table function's returned columns (for dynamic schemas DuckDB can't expose) |
+| `vgi.result_columns_md` | Markdown doc of a table function's returned columns (for dynamic schemas DuckDB can't expose) |
 | `vgi.source_url` | Link to where the object is implemented (repo/file) |
 | `vgi.author` | Author / maintainer attribution (catalog) |
 | `vgi.copyright` | Copyright notice (catalog) |
@@ -185,9 +186,10 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | `vgi.support_contact` | Where to report issues/bugs — email or URL (catalog) |
 | `vgi.support_policy_url` | Link to the support / SLA policy (catalog) |
 
-> **Renamed:** `vgi.doc_llm`/`vgi.doc_md` were previously `vgi.description_llm`/
-> `vgi.description_md`. The old keys still work (dual recognition) but **VGI405**
-> nudges you to migrate; they'll stop being recognized in a future version.
+> **Renamed:** `vgi.doc_llm`/`vgi.doc_md` (was `vgi.description_llm`/`_md`) and
+> `vgi.result_columns_md` (was `vgi.columns_md`). The old keys still work (dual
+> recognition) but **VGI405** nudges you to migrate; they'll stop being
+> recognized in a future version.
 
 `vgi.doc_llm`/`vgi.doc_md` are **required on the catalog, every schema, and
 (under the strict default) every table, view, and function** — and validated

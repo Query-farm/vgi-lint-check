@@ -15,45 +15,50 @@ from enum import StrEnum
 # Reserved tag keys VGI workers use as documentation/discovery channels.
 TAG_DOC_LLM = "vgi.doc_llm"  # LLM-oriented narrative doc (canonical)
 TAG_DOC_MD = "vgi.doc_md"  # Markdown narrative doc (canonical)
-# Deprecated aliases kept working for back-compat (old key -> canonical key).
-TAG_DESCRIPTION_LLM = "vgi.description_llm"  # deprecated: use vgi.doc_llm
-TAG_DESCRIPTION_MD = "vgi.description_md"  # deprecated: use vgi.doc_md
-DEPRECATED_TAG_ALIASES = {
-    TAG_DESCRIPTION_LLM: TAG_DOC_LLM,
-    TAG_DESCRIPTION_MD: TAG_DOC_MD,
-}
-# canonical key -> tuple of deprecated keys that resolve to it
-_ALIASES_OF: dict[str, tuple[str, ...]] = {}
-for _old, _new in DEPRECATED_TAG_ALIASES.items():
-    _ALIASES_OF[_new] = (*_ALIASES_OF.get(_new, ()), _old)
+TAG_DOC_LINKS = "vgi.doc_links"  # JSON array of {title?, url} links to more docs
 TAG_EXAMPLE_QUERIES = "vgi.example_queries"
 TAG_EXECUTABLE_EXAMPLES = "vgi.executable_examples"  # self-contained, must-run examples
 TAG_TITLE = "vgi.title"  # human/marketing display name (vs the machine name)
 TAG_KEYWORDS = "vgi.keywords"  # comma-separated search keywords / synonyms
-TAG_COLUMNS_MD = "vgi.columns_md"  # Markdown doc of a table function's returned columns
+TAG_RESULT_COLUMNS_MD = "vgi.result_columns_md"  # Markdown doc of a table fn's result columns
 TAG_SOURCE_URL = "vgi.source_url"  # link to where this object is implemented (repo/file)
 TAG_AUTHOR = "vgi.author"  # author / maintainer attribution
 TAG_COPYRIGHT = "vgi.copyright"  # copyright notice
 TAG_LICENSE = "vgi.license"  # license name or SPDX identifier
 TAG_SUPPORT_CONTACT = "vgi.support_contact"  # where to report issues/bugs (email or URL)
 TAG_SUPPORT_POLICY_URL = "vgi.support_policy_url"  # link to the support/SLA policy
+
+# Deprecated tag keys kept working for back-compat (old key -> canonical key).
+TAG_DESCRIPTION_LLM = "vgi.description_llm"  # deprecated: use vgi.doc_llm
+TAG_DESCRIPTION_MD = "vgi.description_md"  # deprecated: use vgi.doc_md
+TAG_COLUMNS_MD = "vgi.columns_md"  # deprecated: use vgi.result_columns_md
+DEPRECATED_TAG_ALIASES = {
+    TAG_DESCRIPTION_LLM: TAG_DOC_LLM,
+    TAG_DESCRIPTION_MD: TAG_DOC_MD,
+    TAG_COLUMNS_MD: TAG_RESULT_COLUMNS_MD,
+}
+# canonical key -> tuple of deprecated keys that resolve to it
+_ALIASES_OF: dict[str, tuple[str, ...]] = {}
+for _old, _new in DEPRECATED_TAG_ALIASES.items():
+    _ALIASES_OF[_new] = (*_ALIASES_OF.get(_new, ()), _old)
+
 RESERVED_TAG_KEYS = frozenset(
     {
         TAG_DOC_LLM,
         TAG_DOC_MD,
-        TAG_DESCRIPTION_LLM,
-        TAG_DESCRIPTION_MD,
+        TAG_DOC_LINKS,
         TAG_EXAMPLE_QUERIES,
         TAG_EXECUTABLE_EXAMPLES,
         TAG_TITLE,
         TAG_KEYWORDS,
-        TAG_COLUMNS_MD,
+        TAG_RESULT_COLUMNS_MD,
         TAG_SOURCE_URL,
         TAG_AUTHOR,
         TAG_COPYRIGHT,
         TAG_LICENSE,
         TAG_SUPPORT_CONTACT,
         TAG_SUPPORT_POLICY_URL,
+        *DEPRECATED_TAG_ALIASES,
     }
 )
 
@@ -145,6 +150,14 @@ class ExampleQuery:
     description: str | None
     sql: str | None
     raw: object = None
+
+
+@dataclass(frozen=True)
+class DocLink:
+    """One entry of ``vgi.doc_links`` — a link to additional documentation."""
+
+    title: str | None
+    url: str | None
 
 
 @dataclass(frozen=True)

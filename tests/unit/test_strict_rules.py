@@ -208,3 +208,43 @@ def test_vgi405_names_the_new_key():
         if f.code == "VGI405"
     ]
     assert any("vgi.description_md" in m for m in msgs)
+
+
+def test_result_columns_md_rename_dual_recognition():
+    from vgi_lint_check.model import TagSet
+
+    # old key resolves to the new canonical key
+    assert TagSet({"vgi.columns_md": "## cols"}).has("vgi.result_columns_md")
+    assert TagSet({"vgi.columns_md": "## cols"}).get("vgi.result_columns_md") == "## cols"
+    # VGI307 (table fn columns) is satisfied by either key; VGI405 nudges migration
+    tf = F.func("main", "scan", "table", description="d", tags={"vgi.columns_md": "## a | b"})
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[tf])
+    codes = _codes(F.catalog(s))
+    assert "VGI307" not in codes  # columns documented via the old key
+    assert "VGI405" in codes  # ...but flagged as deprecated
+
+
+def test_vgi172_doc_links():
+    from vgi_lint_check.model import TagSet
+    from vgi_lint_check.tags import decode_doc_links
+
+    # decoder accepts bare strings and {title,url} objects
+    links, err = decode_doc_links(
+        TagSet(
+            {"vgi.doc_links": '["https://a.test/x", {"title": "API", "url": "https://b.test/api"}]'}
+        )
+    )
+    assert err is None and [lk.url for lk in links] == ["https://a.test/x", "https://b.test/api"]
+    assert links[1].title == "API"
+    # VGI172 flags malformed JSON and non-http entries
+    bad = F.func("main", "f", description="d", tags={**_TAGS, "vgi.doc_links": '["see the wiki"]'})
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[bad])
+    assert "VGI172" in _codes(F.catalog(s))
+    good = F.func(
+        "main",
+        "g",
+        description="d",
+        tags={**_TAGS, "vgi.doc_links": '[{"title":"Docs","url":"https://x.test/d"}]'},
+    )
+    s2 = F.schema("main", comment="c", tags=_TAGS, functions=[good])
+    assert "VGI172" not in _codes(F.catalog(s2))

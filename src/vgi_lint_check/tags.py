@@ -13,8 +13,10 @@ from collections.abc import Iterable
 from typing import Any
 
 from .model import (
+    TAG_DOC_LINKS,
     TAG_EXAMPLE_QUERIES,
     TAG_EXECUTABLE_EXAMPLES,
+    DocLink,
     ExampleQuery,
     ExampleStatement,
     ExecutableExample,
@@ -159,3 +161,36 @@ def decode_executable_examples(tags: TagSet) -> tuple[list[ExecutableExample], s
             )
         )
     return examples, None
+
+
+def decode_doc_links(tags: TagSet) -> tuple[list[DocLink], str | None]:
+    """Decode the ``vgi.doc_links`` tag into (links, parse_error).
+
+    Each entry is a URL string or a ``{"title"?, "url"}`` object. Returns
+    ([], None) when the tag is absent; ([], "<reason>") on a malformed value.
+    """
+    raw = tags.get(TAG_DOC_LINKS)
+    if raw is None or not str(raw).strip():
+        return [], None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        return [], f"invalid JSON: {e}"
+    if not isinstance(data, list):
+        return [], f"expected a JSON list, got {type(data).__name__}"
+    links: list[DocLink] = []
+    for i, item in enumerate(data):
+        if isinstance(item, str):
+            links.append(DocLink(title=None, url=item))
+        elif isinstance(item, dict):
+            url = item.get("url")
+            title = item.get("title")
+            links.append(
+                DocLink(
+                    title=None if title is None else str(title),
+                    url=None if url is None else str(url),
+                )
+            )
+        else:
+            return [], f"entry #{i} must be a URL string or object ({type(item).__name__})"
+    return links, None
