@@ -11,8 +11,8 @@ from ..findings import Category, Finding, Severity
 from ..linkcheck import is_broken
 from ..model import (
     TAG_COLUMNS_MD,
-    TAG_DESCRIPTION_LLM,
-    TAG_DESCRIPTION_MD,
+    TAG_DOC_LLM,
+    TAG_DOC_MD,
     TAG_SOURCE_URL,
     TAG_SUPPORT_CONTACT,
     TAG_SUPPORT_POLICY_URL,
@@ -42,20 +42,20 @@ def _md_targets(text: str) -> list[tuple[str, str]]:
 
 
 def _iter_md(ctx: RuleContext) -> Iterator[tuple[ObjectId, str]]:
-    """(id, markdown) for every object that carries a vgi.description_md."""
+    """(id, markdown) for every object that carries a vgi.doc_md."""
     cat = ctx.catalog
     if not blank(cat.description_md):
         yield cat.id, cat.description_md or ""
     for s in ctx.catalog.iter_schemas():
-        md = s.tags.get(TAG_DESCRIPTION_MD)
+        md = s.tags.get(TAG_DOC_MD)
         if not blank(md):
             yield s.id, md or ""
     for t in ctx.catalog.iter_table_like():
-        md = t.tags.get(TAG_DESCRIPTION_MD)
+        md = t.tags.get(TAG_DOC_MD)
         if not blank(md):
             yield t.id, md or ""
     for f in ctx.catalog.iter_all_functions():
-        for md in (f.tags.get(TAG_DESCRIPTION_MD), f.tags.get(TAG_COLUMNS_MD)):
+        for md in (f.tags.get(TAG_DOC_MD), f.tags.get(TAG_COLUMNS_MD)):
             if not blank(md):
                 yield f.id, md or ""
 
@@ -76,7 +76,7 @@ class MarkdownWellFormed(Rule):
         ObjectKind.MACRO,
         ObjectKind.TABLE_FUNCTION,
     )
-    summary = "vgi.description_md should be valid Markdown (no empty/broken links)."
+    summary = "vgi.doc_md should be valid Markdown (no empty/broken links)."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for oid, md in _iter_md(ctx):
@@ -85,14 +85,14 @@ class MarkdownWellFormed(Rule):
                     yield self.finding(
                         ctx,
                         oid,
-                        f"vgi.description_md has a Markdown {kind} with an empty target",
+                        f"vgi.doc_md has a Markdown {kind} with an empty target",
                         f"give the {kind} a target or remove the empty {kind} syntax",
                     )
             if len(_FENCE.findall(md)) % 2 != 0:
                 yield self.finding(
                     ctx,
                     oid,
-                    "vgi.description_md has an unterminated code fence",
+                    "vgi.doc_md has an unterminated code fence",
                     "close the ``` / ~~~ fenced code block",
                 )
 
@@ -113,12 +113,12 @@ def _iter_urls(ctx: RuleContext) -> Iterator[tuple[ObjectId, str, str]]:
     for oid, comment, llm, md, src_tag in _described(ctx):
         if not blank(src_tag):
             yield oid, src_tag or "", "vgi.source_url"
-        for label, text in (("comment", comment), ("vgi.description_llm", llm)):
+        for label, text in (("comment", comment), ("vgi.doc_llm", llm)):
             for url in _BARE_URL.findall(text or ""):
                 yield oid, url, label
         for kind, url in _md_targets(md or ""):
             if url.startswith(("http://", "https://")):
-                yield oid, url, f"vgi.description_md {kind}"
+                yield oid, url, f"vgi.doc_md {kind}"
     for f in cat.iter_all_functions():
         for kind, url in _md_targets(f.tags.get(TAG_COLUMNS_MD) or ""):
             if url.startswith(("http://", "https://")):
@@ -135,24 +135,24 @@ def _described(
         yield (
             s.id,
             s.comment,
-            s.tags.get(TAG_DESCRIPTION_LLM),
-            s.tags.get(TAG_DESCRIPTION_MD),
+            s.tags.get(TAG_DOC_LLM),
+            s.tags.get(TAG_DOC_MD),
             s.tags.get(TAG_SOURCE_URL),
         )
     for t in cat.iter_table_like():
         yield (
             t.id,
             t.comment,
-            t.tags.get(TAG_DESCRIPTION_LLM),
-            t.tags.get(TAG_DESCRIPTION_MD),
+            t.tags.get(TAG_DOC_LLM),
+            t.tags.get(TAG_DOC_MD),
             t.tags.get(TAG_SOURCE_URL),
         )
     for f in cat.iter_all_functions():
         yield (
             f.id,
             f.comment,
-            f.tags.get(TAG_DESCRIPTION_LLM),
-            f.tags.get(TAG_DESCRIPTION_MD),
+            f.tags.get(TAG_DOC_LLM),
+            f.tags.get(TAG_DOC_MD),
             f.tags.get(TAG_SOURCE_URL),
         )
 

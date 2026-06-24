@@ -6,8 +6,8 @@ from vgi_lint_check.rules import run, select_rules
 from vgi_lint_check.rules.base import RuleContext
 
 _TAGS = {
-    "vgi.description_llm": "Zoo domain for LLM use, with plenty of length here to pass.",
-    "vgi.description_md": "## Zoo\nAnimals and attributes — full reference, long enough text.",
+    "vgi.doc_llm": "Zoo domain for LLM use, with plenty of length here to pass.",
+    "vgi.doc_md": "## Zoo\nAnimals and attributes — full reference, long enough text.",
     "provider": "acme",
     "domain": "zoo",
 }
@@ -154,7 +154,7 @@ def test_vgi102_description_not_duplicate():
         "main",
         "magnitude_class",
         description=dup,
-        tags={"vgi.description_llm": dup, "vgi.description_md": "## Magnitude\nA fuller writeup."},
+        tags={"vgi.doc_llm": dup, "vgi.doc_md": "## Magnitude\nA fuller writeup."},
     )
     s = F.schema("main", comment="c", tags=_TAGS, functions=[fn])
     found = [
@@ -162,19 +162,49 @@ def test_vgi102_description_not_duplicate():
         for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))
         if f.code == "VGI102"
     ]
-    assert found and "description_llm" in found[0].message
+    assert found and "doc_llm" in found[0].message
     # a genuinely distinct llm description is not flagged
     fn2 = F.func(
         "main",
         "magnitude_class",
         description=dup,
         tags={
-            "vgi.description_llm": "Use this to bucket quakes for alerting; input is Richter, "
+            "vgi.doc_llm": "Use this to bucket quakes for alerting; input is Richter, "
             "output is one of micro/minor/light/moderate/strong/major.",
-            "vgi.description_md": "## Magnitude\nA fuller writeup.",
+            "vgi.doc_md": "## Magnitude\nA fuller writeup.",
         },
     )
     s2 = F.schema("main", comment="c", tags=_TAGS, functions=[fn2])
     assert "VGI102" not in [
         f.code for f in run(select_rules(Config()), RuleContext(F.catalog(s2), Config()))
     ]
+
+
+def test_deprecated_doc_tag_aliases_resolve():
+    # the old keys still satisfy presence rules (dual recognition)...
+    fn = F.func(
+        "main",
+        "f",
+        description="short",
+        tags={
+            "vgi.description_llm": "An LLM-oriented narrative for the function.",
+            "vgi.description_md": "## f\nA fuller writeup of f.",
+        },
+    )
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[fn])
+    codes = _codes(F.catalog(s))
+    assert "VGI112" not in codes  # description_llm present via the deprecated key
+    assert "VGI113" not in codes
+    # ...but the migration rule (VGI405) nudges toward the new keys
+    assert codes.count("VGI405") == 2  # one per deprecated key on the function
+
+
+def test_vgi405_names_the_new_key():
+    fn = F.func("main", "f", description="d", tags={"vgi.description_md": "## f\nwriteup"})
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[fn])
+    msgs = [
+        f.message
+        for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))
+        if f.code == "VGI405"
+    ]
+    assert any("vgi.description_md" in m for m in msgs)

@@ -57,10 +57,10 @@ families:
 
 | Family | Codes | Examples |
 | --- | --- | --- |
-| Catalog | VGI0xx | catalog description, `vgi.description_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty**, worker advertises 1–N catalogs, `vgi.license` is a valid SPDX id |
-| Descriptions | VGI1xx | schema/table/view/function comment, `vgi.description_llm`, `vgi.description_md` |
+| Catalog | VGI0xx | catalog description, `vgi.doc_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty**, worker advertises 1–N catalogs, `vgi.license` is a valid SPDX id |
+| Descriptions | VGI1xx | schema/table/view/function comment, `vgi.doc_llm`, `vgi.doc_md` |
 | Discoverability | VGI12x/13x | duplicate/short/echoed descriptions, **no placeholder text (TODO/TBD/…)**, classifying tag present + **reused (small vocabulary)**, title/keywords/source_url present, join-path docs, release freshness, example richness, column units |
-| Content | VGI17x | `vgi.description_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
+| Content | VGI17x | `vgi.doc_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage + **every column commented**, comment-not-echo, **naive TIMESTAMP documents its timezone** |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples, scalar-function stability (all-VOLATILE smell + per-function VOLATILE flag) |
 | Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity |
@@ -171,8 +171,8 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 
 | Tag | Purpose |
 | --- | --- |
-| `vgi.description_llm` | Concise description aimed at LLMs/agents (tool selection) |
-| `vgi.description_md` | Markdown description for human docs / listing pages |
+| `vgi.doc_llm` | LLM-oriented narrative doc — what the object is and when to use it (tool selection). *Complements, doesn't duplicate, the object's own `description`/comment.* |
+| `vgi.doc_md` | Richer Markdown narrative doc for human docs / listing pages |
 | `vgi.example_queries` | JSON list of `{"description","sql"}` *illustrative* example queries |
 | `vgi.executable_examples` | JSON list of self-contained, **must-run** examples (see below) |
 | `vgi.title` | Human/marketing display name (vs. the machine name) |
@@ -185,12 +185,17 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | `vgi.support_contact` | Where to report issues/bugs — email or URL (catalog) |
 | `vgi.support_policy_url` | Link to the support / SLA policy (catalog) |
 
-`vgi.description_llm`/`_md` are **required on the catalog and every schema**
-(the catalog is the worker's listing; schemas are its sections). They're
-**optional on tables, views, and functions** (opt-in to require, but validated
-when set — e.g. minimum length, must differ). The catalog `source_url` is
-required; titles, keywords, and per-object source links are opt-in but validated
-when set; author/copyright/license are encouraged (info). Tune any of this via
+> **Renamed:** `vgi.doc_llm`/`vgi.doc_md` were previously `vgi.description_llm`/
+> `vgi.description_md`. The old keys still work (dual recognition) but **VGI405**
+> nudges you to migrate; they'll stop being recognized in a future version.
+
+`vgi.doc_llm`/`vgi.doc_md` are **required on the catalog, every schema, and
+(under the strict default) every table, view, and function** — and validated
+when set (minimum length, must differ from each other and from the object's own
+description). The catalog `source_url`, titles, keywords, and per-object source
+links are enforced by the strict default; author/copyright/license are
+encouraged (info). Relax any of this (e.g. back to optional docs on
+tables/views/functions) via
 config.
 
 ## Data versions

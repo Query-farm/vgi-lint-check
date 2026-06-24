@@ -186,8 +186,8 @@ def catalog(
     # rule tests aren't polluted; pass comment=None / tags={} to test VGI00x.
     if tags is None:
         tags = {
-            "vgi.description_llm": "A test catalog used by the unit tests, etc. " * 2,
-            "vgi.description_md": "## Test catalog\nUsed by the unit tests. " * 3,
+            "vgi.doc_llm": "A test catalog used by the unit tests, etc. " * 2,
+            "vgi.doc_md": "## Test catalog\nUsed by the unit tests. " * 3,
             "vgi.author": "Test Author",
             "vgi.copyright": "(c) 2026 Test",
             "vgi.license": "MIT",

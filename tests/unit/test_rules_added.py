@@ -22,7 +22,7 @@ def _tbl(name, cols, constraints=()):
         "main",
         name,
         comment="c",
-        tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
+        tags={"vgi.doc_llm": "x" * 50, "vgi.doc_md": "y" * 90},
         columns=[F.col("main", name, c, "doc") for c in cols],
         examples=[F.example(0, "d", f"SELECT * FROM v.main.{name}")],
         constraints=constraints,

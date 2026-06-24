@@ -18,7 +18,7 @@ def test_markdown_empty_link_target_flagged():
         "main",
         "t",
         comment="A table with a broken markdown link in its description",
-        tags={"vgi.description_md": "See [the docs]() for details."},
+        tags={"vgi.doc_md": "See [the docs]() for details."},
     )
     cat = F.catalog(F.schema("main", tables=[t]))
     assert "VGI170" in set(codes(cat))
@@ -29,7 +29,7 @@ def test_markdown_unterminated_fence_flagged():
         "main",
         "t",
         comment="A table whose markdown has an unterminated code fence here",
-        tags={"vgi.description_md": "Example:\n```sql\nSELECT 1"},
+        tags={"vgi.doc_md": "Example:\n```sql\nSELECT 1"},
     )
     cat = F.catalog(F.schema("main", tables=[t]))
     assert "VGI170" in set(codes(cat))
@@ -40,7 +40,7 @@ def test_markdown_clean_passes():
         "main",
         "t",
         comment="A table with clean, valid markdown in its description text",
-        tags={"vgi.description_md": "See [docs](https://example.com).\n\n```sql\nSELECT 1\n```"},
+        tags={"vgi.doc_md": "See [docs](https://example.com).\n\n```sql\nSELECT 1\n```"},
     )
     cat = F.catalog(F.schema("main", tables=[t]))
     assert "VGI170" not in set(codes(cat))
@@ -87,7 +87,7 @@ def test_markdown_image_url_collected_for_resolution():
         "main",
         "t",
         comment="A table whose markdown embeds an image that 404s on resolution",
-        tags={"vgi.description_md": "![diagram](https://example.com/img.png)"},
+        tags={"vgi.doc_md": "![diagram](https://example.com/img.png)"},
     )
     cat = F.catalog(F.schema("main", tables=[t]))
     out = _run_links(cat, lambda url: 404)

@@ -14,8 +14,8 @@ from packaging.version import InvalidVersion, Version
 
 from ..findings import Category, Finding, Severity
 from ..model import (
-    TAG_DESCRIPTION_LLM,
-    TAG_DESCRIPTION_MD,
+    TAG_DOC_LLM,
+    TAG_DOC_MD,
     TAG_LICENSE,
     TAG_SUPPORT_CONTACT,
     TAG_SUPPORT_POLICY_URL,
@@ -133,7 +133,7 @@ class CatalogLLMDescription(Rule):
     category = CAT
     default_severity = Severity.WARNING
     targets = (ObjectKind.CATALOG,)
-    summary = "The catalog must carry a 'vgi.description_llm' tag for agents."
+    summary = "The catalog must carry a 'vgi.doc_llm' tag for agents."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         cat = ctx.catalog
@@ -141,8 +141,8 @@ class CatalogLLMDescription(Rule):
             yield self.finding(
                 ctx,
                 cat.id,
-                f"catalog missing '{TAG_DESCRIPTION_LLM}' tag",
-                "add a catalog 'vgi.description_llm' tag describing what it covers "
+                f"catalog missing '{TAG_DOC_LLM}' tag",
+                "add a catalog 'vgi.doc_llm' tag describing what it covers "
                 "and the questions it answers, for LLM/agent tool selection",
             )
 
@@ -154,7 +154,7 @@ class CatalogMarkdownDescription(Rule):
     category = CAT
     default_severity = Severity.WARNING
     targets = (ObjectKind.CATALOG,)
-    summary = "The catalog must carry a 'vgi.description_md' tag for human docs."
+    summary = "The catalog must carry a 'vgi.doc_md' tag for human docs."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         cat = ctx.catalog
@@ -162,8 +162,8 @@ class CatalogMarkdownDescription(Rule):
             yield self.finding(
                 ctx,
                 cat.id,
-                f"catalog missing '{TAG_DESCRIPTION_MD}' tag",
-                "add a catalog 'vgi.description_md' tag: a Markdown overview shown "
+                f"catalog missing '{TAG_DOC_MD}' tag",
+                "add a catalog 'vgi.doc_md' tag: a Markdown overview shown "
                 "on listing/describe pages",
             )
 

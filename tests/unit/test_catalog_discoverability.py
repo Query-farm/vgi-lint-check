@@ -179,7 +179,7 @@ def test_catalog_support_tags():
     assert "VGI009" not in set(codes(F.catalog(F.schema("main"))))
     bare = F.catalog(
         F.schema("main"),
-        tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
+        tags={"vgi.doc_llm": "x" * 50, "vgi.doc_md": "y" * 90},
     )
     assert "VGI009" in set(codes(bare))
 
@@ -210,7 +210,7 @@ def test_catalog_attribution_required_tags():
     assert "VGI160" not in set(codes(F.catalog(F.schema("main"))))
     bare = F.catalog(
         F.schema("main"),
-        tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
+        tags={"vgi.doc_llm": "x" * 50, "vgi.doc_md": "y" * 90},
     )
     assert "VGI160" in set(codes(bare))
 

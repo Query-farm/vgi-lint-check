@@ -9,8 +9,8 @@ from vgi_lint_check.rules.base import RuleContext
 _SCHEMA_TAGS = {
     "provider": "acme",
     "domain": "zoo",
-    "vgi.description_llm": "Zoo domain: animals, attributes, and sounds for LLM use.",
-    "vgi.description_md": "## Zoo\nAnimals, attributes, and sounds — full reference.",
+    "vgi.doc_llm": "Zoo domain: animals, attributes, and sounds for LLM use.",
+    "vgi.doc_md": "## Zoo\nAnimals, attributes, and sounds — full reference.",
 }
 
 
@@ -36,8 +36,8 @@ def test_clean_table_no_findings():
         "animals",
         comment="Animal facts: species, number of legs, and the sound each makes",
         tags={
-            "vgi.description_llm": "Animals and their attributes for LLM consumers, etc.",
-            "vgi.description_md": "## Animals\nAnimals and attributes with much more detail here.",
+            "vgi.doc_llm": "Animals and their attributes for LLM consumers, etc.",
+            "vgi.doc_md": "## Animals\nAnimals and attributes with much more detail here.",
             "provider": "acme",
             "domain": "zoo",
         },
@@ -86,7 +86,7 @@ def test_column_coverage_threshold():
         "t",
         comment="c",
         columns=cols,
-        tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
+        tags={"vgi.doc_llm": "x" * 50, "vgi.doc_md": "y" * 90},
     )
     s = F.schema("main", comment="c", tags={"provider": "a", "domain": "b"}, tables=[t])
     assert "VGI201" in codes(F.catalog(s))  # 50% < 80%
@@ -117,7 +117,7 @@ def test_macro_example_and_examples_wellformed():
         "broken",
         comment="c",
         parse_error="invalid JSON: x",
-        tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
+        tags={"vgi.doc_llm": "x" * 50, "vgi.doc_md": "y" * 90},
     )
     macro = F.func("main", "m", "macro", description="does a thing")
     s = F.schema(
@@ -133,14 +133,14 @@ def test_example_qualification():
         "main",
         "a",
         comment="c",
-        tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
+        tags={"vgi.doc_llm": "x" * 50, "vgi.doc_md": "y" * 90},
         examples=[F.example(0, "ok", "SELECT * FROM v.main.a")],
     )
     unqualified = F.table(
         "main",
         "b",
         comment="c",
-        tags={"vgi.description_llm": "x" * 50, "vgi.description_md": "y" * 90},
+        tags={"vgi.doc_llm": "x" * 50, "vgi.doc_md": "y" * 90},
         examples=[F.example(0, "bad", "SELECT * FROM b")],
     )
     s = F.schema(

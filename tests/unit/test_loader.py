@@ -23,7 +23,7 @@ def make_snapshot():
                 "column_count": 2,
                 "internal": False,
                 "tags": {
-                    "vgi.description_llm": "Animals for LLMs",
+                    "vgi.doc_llm": "Animals for LLMs",
                     "vgi.example_queries": '[{"description":"all","sql":"SELECT * FROM animals"}]',
                 },
             },

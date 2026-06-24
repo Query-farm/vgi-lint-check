@@ -6,8 +6,8 @@ from collections.abc import Iterator
 
 from ..findings import Category, Finding, Severity
 from ..model import (
-    TAG_DESCRIPTION_LLM,
-    TAG_DESCRIPTION_MD,
+    TAG_DOC_LLM,
+    TAG_DOC_MD,
     ObjectId,
     ObjectKind,
     TagSet,
@@ -79,7 +79,7 @@ class ViewComment(Rule):
                 )
 
 
-# Object kinds that may carry vgi.description_llm/md, beyond schemas (which are
+# Object kinds that may carry vgi.doc_llm/md, beyond schemas (which are
 # required, see VGI116/VGI118): tables, views, and every function kind.
 _OPTIONAL_DESC_KINDS = (
     ObjectKind.TABLE,
@@ -115,16 +115,16 @@ class SchemaLLMDescription(Rule):
     category = DESC
     default_severity = Severity.WARNING
     targets = (ObjectKind.SCHEMA,)
-    summary = "Every schema must carry a 'vgi.description_llm' tag (required)."
+    summary = "Every schema must carry a 'vgi.doc_llm' tag (required)."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for s in ctx.catalog.iter_schemas():
-            if not s.tags.has(TAG_DESCRIPTION_LLM):
+            if not s.tags.has(TAG_DOC_LLM):
                 yield self.finding(
                     ctx,
                     s.id,
-                    f"schema missing '{TAG_DESCRIPTION_LLM}' tag",
-                    "add a 'vgi.description_llm' tag: concise prose aimed at LLMs",
+                    f"schema missing '{TAG_DOC_LLM}' tag",
+                    "add a 'vgi.doc_llm' tag: concise prose aimed at LLMs",
                 )
 
 
@@ -135,16 +135,16 @@ class SchemaMarkdownDescription(Rule):
     category = DESC
     default_severity = Severity.WARNING
     targets = (ObjectKind.SCHEMA,)
-    summary = "Every schema must carry a 'vgi.description_md' tag (required)."
+    summary = "Every schema must carry a 'vgi.doc_md' tag (required)."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for s in ctx.catalog.iter_schemas():
-            if not s.tags.has(TAG_DESCRIPTION_MD):
+            if not s.tags.has(TAG_DOC_MD):
                 yield self.finding(
                     ctx,
                     s.id,
-                    f"schema missing '{TAG_DESCRIPTION_MD}' tag",
-                    "add a 'vgi.description_md' tag with a Markdown description",
+                    f"schema missing '{TAG_DOC_MD}' tag",
+                    "add a 'vgi.doc_md' tag with a Markdown description",
                 )
 
 
@@ -155,16 +155,16 @@ class LLMDescription(Rule):
     category = DESC
     default_severity = Severity.WARNING  # strict default (was opt-in for tables/views/functions)
     targets = _OPTIONAL_DESC_KINDS
-    summary = "Tables/views/functions should carry a 'vgi.description_llm' tag for agents."
+    summary = "Tables/views/functions should carry a 'vgi.doc_llm' tag for agents."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for oid, tags, _name in _optional_desc_objects(ctx):
-            if not tags.has(TAG_DESCRIPTION_LLM):
+            if not tags.has(TAG_DOC_LLM):
                 yield self.finding(
                     ctx,
                     oid,
-                    f"missing '{TAG_DESCRIPTION_LLM}' tag",
-                    "add a 'vgi.description_llm' tag: an LLM-oriented description of "
+                    f"missing '{TAG_DOC_LLM}' tag",
+                    "add a 'vgi.doc_llm' tag: an LLM-oriented description of "
                     "what this object is and when to use it. It complements the "
                     "object's short description/comment — don't just duplicate it",
                 )
@@ -177,16 +177,16 @@ class MarkdownDescription(Rule):
     category = DESC
     default_severity = Severity.WARNING  # strict default (was opt-in for tables/views/functions)
     targets = _OPTIONAL_DESC_KINDS
-    summary = "Tables/views/functions should carry a 'vgi.description_md' tag for human docs."
+    summary = "Tables/views/functions should carry a 'vgi.doc_md' tag for human docs."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for oid, tags, _name in _optional_desc_objects(ctx):
-            if not tags.has(TAG_DESCRIPTION_MD):
+            if not tags.has(TAG_DOC_MD):
                 yield self.finding(
                     ctx,
                     oid,
-                    f"missing '{TAG_DESCRIPTION_MD}' tag",
-                    "add a 'vgi.description_md' tag: a richer narrative description "
+                    f"missing '{TAG_DOC_MD}' tag",
+                    "add a 'vgi.doc_md' tag: a richer narrative description "
                     "in Markdown (what it is, columns/returns, caveats, examples) — "
                     "not a copy of the object's one-line description/comment",
                 )
@@ -199,18 +199,17 @@ class LLMDescriptionTooShort(Rule):
     category = DESC
     default_severity = Severity.INFO
     targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, *_OPTIONAL_DESC_KINDS)
-    summary = "A 'vgi.description_llm', when set, should be substantive."
+    summary = "A 'vgi.doc_llm', when set, should be substantive."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         minlen = ctx.config.options.min_llm_description_chars
         for oid, tags, _name in _described_objects(ctx):
-            d = tags.get(TAG_DESCRIPTION_LLM)
+            d = tags.get(TAG_DOC_LLM)
             if not blank(d) and len((d or "").strip()) < minlen:
                 yield self.finding(
                     ctx,
                     oid,
-                    f"'{TAG_DESCRIPTION_LLM}' is very short "
-                    f"({len((d or '').strip())} < {minlen} chars)",
+                    f"'{TAG_DOC_LLM}' is very short ({len((d or '').strip())} < {minlen} chars)",
                     "expand the LLM description so an agent can use the object",
                 )
 
@@ -226,13 +225,13 @@ class MarkdownNotIdenticalToLLM(Rule):
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for oid, tags, _name in _described_objects(ctx):
-            llm = tags.get(TAG_DESCRIPTION_LLM)
-            md = tags.get(TAG_DESCRIPTION_MD)
+            llm = tags.get(TAG_DOC_LLM)
+            md = tags.get(TAG_DOC_MD)
             if not blank(llm) and not blank(md) and (llm or "").strip() == (md or "").strip():
                 yield self.finding(
                     ctx,
                     oid,
-                    "vgi.description_md is identical to vgi.description_llm",
+                    "vgi.doc_md is identical to vgi.doc_llm",
                     "make the Markdown description richer than the LLM one",
                 )
 
@@ -249,7 +248,7 @@ class DescriptionTagNotDuplicate(Rule):
     default_severity = Severity.INFO
     targets = _OPTIONAL_DESC_KINDS
     summary = (
-        "vgi.description_llm/_md should add narrative detail, not just repeat the "
+        "vgi.doc_llm/_md should add narrative detail, not just repeat the "
         "object's own description/comment."
     )
 
@@ -264,7 +263,7 @@ class DescriptionTagNotDuplicate(Rule):
             base = _norm_desc(primary)
             if not base:
                 continue
-            for key in (TAG_DESCRIPTION_LLM, TAG_DESCRIPTION_MD):
+            for key in (TAG_DOC_LLM, TAG_DOC_MD):
                 value = tags.get(key)
                 if not blank(value) and _norm_desc(value) == base:
                     yield self.finding(

@@ -20,8 +20,8 @@ skipped unless `--execute` is passed.
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
 | `VGI001` | warning | catalog-comment | The catalog must have a comment — the worker's one-line description. |  |
-| `VGI002` | warning | catalog-description-llm | The catalog must carry a 'vgi.description_llm' tag for agents. |  |
-| `VGI003` | warning | catalog-description-md | The catalog must carry a 'vgi.description_md' tag for human docs. |  |
+| `VGI002` | warning | catalog-description-llm | The catalog must carry a 'vgi.doc_llm' tag for agents. |  |
+| `VGI003` | warning | catalog-description-md | The catalog must carry a 'vgi.doc_md' tag for human docs. |  |
 | `VGI004` | warning | catalog-source-url | The catalog should advertise a source_url (provenance / about link). |  |
 | `VGI005` | warning | data-version-spec-valid | data_version_spec, when set, must be a valid semver version range. |  |
 | `VGI006` | warning | release-version-valid | Every published data-version release must be a valid semver version. |  |
@@ -61,7 +61,7 @@ skipped unless `--execute` is passed.
 
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
-| `VGI170` | info | markdown-well-formed | vgi.description_md should be valid Markdown (no empty/broken links). |  |
+| `VGI170` | info | markdown-well-formed | vgi.doc_md should be valid Markdown (no empty/broken links). |  |
 | `VGI171` | warning | description-links-resolve | Links/images and source URLs in descriptions must resolve (no 404). |  |
 
 ## Descriptions (VGI1xx)
@@ -69,15 +69,15 @@ skipped unless `--execute` is passed.
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
 | `VGI101` | warning | schema-comment | Every schema should have a comment describing the domain it covers. |  |
-| `VGI102` | info | description-tag-not-duplicate | vgi.description_llm/_md should add narrative detail, not just repeat the object's own description/comment. |  |
+| `VGI102` | info | description-tag-not-duplicate | vgi.doc_llm/_md should add narrative detail, not just repeat the object's own description/comment. |  |
 | `VGI111` | warning | table-comment | Every table should have a one-line comment describing its rows. |  |
-| `VGI112` | warning | description-llm | Tables/views/functions should carry a 'vgi.description_llm' tag for agents. |  |
-| `VGI113` | warning | description-md | Tables/views/functions should carry a 'vgi.description_md' tag for human docs. |  |
+| `VGI112` | warning | description-llm | Tables/views/functions should carry a 'vgi.doc_llm' tag for agents. |  |
+| `VGI113` | warning | description-md | Tables/views/functions should carry a 'vgi.doc_md' tag for human docs. |  |
 | `VGI114` | info | description-md-distinct | The Markdown description should be richer than the LLM one. |  |
 | `VGI115` | warning | view-comment | Every view should have a comment describing what it returns. |  |
-| `VGI116` | warning | schema-description-llm | Every schema must carry a 'vgi.description_llm' tag (required). |  |
-| `VGI118` | warning | schema-description-md | Every schema must carry a 'vgi.description_md' tag (required). |  |
-| `VGI119` | info | description-llm-too-short | A 'vgi.description_llm', when set, should be substantive. |  |
+| `VGI116` | warning | schema-description-llm | Every schema must carry a 'vgi.doc_llm' tag (required). |  |
+| `VGI118` | warning | schema-description-md | Every schema must carry a 'vgi.doc_md' tag (required). |  |
+| `VGI119` | info | description-llm-too-short | A 'vgi.doc_llm', when set, should be substantive. |  |
 
 ## Columns (VGI2xx)
 
@@ -109,6 +109,7 @@ skipped unless `--execute` is passed.
 | `VGI401` | warning | required-tags | Schemas/tables must carry the configured required tag keys. |  |
 | `VGI402` | warning | reserved-tag-not-empty | A reserved vgi.* tag must not be present with an empty value. |  |
 | `VGI403` | info | unknown-tag-key | When an allow-list is configured, flag tag keys outside it. |  |
+| `VGI405` | warning | deprecated-tag-key | Migrate deprecated tag keys (e.g. vgi.description_md -> vgi.doc_md) to the new names. |  |
 
 ## Example queries (VGI5xx)
 
@@ -182,4 +183,4 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 
-_97 rules._
+_98 rules._

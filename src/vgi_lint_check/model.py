@@ -13,8 +13,19 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 # Reserved tag keys VGI workers use as documentation/discovery channels.
-TAG_DESCRIPTION_LLM = "vgi.description_llm"
-TAG_DESCRIPTION_MD = "vgi.description_md"
+TAG_DOC_LLM = "vgi.doc_llm"  # LLM-oriented narrative doc (canonical)
+TAG_DOC_MD = "vgi.doc_md"  # Markdown narrative doc (canonical)
+# Deprecated aliases kept working for back-compat (old key -> canonical key).
+TAG_DESCRIPTION_LLM = "vgi.description_llm"  # deprecated: use vgi.doc_llm
+TAG_DESCRIPTION_MD = "vgi.description_md"  # deprecated: use vgi.doc_md
+DEPRECATED_TAG_ALIASES = {
+    TAG_DESCRIPTION_LLM: TAG_DOC_LLM,
+    TAG_DESCRIPTION_MD: TAG_DOC_MD,
+}
+# canonical key -> tuple of deprecated keys that resolve to it
+_ALIASES_OF: dict[str, tuple[str, ...]] = {}
+for _old, _new in DEPRECATED_TAG_ALIASES.items():
+    _ALIASES_OF[_new] = (*_ALIASES_OF.get(_new, ()), _old)
 TAG_EXAMPLE_QUERIES = "vgi.example_queries"
 TAG_EXECUTABLE_EXAMPLES = "vgi.executable_examples"  # self-contained, must-run examples
 TAG_TITLE = "vgi.title"  # human/marketing display name (vs the machine name)
@@ -28,6 +39,8 @@ TAG_SUPPORT_CONTACT = "vgi.support_contact"  # where to report issues/bugs (emai
 TAG_SUPPORT_POLICY_URL = "vgi.support_policy_url"  # link to the support/SLA policy
 RESERVED_TAG_KEYS = frozenset(
     {
+        TAG_DOC_LLM,
+        TAG_DOC_MD,
         TAG_DESCRIPTION_LLM,
         TAG_DESCRIPTION_MD,
         TAG_EXAMPLE_QUERIES,
@@ -100,12 +113,23 @@ class TagSet:
     raw: dict[str, str] = field(default_factory=dict)
 
     def get(self, key: str) -> str | None:
-        """Return the raw value for ``key`` (or None)."""
-        return self.raw.get(key)
+        """Return the value for ``key``, falling back to a deprecated alias."""
+        v = self.raw.get(key)
+        if v is not None:
+            return v
+        for old in _ALIASES_OF.get(key, ()):
+            ov = self.raw.get(old)
+            if ov is not None:
+                return ov
+        return None
 
     def has(self, key: str) -> bool:
-        """True when ``key`` is present with a non-blank value."""
-        return bool((self.raw.get(key) or "").strip())
+        """True when ``key`` (or a deprecated alias) is present and non-blank."""
+        return bool((self.get(key) or "").strip())
+
+    def deprecated_keys(self) -> dict[str, str]:
+        """Present deprecated tag keys mapped to their canonical replacement."""
+        return {k: DEPRECATED_TAG_ALIASES[k] for k in self.raw if k in DEPRECATED_TAG_ALIASES}
 
     @property
     def plain(self) -> dict[str, str]:
@@ -196,13 +220,13 @@ class Table:
 
     @property
     def description_llm(self) -> str | None:
-        """The ``vgi.description_llm`` tag value, if any."""
-        return self.tags.get(TAG_DESCRIPTION_LLM)
+        """The ``vgi.doc_llm`` tag value, if any."""
+        return self.tags.get(TAG_DOC_LLM)
 
     @property
     def description_md(self) -> str | None:
-        """The ``vgi.description_md`` tag value, if any."""
-        return self.tags.get(TAG_DESCRIPTION_MD)
+        """The ``vgi.doc_md`` tag value, if any."""
+        return self.tags.get(TAG_DOC_MD)
 
 
 @dataclass
@@ -390,13 +414,13 @@ class Catalog:
 
     @property
     def description_llm(self) -> str | None:
-        """The catalog's ``vgi.description_llm`` tag value, if any."""
-        return self.tags.get(TAG_DESCRIPTION_LLM)
+        """The catalog's ``vgi.doc_llm`` tag value, if any."""
+        return self.tags.get(TAG_DOC_LLM)
 
     @property
     def description_md(self) -> str | None:
-        """The catalog's ``vgi.description_md`` tag value, if any."""
-        return self.tags.get(TAG_DESCRIPTION_MD)
+        """The catalog's ``vgi.doc_md`` tag value, if any."""
+        return self.tags.get(TAG_DOC_MD)
 
     # ---- iteration helpers used by rules ---------------------------------
     def iter_schemas(self) -> Iterator[Schema]:

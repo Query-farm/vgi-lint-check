@@ -15,8 +15,8 @@ from vgi_lint_check.rules.execution import (
 from vgi_lint_check.tags import decode_executable_examples
 
 _SCHEMA_TAGS = {
-    "vgi.description_llm": "Zoo domain for LLM use, with enough length here.",
-    "vgi.description_md": "## Zoo\nAnimals and attributes — full reference, long enough.",
+    "vgi.doc_llm": "Zoo domain for LLM use, with enough length here.",
+    "vgi.doc_md": "## Zoo\nAnimals and attributes — full reference, long enough.",
     "provider": "acme",
     "domain": "zoo",
 }

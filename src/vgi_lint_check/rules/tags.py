@@ -101,3 +101,37 @@ class UnknownTagKey(Rule):
                         f"unknown tag key {key!r}",
                         "remove the tag or add the key to allowed_tag_keys",
                     )
+
+
+@register
+class DeprecatedTagKey(Rule):
+    code = "VGI405"
+    name = "deprecated-tag-key"
+    category = TAGS
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = (
+        "Migrate deprecated tag keys (e.g. vgi.description_md -> vgi.doc_md) to the new names."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        objects: Iterable[tuple[ObjectId, TagSet]] = [(cat.id, cat.tags), *_tagged_objects(cat)]
+        for oid, tags in objects:
+            for old, new in tags.deprecated_keys().items():
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"tag {old!r} is deprecated",
+                    f"rename the tag to {new!r} — the old key still works for now but "
+                    "will stop being recognized in a future version",
+                )
