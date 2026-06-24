@@ -8,9 +8,26 @@ from vgi_lint_check.connection import (
     derive_alias,
     sql_str,
 )
+from vgi_lint_check.rules._util import is_filter_policy_error
 from vgi_lint_check.rules.constraints import _check_expression
 from vgi_lint_check.rules.examples import _references_catalog
 from vgi_lint_check.rules.functions import _is_unnamed
+
+
+@pytest.mark.parametrize(
+    "msg,expected",
+    [
+        ("un-filtered scans are rejected by the VGI optimizer extension", True),
+        ("All tables REQUIRE WHERE filters on bbox.xmin", True),
+        ("a WHERE clause is required for this table", True),
+        ("rejected to prevent full-bucket reads", True),
+        ('Binder Error: referenced column "foo" not found', False),
+        ("Parser Error: syntax error at or near", False),
+        ("Catalog Error: Table with name x does not exist", False),
+    ],
+)
+def test_is_filter_policy_error(msg, expected):
+    assert is_filter_policy_error(Exception(msg)) is expected
 
 
 # --- connection -----------------------------------------------------------

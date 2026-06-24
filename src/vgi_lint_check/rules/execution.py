@@ -11,7 +11,7 @@ from collections.abc import Iterator
 
 from ..findings import Category, Finding, Severity
 from ..model import Catalog, Function, ObjectKind, Table, View
-from ._util import blank
+from ._util import blank, is_filter_policy_error
 from .base import Rule, RuleContext
 from .registry import register
 
@@ -118,6 +118,10 @@ class ViewExecutes(Rule):
             try:
                 con.execute(f"EXPLAIN SELECT * FROM {relation}")
             except Exception as e:  # noqa: BLE001 - surface engine error
+                # A mandatory-filter rejection means the view is wired up and
+                # enforcing a scan policy, not that it's broken.
+                if is_filter_policy_error(e):
+                    continue
                 yield self.finding(
                     ctx,
                     view.id,
