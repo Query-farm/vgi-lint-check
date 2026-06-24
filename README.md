@@ -100,6 +100,14 @@ There are **two tiers of examples**:
   optional `expected_result` (warning). `expected_result` lives on the
   individual statement, so a multi-statement example can assert any step.
 
+  Write `expected_result` as a **list of row-objects keyed by column name** —
+  `[{"class": "strong"}]` — which is self-documenting (a bare scalar or a list of
+  rows is also accepted). Comparison stringifies cells (`NULL` → `null`, booleans
+  lowercase, numbers as printed — `1.0`, not `1`) and matches rows in order. On a
+  mismatch **VGI907 prints the actual output in that exact canonical form**, so
+  you can copy it straight into `expected_result` instead of guessing how a value
+  is represented.
+
 ```jsonc
 // vgi.executable_examples on any object (catalog, schema, table, view, function)
 [

@@ -9,6 +9,7 @@ from vgi_lint_check.rules.base import RuleContext
 from vgi_lint_check.rules.execution import (
     ExecutableExampleResultMatches,
     ExecutableExamplesExecute,
+    _render_result,
     _result_matches,
 )
 from vgi_lint_check.tags import decode_executable_examples
@@ -151,6 +152,21 @@ def test_vgi907_compares_expected_result():
     con2 = RecordingCon(rows=[("weak",)], cols=["class"])
     out = _run(ExecutableExampleResultMatches(), F.catalog(s2), con2)
     assert len(out) == 1 and out[0].code == "VGI907"
+    # the finding shows the actual output (column-keyed) so the author can copy it
+    assert '[{"class": "weak"}]' in out[0].message
+
+
+def test_render_result_canonical_form():
+    from decimal import Decimal
+
+    # rows render as a list of column-keyed dicts (interpretable, copy-pasteable)
+    assert _render_result(["class", "n"], [("strong", 6)]) == [{"class": "strong", "n": 6}]
+    # JSON-native scalars stay native; NULL stays null; bool stays bool
+    assert _render_result(["a", "b"], [(None, True)]) == [{"a": None, "b": True}]
+    # non-native types (Decimal/date/uuid) fall back to their string form
+    assert _render_result(["price"], [(Decimal("123.4500"),)]) == [{"price": "123.4500"}]
+    # missing column names -> list-of-cells fallback
+    assert _render_result([], [(1, 2)]) == [[1, 2]]
 
 
 # --- result matcher units -------------------------------------------------

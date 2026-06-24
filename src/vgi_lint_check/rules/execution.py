@@ -8,6 +8,7 @@ These rules require a connection and only run when ``--execute`` is set. Modes:
 from __future__ import annotations
 
 import contextlib
+import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -363,6 +364,39 @@ def _stringify_tree(x: Any) -> Any:
     return None if x is None else str(x)
 
 
+def _json_cell(v: Any) -> Any:
+    """Coerce a result cell to a JSON-native value (str fallback for the rest)."""
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return v
+    return str(v)  # Decimal, date/time, uuid, etc. -> their string form
+
+
+def _render_result(cols: list[str], rows: list[Any]) -> list[Any]:
+    """Render a result as the canonical, interpretable form for expected_result.
+
+    A list of row-objects (``{column: value}``) so it is self-documenting and can
+    be pasted straight back as ``expected_result``. Falls back to a list of cells
+    for a row when column names are unavailable.
+    """
+    out: list[Any] = []
+    for r in rows:
+        cells = list(r)
+        if cols and len(cols) == len(cells):
+            out.append({str(c): _json_cell(v) for c, v in zip(cols, cells, strict=False)})
+        else:
+            out.append([_json_cell(v) for v in cells])
+    return out
+
+
+def _render_actual(cols: list[str], rows: list[Any], limit: int = 240) -> str:
+    """A compact JSON string of the actual result for a debugging hint."""
+    try:
+        text = json.dumps(_render_result(cols, rows), default=str)
+    except (TypeError, ValueError):
+        text = repr(rows)
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
 def _result_matches(expected: Any, cols: list[str], rows: list[Any]) -> bool:
     """True when ``expected`` (JSON) matches the result, comparing string leaves.
 
@@ -472,13 +506,15 @@ class ExecutableExampleResultMatches(Rule):
                         continue
                     cols, rows = captured[i]
                     if not _result_matches(stmt.expected_result, cols, rows):
+                        actual = _render_actual(cols, rows)
                         yield self.finding(
                             ctx,
                             obj_id,
                             f"executable example {label!r} statement #{i} output "
-                            "does not match expected_result",
-                            "set expected_result to the statement's actual output, "
-                            "or fix the statement. Format: a scalar, a list of "
-                            "row-objects keyed by column name, or a list of rows; "
-                            "cells compare as strings and rows in order",
+                            f"does not match expected_result; actual: {actual}",
+                            "copy the actual output above into expected_result "
+                            "(canonical form: a list of row-objects keyed by column, "
+                            'e.g. [{"col": value}]). Comparison stringifies cells '
+                            "(NULL -> null, true/false lowercase, numbers as printed "
+                            "e.g. 1.0 not 1) and matches rows in order",
                         )

@@ -26,11 +26,13 @@ _EXECUTABLE_SCHEMA_HINT = (
     "set the vgi.executable_examples tag to a JSON list of "
     '{"name"?, "description", "sql"} objects, where "sql" is a SQL string, a list '
     'of SQL strings, or a list of {"description", "sql", "expected_result"?} steps '
-    "run in order. expected_result (optional, per statement) is the JSON output to "
-    "assert (a scalar, a list of row-objects keyed by column, or a list of rows; "
-    "cells compare as strings, rows in order). Catalog-qualify every reference "
-    "(catalog.schema.name) and make each example self-contained and re-runnable so "
-    "it executes as written when the worker is attached."
+    "run in order. expected_result (optional, per statement) is the statement's "
+    'output as a list of row-objects keyed by column, e.g. [{"class": "strong"}] '
+    "(a bare scalar or list-of-rows is also accepted). Cells compare as strings "
+    "(NULL -> null, booleans lowercase, numbers as printed) and rows in order — on "
+    "a mismatch the finding prints the actual output to copy. Catalog-qualify every "
+    "reference (catalog.schema.name) and make each example self-contained and "
+    "re-runnable so it executes as written when the worker is attached."
 )
 
 # Strip single-quoted string literals and -- / /* */ comments so a qualifier
