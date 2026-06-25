@@ -74,6 +74,22 @@ def is_filter_policy_error(error: object) -> bool:
     return bool(_FILTER_POLICY.search(str(error)))
 
 
+# DuckDB's structural (bind-time) error classes — the SQL is wrong against the
+# catalog (unknown table/column/function, type/arg mismatch, syntax), as opposed
+# to a runtime/data failure. These are real authoring bugs, not "needs data".
+_BIND_ERROR = re.compile(
+    r"\b(binder|parser|catalog|binding)\s*(error|exception)\b"
+    r"|syntax error|does not exist|not found in|no function matches"
+    r"|referenced (column|table)",
+    re.IGNORECASE,
+)
+
+
+def is_bind_error(error: object) -> bool:
+    """True when an exception indicates a bind/parse/catalog (structural) failure."""
+    return bool(_BIND_ERROR.search(str(error)))
+
+
 class QueryTimeout(Exception):
     """A worker query exceeded its execution-rule time budget and was cancelled."""
 

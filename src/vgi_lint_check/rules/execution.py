@@ -15,7 +15,7 @@ from typing import Any
 from ..connection import ALIAS_RE, sql_str
 from ..findings import Category, Finding, Severity
 from ..model import AttachOption, Catalog, Function, ObjectKind, Table, View
-from ._util import blank, is_filter_policy_error, map_queries, run_with_timeout
+from ._util import blank, is_bind_error, is_filter_policy_error, map_queries, run_with_timeout
 from .base import Rule, RuleContext
 from .registry import register
 
@@ -71,13 +71,15 @@ class ExampleQueriesExecute(Rule):
     code = "VGI901"
     name = "example-queries-execute"
     category = EXEC
-    # Illustrative examples (vgi.example_queries / Meta.examples) may need data or
-    # context not present at lint time, so a failure is a warning, not a gate.
-    # For must-run examples use vgi.executable_examples (VGI906, ERROR).
-    default_severity = Severity.WARNING
+    # An illustrative example (vgi.example_queries / Meta.examples) that doesn't
+    # BIND is a real authoring bug (unknown table/column/function, bad types) ->
+    # error. One that binds but fails at runtime may just need data/context not
+    # present at lint time -> warning. Must-run examples belong in
+    # vgi.executable_examples (VGI906, always error).
+    default_severity = Severity.ERROR
     targets = _EXAMPLE_TARGETS
     requires_connection = True
-    summary = "Illustrative example queries should bind/execute (best-effort; warning)."
+    summary = "Example queries must bind (error); a runtime/data failure is a warning."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         con = ctx.connection
@@ -94,12 +96,25 @@ class ExampleQueriesExecute(Rule):
             try:
                 run_with_timeout(cur, lambda q=prepared: cur.execute(q), timeout)
             except Exception as e:  # noqa: BLE001 - surface engine/timeout error
-                return self.finding(
-                    ctx,
-                    obj.id,
-                    f"example #{ex.index} failed: {type(e).__name__}: {e}",
-                    "fix the example SQL, or move must-run examples to "
-                    f"vgi.executable_examples (VGI906); query: {sql[:120]}",
+                if is_filter_policy_error(e):
+                    return None  # the worker's mandatory-filter policy, not a bug
+                bind = is_bind_error(e)
+                severity = ctx.severity if bind else min(ctx.severity, Severity.WARNING)
+                kind = "does not bind" if bind else "failed at runtime"
+                hint = (
+                    "fix the example SQL so it binds (catalog-qualify references; "
+                    "use real columns/types)"
+                    if bind
+                    else "the example binds but didn't run here (it may need data) — "
+                    "move must-run examples to vgi.executable_examples (VGI906)"
+                )
+                return Finding(
+                    code=self.code,
+                    severity=severity,
+                    category=self.category,
+                    object_id=obj.id,
+                    message=f"example #{ex.index} {kind}: {type(e).__name__}: {e}",
+                    hint=f"{hint}; query: {sql[:120]}",
                 )
             return None
 

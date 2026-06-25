@@ -183,7 +183,7 @@ skipped unless `--execute` is passed.
 
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
-| `VGI901` | warning | example-queries-execute | Illustrative example queries should bind/execute (best-effort; warning). | requires `--execute` |
+| `VGI901` | error | example-queries-execute | Example queries must bind (error); a runtime/data failure is a warning. | requires `--execute` |
 | `VGI902` | warning | example-queries-return-rows | Example queries should return at least one row (limit mode). | requires `--execute` |
 | `VGI903` | error | view-executes | Every defined view must actually execute against the worker. | requires `--execute` |
 | `VGI904` | error | attach-options-accepted | Advertised attach options must actually be accepted at ATTACH time. | requires `--execute` |

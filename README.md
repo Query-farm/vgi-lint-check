@@ -70,7 +70,7 @@ families:
 | Constraints | VGI8xx | FK/PK/check validity; completeness nudges (no constraints / PKs / NOT NULL anywhere); per-table primary key; **`<table>_id` column with no FK suggests one**; **a key-shaped column shared by several tables with no FK may be a missing relationship** |
 | Attach options | VGI10xx | every `vgi_catalogs()` attach option is documented (description present + meaningful) |
 | Structure | VGI11x/13x | **schema not empty**; warn on excessive table/function counts and over-long table/function names; **schema object-count cap (>50 by default)** |
-| Execution | VGI9xx | illustrative examples bind (best-effort warning) & **executable examples must run + match expected output**; CHECK constraints bind; advertised attach options are accepted and advertised catalogs attach (`--execute`, **on by default**); per-query timeout so nothing runs forever |
+| Execution | VGI9xx | example queries **must bind (error)**, runtime/data failures are warnings; **executable examples must run + match expected output**; CHECK constraints bind; advertised attach options are accepted and advertised catalogs attach (`--execute`, **on by default**); per-query timeout so nothing runs forever |
 
 **Strict by default.** `vgi-lint` ships a strict profile: descriptions on every
 table/view/function, classifying/title/keyword/source-url tags, column
@@ -99,8 +99,10 @@ There are **two tiers of examples**:
 - **Illustrative** — `vgi.example_queries` *and* a function's native
   `Meta.examples` (DuckDB's `duckdb_functions().examples`), deduped by SQL across
   tables, views, macros, and scalar/aggregate/table functions. These teach usage
-  shape and may reference data or context not present at lint time, so a failure
-  to bind is a **warning** (VGI901), never a gate.
+  shape. VGI901 splits the verdict: an example that **doesn't bind** (unknown
+  table/column/function, bad types — a real authoring bug) is an **error**; one
+  that binds but **fails at runtime** (it may just need data/context) is a
+  **warning**.
 - **Executable** — `vgi.executable_examples`: self-contained, must-run examples
   that are the contract and the highest-quality material for LLMs. **VGI906**
   runs every statement in order (ERROR if any fails — not filter-skipped, they

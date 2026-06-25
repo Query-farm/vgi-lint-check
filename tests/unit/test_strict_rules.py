@@ -440,3 +440,43 @@ def test_vgi809_shared_column_suggests_relationship():
     assert "VGI809" not in [
         f.code for f in run(select_rules(Config()), RuleContext(F.catalog(s3), Config()))
     ]
+
+
+def test_vgi901_bind_error_is_error_runtime_is_warning():
+    from vgi_lint_check.findings import Severity as Sev
+    from vgi_lint_check.rules.execution import ExampleQueriesExecute
+
+    t_bind = F.table(
+        "main",
+        "a",
+        comment="c",
+        tags=_TAGS,
+        examples=[F.example(0, "x", "SELECT * FROM v.main.nope")],
+    )
+    t_run = F.table(
+        "main", "b", comment="c", tags=_TAGS, examples=[F.example(0, "x", "SELECT * FROM v.main.b")]
+    )
+
+    class Con:
+        def __init__(self, exc):
+            self.exc = exc
+
+        def execute(self, sql):
+            raise self.exc
+
+    def run_one(table, exc):
+        cfg = Config(execute=True, execute_concurrency=1)
+        ctx = RuleContext(
+            F.catalog(F.schema("main", comment="c", tags=_TAGS, tables=[table])),
+            cfg,
+            connection=Con(exc),
+        )
+        ctx.severity = Sev.ERROR
+        return list(ExampleQueriesExecute().check(ctx))
+
+    bind = run_one(t_bind, RuntimeError("Catalog Error: Table with name nope does not exist"))
+    assert len(bind) == 1 and bind[0].severity is Sev.ERROR and "does not bind" in bind[0].message
+    runtime = run_one(t_run, RuntimeError("Out of Range Error: value too large"))
+    assert (
+        len(runtime) == 1 and runtime[0].severity is Sev.WARNING and "runtime" in runtime[0].message
+    )
