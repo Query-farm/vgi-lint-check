@@ -330,3 +330,19 @@ def test_vgi406_category_tags():
         if f.code == "VGI406"
     ]
     assert any("not allowed on the catalog" in m for m in msgs)
+
+
+def test_vgi311_parameterless_table_function():
+    # parameterless table function NOT exposed as a table -> flagged
+    standalone = F.func("main", "metrics", "table", description="d")
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[standalone])
+    assert "VGI311" in _codes(F.catalog(s))
+    # ...but a parameterless table function with a backing table of the same name is fine
+    backed_fn = F.func("main", "eruptions", "table", description="d")
+    backing = F.table("main", "eruptions", comment="c", tags=_TAGS)
+    s2 = F.schema("main", comment="c", tags=_TAGS, tables=[backing], functions=[backed_fn])
+    assert "VGI311" not in _codes(F.catalog(s2))
+    # a table function that TAKES arguments is legitimately a function
+    parametric = F.func("main", "near", "table", description="d", parameters=["lat", "lng"])
+    s3 = F.schema("main", comment="c", tags=_TAGS, functions=[parametric])
+    assert "VGI311" not in _codes(F.catalog(s3))

@@ -278,3 +278,31 @@ class FunctionOverusesAny(Rule):
                     "argument disables type checking and weakens validation. Use ANY "
                     "only for genuinely type-generic arguments.",
                 )
+
+
+@register
+class ParameterlessTableFunction(Rule):
+    code = "VGI311"
+    name = "parameterless-table-function"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE_FUNCTION,)
+    summary = "A parameterless table function should usually be exposed as a regular table."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        for f in cat.iter_all_functions():
+            if f.kind is not ObjectKind.TABLE_FUNCTION or f.parameters:
+                continue
+            # Already exposed as a table (a duckdb_tables() row of the same name
+            # scans this function) -> nothing to nudge.
+            if cat.find_table_like(f.name, f.schema):
+                continue
+            yield self.finding(
+                ctx,
+                f.id,
+                "table function takes no arguments and is not exposed as a table",
+                "a parameterless table function always returns the same rows — "
+                "expose it as a regular table that scans this function, so consumers "
+                "can use SELECT * FROM schema.name (no parentheses)",
+            )
