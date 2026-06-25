@@ -59,7 +59,7 @@ families:
 | --- | --- | --- |
 | Catalog | VGI0xx | catalog description, `vgi.doc_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty**, worker advertises 1–N catalogs, `vgi.license` is a valid SPDX id |
 | Descriptions | VGI1xx | schema/table/view/function comment, `vgi.doc_llm`, `vgi.doc_md` |
-| Discoverability | VGI12x/13x | duplicate/short/echoed descriptions, **no placeholder text (TODO/TBD/…)**, classifying tag present + **reused (small vocabulary)**, title/keywords/source_url present, join-path docs, release freshness, example richness, column units |
+| Discoverability | VGI12x/13x | duplicate/short/echoed descriptions, **no placeholder text (TODO/TBD/…)**, classifying tag present + **reused (small vocabulary)**, title/keywords present (**keywords as a JSON array**), **source_url is catalog-only**, join-path docs, release freshness, example richness, column units |
 | Content | VGI17x | `vgi.doc_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage + **every column commented**, comment-not-echo, **naive TIMESTAMP documents its timezone** |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples, scalar-function stability (all-VOLATILE smell + per-function VOLATILE flag) |
@@ -76,7 +76,7 @@ families:
 table/view/function, classifying/title/keyword/source-url tags, column
 documentation, per-table primary keys, and example coverage are all enforced by
 default. To run a lighter profile, turn rules off in config — e.g.
-`ignore = ["VGI112", "VGI113", "VGI124", "VGI126", "VGI128", "VGI202"]` — or set
+`ignore = ["VGI112", "VGI113", "VGI124", "VGI126", "VGI202"]` — or set
 `[tool.vgi-lint-check.severity]` per code. Use `vgi-lint rules` to see every rule
 and its default.
 
@@ -143,11 +143,19 @@ can author or repair the tag straight from `--format agent`/`json` output.
 
 ```toml
 [tool.vgi-lint-check.execution]
-enabled = true       # default; --no-execute to disable
-mode    = "explain"  # explain (bind-only, cheapest) | limit | run — for VGI901
-limit   = 1          # row cap for limit/VGI902 modes
-timeout = 30.0       # per-query seconds; 0 disables the guard
+enabled     = true       # default; --no-execute to disable
+mode        = "explain"  # explain (bind-only, cheapest) | limit | run — for VGI901
+limit       = 1          # row cap for limit/VGI902 modes
+timeout     = 30.0       # per-query seconds; 0 disables the guard
+concurrency = 1          # run example queries across N cursors in parallel
 ```
+
+**Parallel execution.** `concurrency > 1` (or `--execute-concurrency N`) runs
+example queries across N cursors that share the attach, so the VGI worker pool
+serves them from distinct workers. On a compute-bound worker this is roughly
+linear (measured ~3.5× at N=4 on `vgi-units`); on a tiny/local worker it's a
+wash, since there's no per-query work to overlap. Multi-statement executable
+examples stay ordered on their own cursor; findings remain deterministic.
 
 ## Attach options
 
@@ -177,7 +185,7 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | `vgi.example_queries` | JSON list of `{"description","sql"}` *illustrative* example queries |
 | `vgi.executable_examples` | JSON list of self-contained, **must-run** examples (see below) |
 | `vgi.title` | Human/marketing display name (vs. the machine name) |
-| `vgi.keywords` | Comma-separated search keywords / synonyms |
+| `vgi.keywords` | JSON array of search keywords / synonyms — `["a","b"]` (legacy comma-separated still parses; VGI138 nudges) |
 | `vgi.result_columns_md` | Markdown doc of a table function's returned columns (for dynamic schemas DuckDB can't expose) |
 | `vgi.source_url` | Link to where the object is implemented (repo/file) |
 | `vgi.author` | Author / maintainer attribution (catalog) |

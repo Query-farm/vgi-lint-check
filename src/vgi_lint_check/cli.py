@@ -80,6 +80,12 @@ def app() -> None:
 @click.option("--execute-mode", type=click.Choice(["explain", "limit", "run"]), default=None)
 @click.option("--execute-limit", type=int, default=None)
 @click.option(
+    "--execute-concurrency",
+    type=int,
+    default=None,
+    help="Run example queries across N cursors in parallel (uses the VGI worker pool).",
+)
+@click.option(
     "--check-links/--no-check-links",
     default=None,
     help="Resolve URLs/images in descriptions over HTTP (VGI171). On by default.",
@@ -122,6 +128,7 @@ def lint(
     execute: bool | None,
     execute_mode: str | None,
     execute_limit: int | None,
+    execute_concurrency: int | None,
     check_links: bool | None,
     select: str | None,
     extend_select: str | None,
@@ -152,6 +159,7 @@ def lint(
         execute=execute,
         execute_mode=execute_mode,
         execute_limit=execute_limit,
+        execute_concurrency=execute_concurrency,
         check_links=check_links,
         fail_on=fail_on,
         baseline=baseline,
@@ -342,6 +350,7 @@ def _apply_cli_overrides(
     execute: bool | None,
     execute_mode: str | None,
     execute_limit: int | None,
+    execute_concurrency: int | None,
     check_links: bool | None,
     fail_on: str | None,
     baseline: str | None,
@@ -367,6 +376,8 @@ def _apply_cli_overrides(
         cfg.execute_mode = execute_mode
     if execute_limit is not None:
         cfg.execute_limit = execute_limit
+    if execute_concurrency is not None:
+        cfg.execute_concurrency = execute_concurrency
     if check_links is not None:
         cfg.check_links = check_links
     if fail_on is not None:

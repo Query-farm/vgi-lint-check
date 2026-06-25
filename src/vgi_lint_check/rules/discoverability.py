@@ -24,7 +24,7 @@ from ..model import (
     ObjectKind,
     TagSet,
 )
-from ..tags import parse_keywords
+from ..tags import keywords_is_json_array, parse_keywords
 from ._util import blank, is_trivial_echo
 from .base import Rule, RuleContext
 from .registry import register
@@ -379,8 +379,32 @@ class KeywordsPresent(Rule):
                     ctx,
                     oid,
                     "no 'vgi.keywords' search terms",
-                    "add a 'vgi.keywords' tag: comma-separated search terms/synonyms",
+                    "add a 'vgi.keywords' tag: a JSON array of strings, e.g. "
+                    '["seismic", "tremor", "magnitude"]',
                 )
+
+
+@register
+class KeywordsJsonArray(Rule):
+    code = "VGI138"
+    name = "keywords-json-array"
+    category = DISC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = "'vgi.keywords' should be a JSON array of strings, not a comma-separated string."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags, _name in _taggable(ctx):
+            value = tags.get(TAG_KEYWORDS)
+            if not tags.has(TAG_KEYWORDS) or keywords_is_json_array(value):
+                continue
+            yield self.finding(
+                ctx,
+                oid,
+                "'vgi.keywords' is not a JSON array of strings",
+                'use a JSON array, e.g. ["seismic", "tremor"] — the legacy '
+                "comma-separated string still parses but is deprecated",
+            )
 
 
 @register
@@ -419,9 +443,12 @@ class SourceUrlPresent(Rule):
     code = "VGI128"
     name = "source-url-present"
     category = DISC
-    default_severity = Severity.WARNING  # strict default
+    # Opt-in: source_url is catalog-level provenance (VGI004); per-object source
+    # links are redundant by default (see VGI139). Enable for granular per-object
+    # links if your worker maps each object to a distinct source file.
+    default_severity = Severity.OFF
     targets = (ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
-    summary = "Objects should link to their implementation via 'vgi.source_url'."
+    summary = "Objects may link to their implementation via 'vgi.source_url' (opt-in)."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for oid, tags, _name in _taggable(ctx):
@@ -434,6 +461,40 @@ class SourceUrlPresent(Rule):
                     "no 'vgi.source_url' implementation link",
                     "add a 'vgi.source_url' tag linking to the repo/file that "
                     "implements this object",
+                )
+
+
+@register
+class SourceUrlCatalogOnly(Rule):
+    code = "VGI139"
+    name = "source-url-catalog-only"
+    category = DISC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "vgi.source_url belongs on the catalog, not repeated on every object."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        objs = [(s.id, s.tags) for s in cat.iter_schemas()]
+        objs += [(t.id, t.tags) for t in cat.iter_table_like()]
+        objs += [(f.id, f.tags) for f in cat.iter_all_functions()]
+        for oid, tags in objs:
+            if tags.has(TAG_SOURCE_URL):
+                yield self.finding(
+                    ctx,
+                    oid,
+                    "'vgi.source_url' is set on a non-catalog object",
+                    "set source_url once on the catalog (the worker's repo) and "
+                    "remove it here — per-object copies are redundant. Enable "
+                    "VGI128 if you intend distinct per-object source links.",
                 )
 
 

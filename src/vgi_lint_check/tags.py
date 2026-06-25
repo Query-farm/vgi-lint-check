@@ -54,10 +54,33 @@ def to_tagset(raw: Any) -> TagSet:
 
 
 def parse_keywords(value: str | None) -> list[str]:
-    """Split a ``vgi.keywords`` value (comma-separated) into trimmed keywords."""
+    """Parse a ``vgi.keywords`` value into trimmed keywords.
+
+    Prefers a JSON array of strings (``["a","b"]``); falls back to the legacy
+    comma-separated form (``"a, b"``) for back-compat.
+    """
     if not value:
         return []
-    return [kw.strip() for kw in str(value).split(",") if kw.strip()]
+    s = str(value).strip()
+    if s.startswith("["):
+        try:
+            data = json.loads(s)
+        except (ValueError, TypeError):
+            data = None
+        if isinstance(data, list):
+            return [str(k).strip() for k in data if str(k).strip()]
+    return [kw.strip() for kw in s.split(",") if kw.strip()]
+
+
+def keywords_is_json_array(value: str | None) -> bool:
+    """True when ``value`` is a JSON array of strings (the preferred form)."""
+    if not value or not str(value).strip().startswith("["):
+        return False
+    try:
+        data = json.loads(str(value))
+    except (ValueError, TypeError):
+        return False
+    return isinstance(data, list) and all(isinstance(k, str) for k in data)
 
 
 def decode_example_queries(tags: TagSet) -> tuple[list[ExampleQuery], str | None]:

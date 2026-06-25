@@ -15,7 +15,7 @@ from typing import Any
 from ..connection import ALIAS_RE, sql_str
 from ..findings import Category, Finding, Severity
 from ..model import AttachOption, Catalog, Function, ObjectKind, Table, View
-from ._util import blank, is_filter_policy_error, run_with_timeout
+from ._util import blank, is_filter_policy_error, map_queries, run_with_timeout
 from .base import Rule, RuleContext
 from .registry import register
 
@@ -86,19 +86,25 @@ class ExampleQueriesExecute(Rule):
         mode = ctx.config.execute_mode
         limit = ctx.config.execute_limit
         timeout = ctx.config.execute_timeout
-        for obj, ex in _example_sqls(ctx.catalog):
+
+        def work(pair: tuple[Any, Any], cur: Any) -> Finding | None:
+            obj, ex = pair
             sql = ex.sql or ""
             prepared = _prepare(sql, mode, limit)
             try:
-                run_with_timeout(con, lambda q=prepared: con.execute(q), timeout)
+                run_with_timeout(cur, lambda q=prepared: cur.execute(q), timeout)
             except Exception as e:  # noqa: BLE001 - surface engine/timeout error
-                yield self.finding(
+                return self.finding(
                     ctx,
                     obj.id,
                     f"example #{ex.index} failed: {type(e).__name__}: {e}",
                     "fix the example SQL, or move must-run examples to "
                     f"vgi.executable_examples (VGI906); query: {sql[:120]}",
                 )
+            return None
+
+        results = map_queries(con, _example_sqls(ctx.catalog), work, ctx.config.execute_concurrency)
+        yield from (f for f in results if f is not None)
 
 
 @register
@@ -117,20 +123,26 @@ class ExampleQueriesReturnRows(Rule):
             return
         limit = max(1, ctx.config.execute_limit)
         timeout = ctx.config.execute_timeout
-        for obj, ex in _example_sqls(ctx.catalog):
+
+        def work(pair: tuple[Any, Any], cur: Any) -> Finding | None:
+            obj, ex = pair
             sql = ex.sql or ""
             wrapped = f"SELECT * FROM ({sql.rstrip().rstrip(';')}) AS _q LIMIT {limit}"
             try:
-                rows = run_with_timeout(con, lambda q=wrapped: con.execute(q).fetchall(), timeout)
+                rows = run_with_timeout(cur, lambda q=wrapped: cur.execute(q).fetchall(), timeout)
             except Exception:  # noqa: BLE001 - VGI901 reports execution/timeout errors
-                continue
+                return None
             if not rows:
-                yield self.finding(
+                return self.finding(
                     ctx,
                     obj.id,
                     f"example #{ex.index} returned no rows",
                     "use an example that returns data so consumers see output",
                 )
+            return None
+
+        results = map_queries(con, _example_sqls(ctx.catalog), work, ctx.config.execute_concurrency)
+        yield from (f for f in results if f is not None)
 
 
 @register
@@ -149,23 +161,28 @@ class ViewExecutes(Rule):
             return
         qualifier = ctx.catalog.qualifier
         timeout = ctx.config.execute_timeout
-        for view in ctx.catalog.iter_views():
+
+        def work(view: Any, cur: Any) -> Finding | None:
             relation = f'"{qualifier}"."{view.schema}"."{view.name}"'
             try:
                 run_with_timeout(
-                    con, lambda r=relation: con.execute(f"EXPLAIN SELECT * FROM {r}"), timeout
+                    cur, lambda r=relation: cur.execute(f"EXPLAIN SELECT * FROM {r}"), timeout
                 )
             except Exception as e:  # noqa: BLE001 - surface engine/timeout error
                 # A mandatory-filter rejection means the view is wired up and
                 # enforcing a scan policy, not that it's broken.
                 if is_filter_policy_error(e):
-                    continue
-                yield self.finding(
+                    return None
+                return self.finding(
                     ctx,
                     view.id,
                     f"view does not execute: {type(e).__name__}: {e}",
                     "fix the view definition so it binds and runs against the worker",
                 )
+            return None
+
+        results = map_queries(con, ctx.catalog.iter_views(), work, ctx.config.execute_concurrency)
+        yield from (f for f in results if f is not None)
 
 
 # --- live attach checks (VGI904 / VGI905) ---------------------------------
@@ -445,25 +462,33 @@ class ExecutableExamplesExecute(Rule):
         if con is None:
             return
         timeout = ctx.config.execute_timeout
-        for obj_id, examples, parse_error in ctx.catalog.iter_executable_example_hosts():
-            if parse_error:  # VGI507 reports malformed tags
-                continue
-            for ex in examples:
-                if not any((s.sql or "").strip() for s in ex.statements):
-                    continue
-                label = ex.name or f"#{ex.index}"
-                try:
-                    _run_executable(con, ex, timeout)
-                except Exception as e:  # noqa: BLE001 - surface engine/timeout error
-                    yield self.finding(
-                        ctx,
-                        obj_id,
-                        f"executable example {label!r} failed: {type(e).__name__}: {e}",
-                        "make every statement run as written: catalog-qualify "
-                        "references (catalog.schema.name), include any required "
-                        "filters, and make the example self-contained and "
-                        "re-runnable (e.g. CREATE OR REPLACE for any setup)",
-                    )
+        items = [
+            (obj_id, ex)
+            for obj_id, examples, parse_error in ctx.catalog.iter_executable_example_hosts()
+            if not parse_error  # VGI507 reports malformed tags
+            for ex in examples
+            if any((s.sql or "").strip() for s in ex.statements)
+        ]
+
+        def work(pair: tuple[Any, Any], cur: Any) -> Finding | None:
+            obj_id, ex = pair
+            label = ex.name or f"#{ex.index}"
+            try:
+                _run_executable(cur, ex, timeout)
+            except Exception as e:  # noqa: BLE001 - surface engine/timeout error
+                return self.finding(
+                    ctx,
+                    obj_id,
+                    f"executable example {label!r} failed: {type(e).__name__}: {e}",
+                    "make every statement run as written: catalog-qualify "
+                    "references (catalog.schema.name), include any required "
+                    "filters, and make the example self-contained and "
+                    "re-runnable (e.g. CREATE OR REPLACE for any setup)",
+                )
+            return None
+
+        results = map_queries(con, items, work, ctx.config.execute_concurrency)
+        yield from (f for f in results if f is not None)
 
 
 @register
@@ -490,24 +515,30 @@ class ExecutableExampleResultMatches(Rule):
         if con is None:
             return
         timeout = ctx.config.execute_timeout
-        for obj_id, examples, parse_error in ctx.catalog.iter_executable_example_hosts():
-            if parse_error:
-                continue
-            for ex in examples:
-                if not any(s.has_expected for s in ex.statements):
+        items = [
+            (obj_id, ex)
+            for obj_id, examples, parse_error in ctx.catalog.iter_executable_example_hosts()
+            if not parse_error
+            for ex in examples
+            if any(s.has_expected for s in ex.statements)
+        ]
+
+        def work(pair: tuple[Any, Any], cur: Any) -> list[Finding]:
+            obj_id, ex = pair
+            try:
+                captured = _run_executable(cur, ex, timeout)
+            except Exception:  # noqa: BLE001 - VGI906 reports execution failures
+                return []
+            out: list[Finding] = []
+            label = ex.name or f"#{ex.index}"
+            for i, stmt in enumerate(ex.statements):
+                if not stmt.has_expected or i not in captured:
                     continue
-                try:
-                    captured = _run_executable(con, ex, timeout)
-                except Exception:  # noqa: BLE001 - VGI906 reports execution failures
-                    continue
-                label = ex.name or f"#{ex.index}"
-                for i, stmt in enumerate(ex.statements):
-                    if not stmt.has_expected or i not in captured:
-                        continue
-                    cols, rows = captured[i]
-                    if not _result_matches(stmt.expected_result, cols, rows):
-                        actual = _render_actual(cols, rows)
-                        yield self.finding(
+                cols, rows = captured[i]
+                if not _result_matches(stmt.expected_result, cols, rows):
+                    actual = _render_actual(cols, rows)
+                    out.append(
+                        self.finding(
                             ctx,
                             obj_id,
                             f"executable example {label!r} statement #{i} output "
@@ -518,3 +549,8 @@ class ExecutableExampleResultMatches(Rule):
                             "(NULL -> null, true/false lowercase, numbers as printed "
                             "e.g. 1.0 not 1) and matches rows in order",
                         )
+                    )
+            return out
+
+        for findings in map_queries(con, items, work, ctx.config.execute_concurrency):
+            yield from findings

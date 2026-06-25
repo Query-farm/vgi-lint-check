@@ -5,8 +5,34 @@ from __future__ import annotations
 import contextlib
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+
+
+def map_queries(
+    con: Any, items: Iterable[Any], fn: Callable[[Any, Any], Any], concurrency: int
+) -> list[Any]:
+    """Run ``fn(item, cur)`` for each item, parallel across ``concurrency`` cursors.
+
+    Each worker thread gets its own ``con.cursor()`` — a lightweight connection
+    sharing the attached catalog — so the VGI worker pool serves the concurrent
+    queries from distinct workers. With ``concurrency <= 1`` (or a single item)
+    it runs sequentially on ``con``. Result order matches input order.
+    """
+    work = list(items)
+    if concurrency <= 1 or len(work) <= 1:
+        return [fn(it, con) for it in work]
+    local = threading.local()
+
+    def run(it: Any) -> Any:
+        cur = getattr(local, "cur", None)
+        if cur is None:
+            cur = local.cur = con.cursor()
+        return fn(it, cur)
+
+    with ThreadPoolExecutor(max_workers=concurrency) as ex:
+        return list(ex.map(run, work))
 
 
 def blank(s: Any) -> bool:

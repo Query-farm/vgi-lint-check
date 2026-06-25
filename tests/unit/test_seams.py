@@ -157,3 +157,20 @@ def test_references_identifier_ignores_literals_and_comments():
 )
 def test_is_unnamed(name, unnamed):
     assert _is_unnamed(name) is unnamed
+
+
+def test_map_queries_sequential_and_parallel():
+    from vgi_lint_check.rules._util import map_queries
+
+    class FakeCon:
+        def cursor(self):
+            return FakeCon()
+
+    con = FakeCon()
+    items = list(range(10))
+    # order preserved + correct results, both sequential and parallel
+    assert map_queries(con, items, lambda i, cur: i * i, 1) == [i * i for i in items]
+    assert map_queries(con, items, lambda i, cur: i * i, 4) == [i * i for i in items]
+    # each parallel worker gets a distinct cursor (not the main connection)
+    seen = map_queries(con, items, lambda i, cur: id(cur), 4)
+    assert len(set(seen)) >= 2 and id(con) not in seen

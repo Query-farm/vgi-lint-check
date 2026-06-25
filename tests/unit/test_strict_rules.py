@@ -248,3 +248,32 @@ def test_vgi172_doc_links():
     )
     s2 = F.schema("main", comment="c", tags=_TAGS, functions=[good])
     assert "VGI172" not in _codes(F.catalog(s2))
+
+
+def test_vgi138_keywords_json_array():
+    from vgi_lint_check.tags import keywords_is_json_array, parse_keywords
+
+    # parse_keywords accepts both forms
+    assert parse_keywords('["a", "b"]') == ["a", "b"]
+    assert parse_keywords("a, b") == ["a", "b"]  # legacy
+    assert keywords_is_json_array('["a","b"]') and not keywords_is_json_array("a, b")
+    # legacy comma form is flagged; JSON array is clean
+    legacy = F.table("main", "t", comment="c", tags={**_TAGS, "vgi.keywords": "seismic, tremor"})
+    s = F.schema("main", comment="c", tags=_TAGS, tables=[legacy])
+    assert "VGI138" in _codes(F.catalog(s))
+    ok = F.table("main", "t", comment="c", tags={**_TAGS, "vgi.keywords": '["seismic","tremor"]'})
+    s2 = F.schema("main", comment="c", tags=_TAGS, tables=[ok])
+    assert "VGI138" not in _codes(F.catalog(s2))
+
+
+def test_vgi139_source_url_catalog_only():
+    # source_url on a function is flagged; the same value belongs on the catalog
+    fn = F.func("main", "predict", description="d", tags={"vgi.source_url": "https://x.test/repo"})
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[fn])
+    codes = _codes(F.catalog(s))
+    assert "VGI139" in codes
+    # VGI128 (per-object source_url required) is now opt-in -> off by default
+    assert "VGI128" not in codes
+    # a catalog-level source_url (the discovery field) does not trip VGI139
+    clean = F.schema("main", comment="c", tags=_TAGS, tables=[F.table("main", "t", comment="c")])
+    assert "VGI139" not in _codes(F.catalog(clean))

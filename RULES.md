@@ -45,12 +45,14 @@ skipped unless `--execute` is passed.
 | `VGI125` | info | title-quality | A 'vgi.title', when set, should differ from the machine name. |  |
 | `VGI126` | warning | keywords-present | Objects should carry 'vgi.keywords' (search terms / synonyms). |  |
 | `VGI127` | info | keywords-well-formed | 'vgi.keywords', when set, should be non-empty with no duplicates. |  |
-| `VGI128` | warning | source-url-present | Objects should link to their implementation via 'vgi.source_url'. |  |
+| `VGI128` | off | source-url-present | Objects may link to their implementation via 'vgi.source_url' (opt-in). | opt-in |
 | `VGI129` | info | source-url-valid | 'vgi.source_url', when set, should be an http(s) URL. |  |
 | `VGI130` | warning | no-placeholder-text | Descriptions/comments must not contain placeholder text (TODO/TBD/lorem ipsum/…). |  |
 | `VGI131` | warning | column-units | Numeric column comments should state units/definition where relevant. |  |
 | `VGI132` | warning | classifying-tags-reused | A classifying tag should be a small, reused vocabulary — not unique per object. |  |
 | `VGI133` | warning | join-path-documented | A table with foreign keys should explain how to join to the referenced tables. |  |
+| `VGI138` | warning | keywords-json-array | 'vgi.keywords' should be a JSON array of strings, not a comma-separated string. |  |
+| `VGI139` | warning | source-url-catalog-only | vgi.source_url belongs on the catalog, not repeated on every object. |  |
 | `VGI140` | info | release-dated | Published data-version releases should carry a release date (freshness). |  |
 | `VGI141` | info | release-documented | Releases should have a summary or notes_url ('what's new'). |  |
 | `VGI150` | info | examples-not-trivial | Example queries should demonstrate value, not only `SELECT * FROM x`. |  |
@@ -184,4 +186,4 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 
-_99 rules._
+_101 rules._
