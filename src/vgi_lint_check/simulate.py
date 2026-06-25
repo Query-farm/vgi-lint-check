@@ -213,8 +213,14 @@ def _run(cur: Any, sql: str, timeout: float) -> tuple[list[str], list[Any]]:
 def _resultsets_equal(
     a: tuple[list[str], list[Any]], b: tuple[list[str], list[Any]], unordered: bool
 ) -> bool:
-    """Compare two live result sets by canonical rendering (VGI907 semantics)."""
-    ra, rb = _render_result(*a), _render_result(*b)
+    """Compare two live result sets by VALUES, ignoring column names.
+
+    The analyst's column aliases are cosmetic; what's graded is the data.
+    Position- and (unless ``unordered``) row-order-sensitive, since most analyst
+    tasks are ranked/top-N. Passing empty cols to ``_render_result`` yields plain
+    value lists rather than column-keyed dicts.
+    """
+    ra, rb = _render_result([], a[1]), _render_result([], b[1])
     if unordered:
         return sorted(map(_canon, ra)) == sorted(map(_canon, rb))
     return ra == rb

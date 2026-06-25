@@ -157,6 +157,24 @@ def test_tier1_reference_pass_and_fail():
 # --------------------------------------------------------------------------
 # Tier 2 — check_sql assertion
 # --------------------------------------------------------------------------
+def test_resultsets_equal_ignores_column_names():
+    # same values, different column aliases -> equal (names are cosmetic)
+    assert sim._resultsets_equal(
+        (["dimension", "n"], [("length", 46)]),
+        (["dim", "count"], [("length", 46)]),
+        unordered=False,
+    )
+    # different values -> not equal
+    assert not sim._resultsets_equal(
+        (["a"], [("length", 46)]), (["a"], [("mass", 46)]), unordered=False
+    )
+    # row order matters unless unordered
+    a = (["x"], [(1,), (2,)])
+    b = (["x"], [(2,), (1,)])
+    assert not sim._resultsets_equal(a, b, unordered=False)
+    assert sim._resultsets_equal(a, b, unordered=True)
+
+
 def test_tier2_check_sql():
     cat = _catalog_with_tasks([AgentTask(name="c", prompt="do", check_sql="SELECT check_pass")])
     backend = _Backend([json.dumps({"action": "final", "answer_sql": "SELECT 1"})])
