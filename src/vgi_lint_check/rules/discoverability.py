@@ -244,7 +244,7 @@ class ColumnUnits(Rule):
     code = "VGI131"
     name = "column-units"
     category = DISC
-    default_severity = Severity.WARNING  # strict default
+    default_severity = Severity.INFO  # nudge; not every column has units
     targets = (ObjectKind.COLUMN,)
     summary = "Numeric column comments should state units/definition where relevant."
 

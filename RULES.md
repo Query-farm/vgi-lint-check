@@ -48,7 +48,7 @@ skipped unless `--execute` is passed.
 | `VGI128` | off | source-url-present | Objects may link to their implementation via 'vgi.source_url' (opt-in). | opt-in |
 | `VGI129` | info | source-url-valid | 'vgi.source_url', when set, should be an http(s) URL. |  |
 | `VGI130` | warning | no-placeholder-text | Descriptions/comments must not contain placeholder text (TODO/TBD/lorem ipsum/…). |  |
-| `VGI131` | warning | column-units | Numeric column comments should state units/definition where relevant. |  |
+| `VGI131` | info | column-units | Numeric column comments should state units/definition where relevant. |  |
 | `VGI132` | warning | classifying-tags-reused | A classifying tag should be a small, reused vocabulary — not unique per object. |  |
 | `VGI133` | warning | join-path-documented | A table with foreign keys should explain how to join to the referenced tables. |  |
 | `VGI138` | error | keywords-json-array | 'vgi.keywords' must be a JSON array of strings, not a comma-separated string. |  |
@@ -156,8 +156,8 @@ skipped unless `--execute` is passed.
 | `VGI803` | error | check-constraint-binds | CHECK constraint expressions should bind against the worker. | requires `--execute` |
 | `VGI804` | warning | not-null-constraints-present | A worker with constraints but no NOT NULL on any column likely forgot them. |  |
 | `VGI805` | warning | no-primary-keys | A worker with constraints but no primary keys likely forgot them. |  |
-| `VGI806` | warning | no-constraints | A worker that declares no constraints at all is likely incomplete. |  |
-| `VGI807` | warning | table-has-primary-key | Each table should declare a primary key so agents know each row's identity. |  |
+| `VGI806` | info | no-constraints | A worker that declares no constraints at all is likely incomplete. |  |
+| `VGI807` | info | table-has-primary-key | Each table should declare a primary key so agents know each row's identity. |  |
 | `VGI808` | info | foreign-key-suggested | A column named like a key (<table>_id) with no FK likely needs one declared. |  |
 
 ## Structure & size limits (VGI11x/13x)

@@ -117,7 +117,7 @@ class NoConstraintsAtAll(Rule):
     code = "VGI806"
     name = "no-constraints"
     category = CON
-    default_severity = Severity.WARNING
+    default_severity = Severity.INFO
     targets = (ObjectKind.CATALOG,)
     summary = "A worker that declares no constraints at all is likely incomplete."
 
@@ -241,7 +241,7 @@ class TableHasPrimaryKey(Rule):
     code = "VGI807"
     name = "table-has-primary-key"
     category = CON
-    default_severity = Severity.WARNING
+    default_severity = Severity.INFO
     targets = (ObjectKind.TABLE,)
     summary = "Each table should declare a primary key so agents know each row's identity."
 
