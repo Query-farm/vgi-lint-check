@@ -107,6 +107,7 @@ skipped unless `--execute` is passed.
 | `VGI309` | warning | volatile-scalar-function | Flag each VOLATILE scalar/aggregate function for a stability audit. |  |
 | `VGI310` | warning | function-overuses-any | A function whose every parameter is typed ANY usually means types weren't declared. |  |
 | `VGI311` | warning | parameterless-table-function | A parameterless table function should usually be exposed as a regular table. |  |
+| `VGI312` | warning | function-arguments-undocumented | Every function argument should have a description. Needs a vgi extension new enough to expose vgi_function_arguments(); silent on older ones. |  |
 
 ## Tags (VGI4xx)
 
@@ -191,4 +192,4 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 
-_106 rules._
+_107 rules._

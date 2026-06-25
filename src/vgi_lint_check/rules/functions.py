@@ -1,14 +1,17 @@
 """VGI3xx — function and macro documentation.
 
-Per-parameter docs are not exposed by ``duckdb_functions()``; VGI301/302 split by
-whether the function exposes parameters so exactly one fires per undocumented
-function. Table-functions are excluded — their documentation lives on the table.
+VGI301/302 split by whether the function exposes parameters so exactly one fires
+per undocumented function (using ``duckdb_functions()``, which has no per-argument
+docs). Per-argument descriptions ARE exposed by the ``vgi`` extension's
+``vgi_function_arguments()`` table function (newer extensions only) — VGI312 lints
+those. Table-functions' result columns are documented separately (VGI307).
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from typing import Any
 
 from ..findings import Category, Finding, Severity
 from ..model import TAG_RESULT_COLUMNS_MD, ObjectKind
@@ -175,6 +178,59 @@ class TableFunctionColumnsDocumented(Rule):
                     "'vgi.result_columns_md' tag with a Markdown table of the returned "
                     "columns (note any columns that vary by argument)",
                 )
+
+
+@register
+class FunctionArgumentsUndocumented(Rule):
+    code = "VGI312"
+    name = "function-arguments-undocumented"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+        ObjectKind.MACRO,
+    )
+    summary = (
+        "Every function argument should have a description. Needs a vgi extension "
+        "new enough to expose vgi_function_arguments(); silent on older ones."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for f in ctx.catalog.iter_all_functions():
+            if not f.arguments:  # no per-arg data (older vgi extension) -> nothing to lint
+                continue
+            # Dedup by name so distinct overloads' shared args aren't double-listed.
+            seen: set[str] = set()
+            undocumented: list[str] = []
+            for a in f.arguments:
+                if blank(a.description) and a.name not in seen:
+                    seen.add(a.name)
+                    undocumented.append(self._label(a))
+            if undocumented:
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    f"{f.function_type} has undocumented argument(s): {', '.join(undocumented)}",
+                    "add a per-argument description (vgi_doc) so callers and LLMs "
+                    "know what each argument means and how it's used",
+                )
+
+    @staticmethod
+    def _label(arg: Any) -> str:
+        """Argument name annotated with notable kinds (const/varargs/any/table)."""
+        flags = [
+            k
+            for k, on in (
+                ("const", arg.is_const),
+                ("varargs", arg.is_varargs),
+                ("any-type", arg.is_any_type),
+                ("table", arg.is_table_input),
+            )
+            if on
+        ]
+        return f"{arg.name} ({', '.join(flags)})" if flags else arg.name
 
 
 @register

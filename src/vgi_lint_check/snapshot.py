@@ -48,3 +48,28 @@ def _rows(con: Any, sql: str) -> list[dict[str, Any]]:
 def take_snapshot(con: Any) -> Snapshot:
     """Read all tracked system tables into a :class:`Snapshot`."""
     return Snapshot(**{attr: _rows(con, sql) for attr, sql in _SYSTEM_TABLES.items()})
+
+
+_FUNCTION_ARGUMENTS_SQL = """
+SELECT schema_name, function_name, function_type, arg_position, field_index,
+       arg_name, arg_type, arg_description, is_named, is_positional,
+       is_const, is_varargs, is_table_input, is_any_type
+FROM vgi_function_arguments()
+WHERE catalog_name = ?
+ORDER BY function_name, field_index
+"""
+
+
+def fetch_function_arguments(con: Any, alias: str) -> list[dict[str, Any]]:
+    """Per-argument metadata from ``vgi_function_arguments()``, scoped to ``alias``.
+
+    Returns ``[]`` when the table function is unavailable — it only exists in
+    newer ``vgi`` extensions, and the linter and the extension version
+    independently, so an older extension must degrade silently, never crash.
+    """
+    try:
+        cur = con.execute(_FUNCTION_ARGUMENTS_SQL, [alias])
+    except Exception:  # noqa: BLE001 - version skew: table function not present
+        return []
+    names = [d[0] for d in cur.description]
+    return [dict(zip(names, row, strict=False)) for row in cur.fetchall()]

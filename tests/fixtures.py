@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from vgi_lint_check.model import (
+    Argument,
     AttachOption,
     Catalog,
     Column,
@@ -115,6 +116,7 @@ def func(
     stability=None,
     executable_examples=(),
     exec_parse_error=None,
+    arguments=(),
 ):
     return Function(
         id=ObjectId("v", ObjectKind.SCALAR_FUNCTION, schema=schema, name=name),
@@ -129,7 +131,12 @@ def func(
         stability=stability,
         executable_examples=list(executable_examples),
         executable_examples_parse_error=exec_parse_error,
+        arguments=list(arguments),
     )
+
+
+def arg(name, type="VARCHAR", description=None, **flags):
+    return Argument(name=name, type=type, description=description, **flags)
 
 
 def example(i, description, sql):

@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .model import (
+    Argument,
     AttachOption,
     Catalog,
     Column,
@@ -95,8 +96,30 @@ def build_catalog(
     pragma_rows: list[dict[str, Any]] | None = None,
     attach_options: list[Any] | None = None,
     advertised_catalogs: list[str] | None = None,
+    argument_rows: list[dict[str, Any]] | None = None,
 ) -> Catalog:
     """Build a normalized :class:`Catalog` from a post-attach snapshot."""
+    # Per-argument metadata (vgi_function_arguments()), grouped by (schema, name).
+    # A name with several overloads keeps all its arguments; the rule dedups by
+    # name, so a distinct overload's args aren't silently dropped.
+    args_by_key: dict[tuple[Any, Any], list[Argument]] = {}
+    for r in argument_rows or []:
+        key = (r.get("schema_name"), r.get("function_name"))
+        name = r.get("arg_name")
+        if not name:
+            continue
+        args_by_key.setdefault(key, []).append(
+            Argument(
+                name=str(name),
+                type=r.get("arg_type"),
+                description=r.get("arg_description"),
+                is_const=bool(r.get("is_const")),
+                is_named=bool(r.get("is_named")),
+                is_varargs=bool(r.get("is_varargs")),
+                is_table_input=bool(r.get("is_table_input")),
+                is_any_type=bool(r.get("is_any_type")),
+            )
+        )
     schemas: dict[str, Schema] = {}
 
     # Catalog-level metadata from duckdb_databases() (the worker's "listing").
@@ -227,6 +250,7 @@ def build_catalog(
             executable_examples_parse_error=exec_err,
             macro_definition=r.get("macro_definition"),
             stability=r.get("stability"),
+            arguments=args_by_key.get((sname, fname), []),
         )
         # Correlate a table-function to its table so column/desc rules use the
         # richer table row rather than flagging the bare function.

@@ -42,6 +42,22 @@ def test_lint_volcanos_end_to_end(volcanos_url):
     assert 0 <= r.score <= 100
 
 
+def test_function_arguments_per_arg_metadata():
+    """vgi_function_arguments() populates Function.arguments (or degrades silently)."""
+    _need(VGI_PYTHON)
+    loc = "/Users/rusty/Development/vgi-units/target/release/units-worker"
+    import os
+
+    if not os.path.exists(loc):
+        pytest.skip("requires the vgi-units release binary")
+    report = lint_worker(loc, config=Config(check_links=False, execute=False), install=False)
+    fns = list(report.results[0].catalog.iter_functions())
+    # On a vgi extension exposing vgi_function_arguments(), args are populated and
+    # VGI312 fires (units documents none); on an older one, both are simply empty.
+    if any(f.arguments for f in fns):
+        assert any(f.code == "VGI312" for f in report.results[0].findings)
+
+
 def test_snapshot_columns_superset_drift_alarm(volcanos_url):
     """The real duckdb_* outputs must contain the columns the loader reads."""
     from vgi_lint_check.connection import attached, connect_loaded, derive_alias

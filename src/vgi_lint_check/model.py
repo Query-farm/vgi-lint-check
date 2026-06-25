@@ -252,6 +252,20 @@ class View(Table):
     kind: ObjectKind = ObjectKind.VIEW
 
 
+@dataclass(frozen=True)
+class Argument:
+    """One declared argument of a function (from ``vgi_function_arguments()``)."""
+
+    name: str
+    type: str | None = None
+    description: str | None = None
+    is_const: bool = False
+    is_named: bool = False
+    is_varargs: bool = False
+    is_table_input: bool = False
+    is_any_type: bool = False
+
+
 @dataclass
 class Function:
     """A scalar/aggregate function, macro, table-function, or pragma."""
@@ -270,6 +284,9 @@ class Function:
     executable_examples: list[ExecutableExample] = field(default_factory=list)
     executable_examples_parse_error: str | None = None
     macro_definition: str | None = None
+    # Per-argument metadata from vgi_function_arguments() (empty on older vgi
+    # extensions that don't expose it — the rule then emits nothing).
+    arguments: list[Argument] = field(default_factory=list)
     # DuckDB function stability: CONSISTENT (deterministic), VOLATILE, or
     # CONSISTENT_WITHIN_QUERY. None for macros/table-functions (not applicable).
     stability: str | None = None

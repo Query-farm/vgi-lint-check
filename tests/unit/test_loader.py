@@ -204,3 +204,65 @@ def test_settings_and_pragmas_diff_scoped():
     assert [s.name for s in cat.settings] == ["v_opt"]
     assert cat.settings[0].id.kind is ObjectKind.SETTING
     assert [p.name for p in cat.pragmas] == ["v_pragma"]
+
+
+def test_function_arguments_joined_and_version_skew():
+
+    snap = Snapshot(
+        schemas=[{"database_name": "v", "schema_name": "main", "comment": None, "tags": {}}],
+        functions=[
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "function_name": "multiply",
+                "function_type": "scalar",
+                "description": "scale a value",
+                "internal": True,
+                "tags": {},
+                "parameters": ["value", "factor"],
+                "parameter_types": ["DOUBLE", "DOUBLE"],
+                "examples": [],
+            },
+        ],
+    )
+    arg_rows = [
+        {
+            "schema_name": "main",
+            "function_name": "multiply",
+            "arg_name": "value",
+            "arg_type": "DOUBLE",
+            "arg_description": "the number",
+            "is_const": False,
+        },
+        {
+            "schema_name": "main",
+            "function_name": "multiply",
+            "arg_name": "factor",
+            "arg_type": "DOUBLE",
+            "arg_description": None,
+            "is_const": True,
+        },
+    ]
+    cat = build_catalog(snap, "v", "loc", argument_rows=arg_rows)
+    fn = next(f for f in cat.iter_functions() if f.name == "multiply")
+    assert [a.name for a in fn.arguments] == ["value", "factor"]
+    assert fn.arguments[0].description == "the number"
+    assert fn.arguments[1].description is None and fn.arguments[1].is_const is True
+
+    # with no rows (older extension), arguments is empty and nothing breaks
+    cat2 = build_catalog(snap, "v", "loc", argument_rows=None)
+    assert next(f for f in cat2.iter_functions() if f.name == "multiply").arguments == []
+
+
+class _RaisingCon:
+    def execute(self, sql, params=None):
+        raise RuntimeError(
+            "Catalog Error: Table Function with name vgi_function_arguments does not exist"
+        )
+
+
+def test_fetch_function_arguments_version_skew_returns_empty():
+    from vgi_lint_check.snapshot import fetch_function_arguments
+
+    # an older vgi extension lacking the table function must not crash
+    assert fetch_function_arguments(_RaisingCon(), "v") == []

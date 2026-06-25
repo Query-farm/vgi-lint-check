@@ -480,3 +480,60 @@ def test_vgi901_bind_error_is_error_runtime_is_warning():
     assert (
         len(runtime) == 1 and runtime[0].severity is Sev.WARNING and "runtime" in runtime[0].message
     )
+
+
+def test_vgi312_function_arguments_undocumented():
+    # all args documented -> no finding
+    ok = F.func(
+        "main",
+        "multiply",
+        description="d",
+        arguments=[
+            F.arg("value", "DOUBLE", "the number to scale"),
+            F.arg("factor", "DOUBLE", "the multiplier"),
+        ],
+    )
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[ok])
+    assert "VGI312" not in _codes(F.catalog(s))
+
+    # one undocumented arg -> finding listing it
+    partial = F.func(
+        "main",
+        "multiply",
+        description="d",
+        arguments=[
+            F.arg("value", "DOUBLE", "the number to scale"),
+            F.arg("factor", "DOUBLE", None),
+        ],
+    )
+    s2 = F.schema("main", comment="c", tags=_TAGS, functions=[partial])
+    found = [
+        f
+        for f in run(select_rules(Config()), RuleContext(F.catalog(s2), Config()))
+        if f.code == "VGI312"
+    ]
+    assert found and "factor" in found[0].message and "value" not in found[0].message
+
+    # const/varargs/any args are still flagged, and annotated in the message
+    flagged = F.func(
+        "main",
+        "f",
+        description="d",
+        arguments=[
+            F.arg("opts", "ANY", None, is_const=True, is_any_type=True),
+        ],
+    )
+    s3 = F.schema("main", comment="c", tags=_TAGS, functions=[flagged])
+    msg = [
+        f.message
+        for f in run(select_rules(Config()), RuleContext(F.catalog(s3), Config()))
+        if f.code == "VGI312"
+    ][0]
+    assert "opts" in msg and "const" in msg and "any-type" in msg
+
+
+def test_vgi312_silent_without_argument_data():
+    # older vgi extension: no arguments populated -> rule emits nothing (no crash)
+    no_args = F.func("main", "multiply", description="d", parameters=["value", "factor"])
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[no_args])
+    assert "VGI312" not in _codes(F.catalog(s))

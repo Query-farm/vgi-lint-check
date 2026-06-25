@@ -26,7 +26,7 @@ from .model import Release
 from .result import Report, VersionResult
 from .rules import run, select_rules
 from .rules.base import RuleContext
-from .snapshot import take_snapshot
+from .snapshot import fetch_function_arguments, take_snapshot
 from .versions import CatalogDiscovery, discover_catalogs, resolve_versions
 
 
@@ -125,6 +125,7 @@ def load_catalog(
                 pragma_rows=diff.pragma_rows,
                 attach_options=discovery.attach_options,
                 advertised_catalogs=advertised,
+                argument_rows=fetch_function_arguments(con, local_alias),
             )
     finally:
         con.close()
@@ -183,6 +184,7 @@ def _lint_one_version(
             pragma_rows=diff.pragma_rows,
             attach_options=discovery.attach_options,
             advertised_catalogs=advertised,
+            argument_rows=fetch_function_arguments(con, alias),
         )
         rules = select_rules(config)
         needs_con = any(getattr(r, "requires_connection", False) for r in rules)
