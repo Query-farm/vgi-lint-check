@@ -31,8 +31,8 @@ class Options:
     min_llm_description_chars: int = 40
     min_md_description_chars: int = 80
     min_description_chars: int = 12
-    # Flag a schema with more than this many objects (0 = disabled).
-    max_schema_objects: int = 0
+    # Warn on a schema with more than this many objects (0 = disabled).
+    max_schema_objects: int = 50
     # Flag a worker advertising more than this many catalogs (0 = disabled).
     max_catalogs: int = 100
     # Warn (never error) on a catalog with more than this many tables / functions

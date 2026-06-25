@@ -215,14 +215,18 @@ def test_scalar_function_example_flagged():
     assert "VGI306" in set(codes(F.catalog(s)))
 
 
-# --- structure / schema examples (opt-in) ---------------------------------
-def test_schema_object_count_opt_in():
-    s = F.schema("main", comment="c", tables=[_tbl("a", ["x"]), _tbl("b", ["x"])])
-    # off by default
-    assert "VGI117" not in set(codes(F.catalog(s)))
-    cfg = Config(severity_overrides={"VGI117": Severity.WARNING})
+# --- structure / schema size ----------------------------------------------
+def test_schema_object_count_warns_over_default():
+    # a small schema is under the default cap (50) -> clean
+    small = F.schema("main", comment="c", tables=[_tbl("a", ["x"]), _tbl("b", ["x"])])
+    assert "VGI117" not in set(codes(F.catalog(small)))
+    # a schema with > 50 objects warns by default
+    big = F.schema("main", comment="c", tables=[_tbl(f"t{i}", ["x"]) for i in range(60)])
+    assert "VGI117" in set(codes(F.catalog(big)))
+    # ...and the threshold is configurable
+    cfg = Config()
     cfg.options = Options(max_schema_objects=1)
-    assert "VGI117" in {f.code for f in findings(F.catalog(s), cfg)}
+    assert "VGI117" in {f.code for f in findings(F.catalog(small), cfg)}
 
 
 def test_schema_examples_strict_default():

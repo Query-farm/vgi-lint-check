@@ -163,7 +163,7 @@ skipped unless `--execute` is passed.
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
 | `VGI110` | warning | schema-not-empty | A schema should contain at least one table, view, or function. |  |
-| `VGI117` | off | schema-object-count | Flag a schema with more objects than options.max_schema_objects. | opt-in |
+| `VGI117` | warning | schema-object-count | A schema with more than options.max_schema_objects objects is hard to explore. |  |
 | `VGI134` | warning | excessive-table-count | Warn when a catalog defines more tables than options.max_tables. |  |
 | `VGI135` | warning | excessive-function-count | Warn when a catalog defines more functions than options.max_functions. |  |
 | `VGI136` | warning | long-table-name | Warn on table/view names longer than options.max_table_name_length. |  |

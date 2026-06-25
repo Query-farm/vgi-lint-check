@@ -36,9 +36,9 @@ class SchemaObjectCount(Rule):
     code = "VGI117"
     name = "schema-object-count"
     category = Category.STRUCTURE
-    default_severity = Severity.OFF  # opt-in; also gated by max_schema_objects
+    default_severity = Severity.WARNING  # gated by max_schema_objects (default 50)
     targets = (ObjectKind.SCHEMA,)
-    summary = "Flag a schema with more objects than options.max_schema_objects."
+    summary = "A schema with more than options.max_schema_objects objects is hard to explore."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         limit = ctx.config.options.max_schema_objects
