@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 from collections.abc import Iterable, Iterator
 
 from ..findings import Category, Finding, Severity
@@ -11,6 +12,8 @@ from .base import Rule, RuleContext
 from .registry import register
 
 TAGS = Category.TAGS
+# The framework owns the ``vgi.`` namespace; an unknown key in it is a mistake.
+_RESERVED_SORTED = sorted(RESERVED_TAG_KEYS)
 
 
 def _tagged_objects(catalog: Catalog) -> Iterator[tuple[ObjectId, TagSet]]:
@@ -88,6 +91,44 @@ class ReservedTagNotEmpty(Rule):
                         f"reserved tag {key!r} is present but empty",
                         f"give {key!r} a value or remove the tag",
                     )
+
+
+@register
+class UnknownVgiTagKey(Rule):
+    code = "VGI404"
+    name = "unknown-vgi-tag-key"
+    category = TAGS
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "A 'vgi.*' tag key that isn't a recognized reserved key is likely a typo."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags in _all_objects(ctx.catalog):
+            for key in tags.raw:
+                # Only the reserved vgi.* namespace — non-vgi keys are user
+                # extensibility (provider/domain/...) and are VGI403's concern.
+                if not key.startswith("vgi.") or key in RESERVED_TAG_KEYS:
+                    continue
+                near = difflib.get_close_matches(key, _RESERVED_SORTED, n=1, cutoff=0.6)
+                hint = (
+                    f"did you mean {near[0]!r}? " if near else "use a recognized reserved key, or "
+                )
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"unknown reserved-namespace tag key {key!r}",
+                    f"{hint}the 'vgi.' namespace is reserved — move custom metadata "
+                    "to an unprefixed key (e.g. 'team', 'domain')",
+                )
 
 
 @register

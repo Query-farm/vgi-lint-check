@@ -563,3 +563,25 @@ def test_vgi313_argument_description_states_type():
     assert codes_for(F.arg("factor", "BIGINT", "double the input when true")) == []
     # a type token inside a larger word ('characters') is not a false match
     assert codes_for(F.arg("s", "VARCHAR", "number of characters to read")) == []
+
+
+def test_vgi404_unknown_vgi_namespace_tag():
+    def run404(tags):
+        s = F.schema(
+            "main", comment="c", tags={**_TAGS, **tags}, tables=[F.table("main", "t", comment="c")]
+        )
+        return [
+            f
+            for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))
+            if f.code == "VGI404"
+        ]
+
+    # a typo'd reserved-namespace key is flagged with a did-you-mean
+    found = run404({"vgi.keyword": "x"})
+    assert found and "vgi.keywords" in found[0].hint
+    # an unrecognized vgi.* key with no near match is still flagged
+    assert run404({"vgi.frobnicate": "x"})
+    # non-vgi user tags are NOT flagged (extensibility; VGI403 covers opt-in)
+    assert run404({"team": "data-eng", "provider": "acme"}) == []
+    # a valid reserved key is fine
+    assert run404({"vgi.keywords": '["a"]'}) == []

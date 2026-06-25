@@ -117,6 +117,7 @@ skipped unless `--execute` is passed.
 | `VGI401` | warning | required-tags | Schemas/tables must carry the configured required tag keys. |  |
 | `VGI402` | warning | reserved-tag-not-empty | A reserved vgi.* tag must not be present with an empty value. |  |
 | `VGI403` | info | unknown-tag-key | When an allow-list is configured, flag tag keys outside it. |  |
+| `VGI404` | warning | unknown-vgi-tag-key | A 'vgi.*' tag key that isn't a recognized reserved key is likely a typo. |  |
 | `VGI405` | warning | deprecated-tag-key | Migrate deprecated tag keys (e.g. vgi.description_md -> vgi.doc_md) to the new names. |  |
 | `VGI406` | error | category-tags-valid | vgi.category_tags must be a JSON array of strings, on any object except the catalog. |  |
 
@@ -193,4 +194,4 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 
-_108 rules._
+_109 rules._

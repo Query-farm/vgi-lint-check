@@ -71,7 +71,7 @@ families:
 | Content | VGI17x | `vgi.doc_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage + **every column commented**, comment-not-echo, **naive TIMESTAMP documents its timezone** |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, **per-argument descriptions required** (error) that **don't restate the data type** (warning; needs a vgi extension exposing `vgi_function_arguments()`), examples, scalar-function stability (all-VOLATILE smell + per-function VOLATILE flag), **every-parameter-ANY smell**, **parameterless table function should be a table** |
-| Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity, deprecated-key migration, **`vgi.category_tags` valid (JSON array, not on the catalog)** |
+| Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity, **unknown `vgi.*` key is likely a typo (did-you-mean)**, deprecated-key migration, `vgi.category_tags` valid (JSON array, not on the catalog) |
 | Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete, **catalog-qualified**, references its object; `vgi.executable_examples` well-formed + **deterministic (ORDER BY)** |
 | Settings | VGI6xx | setting descriptions |
 | Pragmas | VGI7xx | pragma descriptions |
