@@ -58,7 +58,7 @@ families:
 | Family | Codes | Examples |
 | --- | --- | --- |
 | Catalog | VGI0xx | catalog description, `vgi.doc_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty**, worker advertises 1–N catalogs, `vgi.license` is a valid SPDX id |
-| Descriptions | VGI1xx | schema/table/view/function comment, `vgi.doc_llm`, `vgi.doc_md` |
+| Descriptions | VGI1xx | schema/table/view/function comment, `vgi.doc_llm`, `vgi.doc_md`; **catalog/schema docs must be detailed** (≥300/≥160 chars) |
 | Discoverability | VGI12x/13x | duplicate/short/echoed descriptions, **no placeholder text (TODO/TBD/…)**, classifying tag present + **reused (small vocabulary)**, title/keywords present (**keywords as a JSON array**), **source_url is catalog-only**, join-path docs, release freshness, example richness, column units |
 | Content | VGI17x | `vgi.doc_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage + **every column commented**, comment-not-echo, **naive TIMESTAMP documents its timezone** |

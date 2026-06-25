@@ -31,6 +31,10 @@ class Options:
     min_llm_description_chars: int = 40
     min_md_description_chars: int = 80
     min_description_chars: int = 12
+    # Catalog/schema are the worker's listing — their doc_llm/doc_md should be
+    # detailed, well above the object-level floor.
+    min_catalog_description_chars: int = 300
+    min_schema_description_chars: int = 160
     # Warn on a schema with more than this many objects (0 = disabled).
     max_schema_objects: int = 50
     # Flag a worker advertising more than this many catalogs (0 = disabled).

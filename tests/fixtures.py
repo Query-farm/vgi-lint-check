@@ -186,8 +186,20 @@ def catalog(
     # rule tests aren't polluted; pass comment=None / tags={} to test VGI00x.
     if tags is None:
         tags = {
-            "vgi.doc_llm": "A test catalog used by the unit tests, etc. " * 2,
-            "vgi.doc_md": "## Test catalog\nUsed by the unit tests. " * 3,
+            # Long enough to satisfy VGI103 (catalog min 300 chars).
+            "vgi.doc_llm": (
+                "A comprehensive test catalog used by the unit tests to exercise "
+                "the rule engine. It covers several schemas of animals, attributes, "
+                "and the sounds they make, and documents how an agent should query "
+                "them, when each object is useful, and how the pieces relate. "
+            )
+            * 2,
+            "vgi.doc_md": (
+                "## Test catalog\n\nA detailed Markdown overview used by the unit "
+                "tests, describing the catalog's schemas, tables, functions, and how "
+                "to use them in practice with worked examples and guidance. "
+            )
+            * 3,
             "vgi.author": "Test Author",
             "vgi.copyright": "(c) 2026 Test",
             "vgi.license": "MIT",

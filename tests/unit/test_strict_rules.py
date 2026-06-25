@@ -6,8 +6,16 @@ from vgi_lint_check.rules import run, select_rules
 from vgi_lint_check.rules.base import RuleContext
 
 _TAGS = {
-    "vgi.doc_llm": "Zoo domain for LLM use, with plenty of length here to pass.",
-    "vgi.doc_md": "## Zoo\nAnimals and attributes — full reference, long enough text.",
+    "vgi.doc_llm": (
+        "Zoo domain covering animals, their attributes, and the sounds they make, "
+        "with enough detail for LLM tool selection to explain the schema's scope "
+        "and the entities it contains and how they relate to one another."
+    ),
+    "vgi.doc_md": (
+        "## Zoo\n\nA detailed reference for the zoo domain: animals, attributes, "
+        "and sounds, with narrative covering each table and how to use the schema "
+        "in practice when answering questions about animals."
+    ),
     "provider": "acme",
     "domain": "zoo",
 }
@@ -346,3 +354,23 @@ def test_vgi311_parameterless_table_function():
     parametric = F.func("main", "near", "table", description="d", parameters=["lat", "lng"])
     s3 = F.schema("main", comment="c", tags=_TAGS, functions=[parametric])
     assert "VGI311" not in _codes(F.catalog(s3))
+
+
+def test_vgi103_listing_descriptions_detailed():
+    # a schema with short doc_llm/doc_md is flagged (present but under 160)
+    short = F.schema(
+        "main",
+        comment="c",
+        tags={"vgi.doc_llm": "Zoo of animals.", "vgi.doc_md": "## Zoo\nAnimals."},
+        tables=[F.table("main", "t", comment="c")],
+    )
+    codes = _codes(F.catalog(short))
+    assert "VGI103" in codes
+    # the detailed _TAGS schema is clean
+    ok = F.schema("main", comment="c", tags=_TAGS, tables=[F.table("main", "t", comment="c")])
+    assert "VGI103" not in _codes(F.catalog(ok))
+    # catalog with a short doc (under 300) is flagged
+    cat = F.catalog(
+        ok, tags={**F.catalog(ok).tags.raw, "vgi.doc_llm": "Short.", "vgi.doc_md": "## x\nShort."}
+    )
+    assert "VGI103" in _codes(cat)

@@ -20,6 +20,59 @@ DESC = Category.DESCRIPTION
 
 
 @register
+class ListingDescriptionDetailed(Rule):
+    code = "VGI103"
+    name = "listing-description-detailed"
+    category = DESC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA)
+    summary = "Catalog/schema doc_llm and doc_md should be detailed (well above object-level)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        opts = ctx.config.options
+        yield from self._flag(
+            ctx,
+            cat.id,
+            cat.description_llm,
+            cat.description_md,
+            opts.min_catalog_description_chars,
+            "catalog",
+        )
+        for s in cat.iter_schemas():
+            yield from self._flag(
+                ctx,
+                s.id,
+                s.tags.get(TAG_DOC_LLM),
+                s.tags.get(TAG_DOC_MD),
+                opts.min_schema_description_chars,
+                "schema",
+            )
+
+    def _flag(
+        self,
+        ctx: RuleContext,
+        oid: ObjectId,
+        llm: str | None,
+        md: str | None,
+        minlen: int,
+        label: str,
+    ) -> Iterator[Finding]:
+        for tag, value in (("vgi.doc_llm", llm), ("vgi.doc_md", md)):
+            text = (value or "").strip()
+            # Only flag length when set; presence is enforced separately.
+            if text and len(text) < minlen:
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"{label} {tag} is short ({len(text)} < {minlen} chars)",
+                    f"expand the {label} {tag} into a detailed description — the "
+                    f"{label} is part of the worker's listing, so cover what it "
+                    "contains, key concepts, and when to use it",
+                )
+
+
+@register
 class SchemaComment(Rule):
     code = "VGI101"
     name = "schema-comment"

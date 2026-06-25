@@ -9,8 +9,16 @@ from vgi_lint_check.rules.base import RuleContext
 _SCHEMA_TAGS = {
     "provider": "acme",
     "domain": "zoo",
-    "vgi.doc_llm": "Zoo domain: animals, attributes, and sounds for LLM use.",
-    "vgi.doc_md": "## Zoo\nAnimals, attributes, and sounds — full reference.",
+    "vgi.doc_llm": (
+        "Zoo domain covering animals, their physical attributes, and the sounds "
+        "they make. Aimed at LLM/agent tool selection, with enough detail to "
+        "explain the schema's scope, the main entities, and how they relate."
+    ),
+    "vgi.doc_md": (
+        "## Zoo\n\nA detailed reference for the zoo domain: animals, their "
+        "attributes, and the sounds they make, with narrative explaining each "
+        "table, how to join them, and when the schema is the right one to query."
+    ),
 }
 
 

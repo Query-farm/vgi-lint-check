@@ -15,8 +15,15 @@ from vgi_lint_check.rules.execution import (
 from vgi_lint_check.tags import decode_executable_examples
 
 _SCHEMA_TAGS = {
-    "vgi.doc_llm": "Zoo domain for LLM use, with enough length here.",
-    "vgi.doc_md": "## Zoo\nAnimals and attributes — full reference, long enough.",
+    "vgi.doc_llm": (
+        "Zoo domain covering animals, attributes, and the sounds they make, with "
+        "enough detail for LLM tool selection to explain the schema's scope, its "
+        "entities, and how an agent should query them."
+    ),
+    "vgi.doc_md": (
+        "## Zoo\n\nA detailed reference for the zoo domain: animals, attributes, "
+        "and sounds, with narrative covering each table and how to use the schema."
+    ),
     "provider": "acme",
     "domain": "zoo",
 }
