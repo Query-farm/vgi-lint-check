@@ -47,7 +47,7 @@ def derive_alias(catalog_name: str) -> str:
     return slug
 
 
-def connect_loaded(*, install: bool = True, spatial: bool = False) -> tuple[Any, str | None]:
+def connect_loaded(*, install: bool = True, spatial: bool = True) -> tuple[Any, str | None]:
     """Open a haybarn connection with the vgi extension loaded.
 
     Returns ``(con, vgi_version)``.

@@ -115,6 +115,7 @@ def build_catalog(
                 description=r.get("arg_description"),
                 is_const=bool(r.get("is_const")),
                 is_named=bool(r.get("is_named")),
+                is_positional=bool(r.get("is_positional")),
                 is_varargs=bool(r.get("is_varargs")),
                 is_table_input=bool(r.get("is_table_input")),
                 is_any_type=bool(r.get("is_any_type")),

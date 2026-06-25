@@ -340,8 +340,8 @@ in the publish workflow:
 
 Key inputs: `location` (required), `fail-on` (default `error`), `version` (pin the
 linter, e.g. `0.2.0`), `working-directory`, `data-version` / `all-data-versions`,
-`baseline`, `execute`, `format` (`terminal|json|agent|jsonl`), `config`, `args`,
-`summary`. The action's `exit-code` is exposed as an output. The action ref `@v1`
+`baseline`, `execute`, `spatial`, `format` (`terminal|json|agent|jsonl`),
+`config`, `args`, `summary`. The action's `exit-code` is exposed as an output. The action ref `@v1`
 tracks the latest v1.x of the action; pin to a tag or SHA for full reproducibility.
 
 ## Development

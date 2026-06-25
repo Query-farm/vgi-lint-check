@@ -60,7 +60,11 @@ def app() -> None:
 @click.argument("location", required=False)
 @click.option("--as", "alias", default=None, help="Local catalog alias handle.")
 @click.option("--catalog", "catalog_name", default=None, help="Worker catalog name.")
-@click.option("--spatial/--no-spatial", default=False, help="Load the spatial extension.")
+@click.option(
+    "--spatial/--no-spatial",
+    default=True,
+    help="Load the spatial extension (best-effort; on by default). --no-spatial to skip.",
+)
 @click.option("--install/--no-install", default=True, help="FORCE INSTALL vgi from community.")
 @click.option(
     "--data-version",
@@ -326,7 +330,7 @@ def versions_cmd(location: str, install: bool) -> None:
 @click.argument("location", required=False)
 @click.option("--as", "alias", default=None, help="Local catalog alias handle.")
 @click.option("--catalog", "catalog_name", default=None, help="Worker catalog name.")
-@click.option("--spatial/--no-spatial", default=False)
+@click.option("--spatial/--no-spatial", default=True)
 @click.option("--install/--no-install", default=True)
 @click.option("--data-version", default=None, help="Review a specific data version.")
 @click.option(

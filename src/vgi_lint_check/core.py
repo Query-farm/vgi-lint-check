@@ -37,7 +37,7 @@ def lint_worker(
     catalog_name: str | None = None,
     config: Config | None = None,
     install: bool = True,
-    spatial: bool = False,
+    spatial: bool = True,
     data_versions: list[str] | None = None,
     all_versions: bool = False,
     update_baseline: bool = False,
@@ -89,7 +89,7 @@ def load_catalog(
     alias: str | None = None,
     catalog_name: str | None = None,
     install: bool = True,
-    spatial: bool = False,
+    spatial: bool = True,
     data_version: str | None = None,
 ) -> Any:
     """Connect, attach, and return the built :class:`Catalog` (no rules run).

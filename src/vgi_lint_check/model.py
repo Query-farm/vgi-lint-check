@@ -261,6 +261,7 @@ class Argument:
     description: str | None = None
     is_const: bool = False
     is_named: bool = False
+    is_positional: bool = False
     is_varargs: bool = False
     is_table_input: bool = False
     is_any_type: bool = False
