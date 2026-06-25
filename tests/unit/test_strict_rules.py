@@ -537,3 +537,29 @@ def test_vgi312_silent_without_argument_data():
     no_args = F.func("main", "multiply", description="d", parameters=["value", "factor"])
     s = F.schema("main", comment="c", tags=_TAGS, functions=[no_args])
     assert "VGI312" not in _codes(F.catalog(s))
+
+
+def test_vgi313_argument_description_states_type():
+    def codes_for(*args):
+        s = F.schema(
+            "main",
+            comment="c",
+            tags=_TAGS,
+            functions=[F.func("main", "f", description="d", arguments=list(args))],
+        )
+        return [
+            f.code
+            for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))
+            if f.code == "VGI313"
+        ]
+
+    # restates an unambiguous type -> flagged
+    assert codes_for(F.arg("unit", "VARCHAR", "the VARCHAR unit name")) == ["VGI313"]
+    # restates the argument's OWN (ambiguous) type -> flagged
+    assert codes_for(F.arg("value", "DOUBLE", "the double value to convert")) == ["VGI313"]
+    # clean description -> not flagged
+    assert codes_for(F.arg("unit", "VARCHAR", "the unit to convert from, e.g. 'meter'")) == []
+    # ambiguous English use of a type word that is NOT the arg's type -> not flagged
+    assert codes_for(F.arg("factor", "BIGINT", "double the input when true")) == []
+    # a type token inside a larger word ('characters') is not a false match
+    assert codes_for(F.arg("s", "VARCHAR", "number of characters to read")) == []

@@ -233,6 +233,90 @@ class FunctionArgumentsUndocumented(Rule):
         return f"{arg.name} ({', '.join(flags)})" if flags else arg.name
 
 
+# Type tokens unambiguous enough to flag in any argument description (no common
+# English meaning). Ambiguous ones (DOUBLE/REAL/DATE/TIME/INT/MAP/LIST/CHAR/TEXT/
+# BLOB) are only flagged when they are the argument's OWN declared type.
+_UNAMBIGUOUS_TYPES = (
+    "varchar",
+    "bigint",
+    "smallint",
+    "tinyint",
+    "hugeint",
+    "ubigint",
+    "usmallint",
+    "utinyint",
+    "uhugeint",
+    "uinteger",
+    "integer",
+    "boolean",
+    "timestamp",
+    "timestamptz",
+    "decimal",
+    "numeric",
+    "varint",
+    "uuid",
+    "interval",
+    "varbinary",
+    "bitstring",
+)
+
+
+def _base_type(arg_type: str | None) -> str:
+    """Leading type identifier (``DECIMAL(18,4)`` / ``BIGINT[]`` -> ``decimal``/``bigint``)."""
+    m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)", arg_type or "")
+    return m.group(1).lower() if m else ""
+
+
+def _mentions_type(description: str, arg_type: str | None) -> str | None:
+    """Return the type token a description restates, or None.
+
+    Flags any unambiguous type token, plus the argument's own declared base type
+    (so ``the double value`` is caught for a DOUBLE arg but ``double the value``
+    is not for a non-DOUBLE arg).
+    """
+    text = description.lower()
+    tokens = set(_UNAMBIGUOUS_TYPES)
+    own = _base_type(arg_type)
+    if own:
+        tokens.add(own)
+    for tok in tokens:
+        if re.search(rf"\b{re.escape(tok)}\b", text):
+            return tok.upper()
+    return None
+
+
+@register
+class ArgumentDescriptionStatesType(Rule):
+    code = "VGI313"
+    name = "argument-description-states-type"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+        ObjectKind.MACRO,
+    )
+    summary = "An argument description should not restate the data type (it's a separate field)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for f in ctx.catalog.iter_all_functions():
+            seen: set[str] = set()
+            for a in f.arguments:
+                if blank(a.description) or a.name in seen:
+                    continue
+                seen.add(a.name)
+                tok = _mentions_type(a.description or "", a.type)
+                if tok:
+                    yield self.finding(
+                        ctx,
+                        f.id,
+                        f"argument {a.name!r} description mentions the data type ({tok})",
+                        "describe what the argument means, not its type — the type is "
+                        "exposed separately, so restating it adds noise and can drift",
+                    )
+
+
 @register
 class MacroExample(Rule):
     code = "VGI303"
