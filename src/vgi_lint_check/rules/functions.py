@@ -185,7 +185,7 @@ class FunctionArgumentsUndocumented(Rule):
     code = "VGI312"
     name = "function-arguments-undocumented"
     category = FUNC
-    default_severity = Severity.WARNING
+    default_severity = Severity.ERROR
     targets = (
         ObjectKind.SCALAR_FUNCTION,
         ObjectKind.AGGREGATE,
@@ -193,7 +193,7 @@ class FunctionArgumentsUndocumented(Rule):
         ObjectKind.MACRO,
     )
     summary = (
-        "Every function argument should have a description. Needs a vgi extension "
+        "Every function argument must have a description. Needs a vgi extension "
         "new enough to expose vgi_function_arguments(); silent on older ones."
     )
 
