@@ -90,6 +90,57 @@ def is_bind_error(error: object) -> bool:
     return bool(_BIND_ERROR.search(str(error)))
 
 
+# Strip string literals and -- / /* */ comments so a keyword inside one doesn't
+# fool the leading-verb check.
+_SQL_LITERAL_OR_COMMENT = re.compile(r"'(?:[^']|'')*'|--[^\n]*|/\*.*?\*/", re.DOTALL)
+# Statement verbs allowed in the agent simulation. The worker catalog is
+# read-only and the local DuckDB is disposable, so this is "no side effects
+# outside the session" — analysts may build session-local state (SET, TEMP
+# objects), but not escape (ATTACH/INSTALL/COPY ... TO) or mutate persistently.
+_SAFE_LEADING = frozenset(
+    {
+        "select",
+        "with",
+        "explain",
+        "describe",
+        "desc",
+        "show",
+        "summarize",
+        "values",
+        "table",
+        "from",  # DuckDB FROM-first syntax
+        "pragma",
+        "set",
+        "reset",
+        "use",
+        "drop",  # only affects local temp / read-only worker (no-op there)
+    }
+)
+_TEMP = re.compile(r"\btemp(orary)?\b", re.IGNORECASE)
+
+
+def safe_session_sql(sql: str) -> bool:
+    """True when ``sql`` is a single statement safe to run in the simulation.
+
+    Allows read/session-local statements (SELECT/WITH/EXPLAIN, SET/PRAGMA, and
+    ``CREATE ... TEMP`` objects); rejects multi-statement input and anything that
+    escapes the disposable session — ATTACH/DETACH, INSTALL/LOAD, COPY ... TO,
+    EXPORT/IMPORT, or persistent writes (INSERT/UPDATE/DELETE/ALTER/non-TEMP
+    CREATE). Comments/string literals are stripped before inspection.
+    """
+    stripped = _SQL_LITERAL_OR_COMMENT.sub(" ", sql or "")
+    # A single statement only (a trailing ';' is fine).
+    if len([s for s in stripped.split(";") if s.strip()]) > 1:
+        return False
+    m = re.match(r"\s*([A-Za-z_]+)", stripped)
+    if not m:
+        return False
+    verb = m.group(1).lower()
+    if verb == "create":
+        return bool(_TEMP.search(stripped))  # only CREATE ... TEMP ...
+    return verb in _SAFE_LEADING
+
+
 class QueryTimeout(Exception):
     """A worker query exceeded its execution-rule time budget and was cancelled."""
 

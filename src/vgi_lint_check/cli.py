@@ -17,7 +17,7 @@ from . import reporting
 from .config import Config, load_config
 from .connection import WorkerConnectionError, connect_loaded
 from .core import lint_worker
-from .exit_codes import EXIT_CONNECTION, EXIT_TOOL_ERROR
+from .exit_codes import EXIT_CONNECTION, EXIT_FINDINGS, EXIT_TOOL_ERROR
 from .findings import Severity
 from .rules.registry import REGISTRY
 
@@ -404,6 +404,144 @@ def review_cmd(
         Path(output).write_text(text if text.endswith("\n") else text + "\n")
     else:
         click.echo(text)
+
+
+# --------------------------------------------------------------------------
+# simulate (agent-suitability testing, opt-in)
+# --------------------------------------------------------------------------
+@app.command(name="simulate")
+@click.argument("location", required=False)
+@click.option("--as", "alias", default=None, help="Local catalog alias handle.")
+@click.option("--catalog", "catalog_name", default=None, help="Worker catalog name.")
+@click.option("--spatial/--no-spatial", default=True)
+@click.option("--install/--no-install", default=True)
+@click.option("--data-version", default=None, help="Simulate against a specific data version.")
+@click.option(
+    "--backend",
+    "sim_backend",
+    type=click.Choice(["claude", "api"]),
+    default="claude",
+    help="claude = local Claude Code CLI (your subscription); api = Anthropic API (per-token).",
+)
+@click.option("--model", "sim_model", default=None, help="Model override passed to the backend.")
+@click.option(
+    "--cache",
+    "cache_path",
+    type=click.Path(dir_okay=False),
+    default=".vgi-sim-cache.json",
+    help="Verdict cache (content-hashed); reused unless the overview/task/version changed.",
+)
+@click.option("--no-cache", is_flag=True, help="Always re-run (no verdict cache).")
+@click.option("--max-steps", type=int, default=6, help="Max analyst turns per task.")
+@click.option(
+    "--max-queries", type=int, default=8, help="Max queries the analyst may run per task."
+)
+@click.option(
+    "--attempts", type=int, default=1, help="Retry a task up to N times; pass if any passes."
+)
+@click.option("--query-timeout", type=float, default=30.0, help="Per-query wall-clock seconds.")
+@click.option("--row-limit", type=int, default=50, help="Row cap on exploration queries.")
+@click.option(
+    "--min-pass-rate",
+    type=float,
+    default=1.0,
+    help="Fail the run (exit 2) if the task pass rate is below this (0..1).",
+)
+@click.option("--advisory", is_flag=True, help="Never gate — always exit 0.")
+@click.option(
+    "--suggest",
+    type=int,
+    default=None,
+    help="Authoring mode: print N candidate tasks as vgi.agent_test_tasks JSON and exit.",
+)
+@click.option("--format", "fmt", type=click.Choice(["terminal", "json"]), default="terminal")
+@click.option("--output", type=click.Path(dir_okay=False), default=None)
+@click.option("--traceback", is_flag=True)
+@click.pass_context
+def simulate_cmd(
+    ctx: click.Context,
+    location: str | None,
+    alias: str | None,
+    catalog_name: str | None,
+    spatial: bool,
+    install: bool,
+    data_version: str | None,
+    sim_backend: str,
+    sim_model: str | None,
+    cache_path: str,
+    no_cache: bool,
+    max_steps: int,
+    max_queries: int,
+    attempts: int,
+    query_timeout: float,
+    row_limit: int,
+    min_pass_rate: float,
+    advisory: bool,
+    suggest: int | None,
+    fmt: str,
+    output: str | None,
+    traceback: bool,
+) -> None:
+    """Run an LLM analyst through a worker's vgi.agent_test_tasks suite (suitability test)."""
+    from . import simulate as sm
+    from .core import with_attached_catalog
+    from .review import ReviewCache, make_backend
+
+    location = location or load_config().location
+    if not location:
+        raise click.UsageError("no worker LOCATION given and none configured")
+    backend = make_backend(sim_backend, sim_model)
+    limits = sm.SimLimits(
+        max_steps=max_steps,
+        max_queries=max_queries,
+        attempts=attempts,
+        timeout=query_timeout,
+        row_limit=row_limit,
+    )
+
+    def runner(catalog: Any, con: Any) -> Any:
+        if suggest is not None:
+            return ("suggest", sm.suggest_tasks(catalog, backend, max(1, suggest)))
+        cache = None if no_cache else ReviewCache(Path(cache_path)).load()
+        return (
+            "report",
+            sm.simulate_tasks(
+                catalog, con, backend, backend_name=sim_backend, limits=limits, cache=cache
+            ),
+        )
+
+    try:
+        mode, result = with_attached_catalog(
+            location,
+            runner,
+            alias=alias,
+            catalog_name=catalog_name,
+            install=install,
+            spatial=spatial,
+            data_version=data_version,
+        )
+    except WorkerConnectionError as e:
+        click.secho(f"error: {e}", fg="red", err=True)
+        ctx.exit(EXIT_CONNECTION)
+    except Exception as e:  # noqa: BLE001 - top-level guard
+        if traceback:
+            raise
+        click.secho(f"error: {type(e).__name__}: {e}", fg="red", err=True)
+        ctx.exit(EXIT_TOOL_ERROR)
+
+    if mode == "suggest":
+        click.echo(result if not output else "")
+        if output:
+            Path(output).write_text(result + "\n")
+        return
+
+    text = sm.render_json(result) if fmt == "json" else sm.render_terminal(result)
+    if output:
+        Path(output).write_text(text if text.endswith("\n") else text + "\n")
+    else:
+        click.echo(text)
+    if not advisory and result.verdicts and result.pass_rate < min_pass_rate:
+        ctx.exit(EXIT_FINDINGS)
 
 
 # --------------------------------------------------------------------------

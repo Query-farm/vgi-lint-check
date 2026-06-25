@@ -30,7 +30,12 @@ from .model import (
     Table,
     View,
 )
-from .tags import decode_example_queries, decode_executable_examples, to_tagset
+from .tags import (
+    decode_agent_test_tasks,
+    decode_example_queries,
+    decode_executable_examples,
+    to_tagset,
+)
 
 if TYPE_CHECKING:
     from .snapshot import Snapshot
@@ -131,6 +136,7 @@ def build_catalog(
         catalog_tags = to_tagset(r.get("tags"))
         break
     catalog_exec_ex, catalog_exec_err = decode_executable_examples(catalog_tags)
+    catalog_tasks, catalog_tasks_err = decode_agent_test_tasks(catalog_tags)
 
     def get_schema(name: str) -> Schema:
         if name not in schemas:
@@ -350,6 +356,8 @@ def build_catalog(
         advertised_catalogs=list(advertised_catalogs or []),
         executable_examples=catalog_exec_ex,
         executable_examples_parse_error=catalog_exec_err,
+        agent_test_tasks=catalog_tasks,
+        agent_test_tasks_parse_error=catalog_tasks_err,
     )
 
 

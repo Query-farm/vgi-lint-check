@@ -615,3 +615,14 @@ def test_vgi908_slow_executable_example_identifies_it():
     assert len(out) == 1  # only the slow one
     assert "heavy-scan" in out[0].message  # the message names the slow example
     assert "quick" not in out[0].message
+
+
+def test_vgi407_agent_test_tasks_valid():
+    # VGI407 surfaces the catalog's pre-decoded agent_test_tasks_parse_error
+    # (the loader sets it; the decoder shape is tested in test_loader).
+    s = F.schema("main", comment="c", tags=_TAGS, tables=[F.table("main", "t", comment="c")])
+    clean = F.catalog(s)
+    assert "VGI407" not in _codes(clean)
+    bad = F.catalog(s)
+    bad.agent_test_tasks_parse_error = "entry #0 has no 'name'"
+    assert "VGI407" in _codes(bad)

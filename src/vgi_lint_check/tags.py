@@ -13,9 +13,11 @@ from collections.abc import Iterable
 from typing import Any
 
 from .model import (
+    TAG_AGENT_TEST_TASKS,
     TAG_DOC_LINKS,
     TAG_EXAMPLE_QUERIES,
     TAG_EXECUTABLE_EXAMPLES,
+    AgentTask,
     DocLink,
     ExampleQuery,
     ExampleStatement,
@@ -232,3 +234,52 @@ def decode_doc_links(tags: TagSet) -> tuple[list[DocLink], str | None]:
         else:
             return [], f"entry #{i} must be a URL string or object ({type(item).__name__})"
     return links, None
+
+
+def decode_agent_test_tasks(tags: TagSet) -> tuple[list[AgentTask], str | None]:
+    """Decode the ``vgi.agent_test_tasks`` tag into (tasks, parse_error).
+
+    Each entry is ``{name, prompt, success_criteria?, reference_sql?, check_sql?,
+    unordered?}`` where ``reference_sql`` is a string, a list of strings, or a
+    list of ``{description, sql, expected_result?}`` steps (the canonical
+    solution sequence). Returns ([], None) when the tag is absent; ([], "<reason>")
+    on a malformed value so a rule can flag it.
+    """
+    raw = tags.get(TAG_AGENT_TEST_TASKS)
+    if raw is None or not str(raw).strip():
+        return [], None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        return [], f"invalid JSON: {e}"
+    if not isinstance(data, list):
+        return [], f"expected a JSON list of objects, got {type(data).__name__}"
+    tasks: list[AgentTask] = []
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            return [], f"entry #{i} is not an object ({type(item).__name__})"
+        name = item.get("name")
+        prompt = item.get("prompt")
+        if not (name and str(name).strip()):
+            return [], f"entry #{i} has no 'name'"
+        if not (prompt and str(prompt).strip()):
+            return [], f"entry #{i} has no 'prompt'"
+        ref: list[ExampleStatement] = []
+        if item.get("reference_sql") is not None:
+            ref, serr = _decode_statements(item.get("reference_sql"))
+            if serr is not None:
+                return [], f"entry #{i} reference_sql: {serr}"
+        crit = item.get("success_criteria")
+        check = item.get("check_sql")
+        tasks.append(
+            AgentTask(
+                name=str(name),
+                prompt=str(prompt),
+                success_criteria=None if crit is None else str(crit),
+                reference_statements=ref,
+                check_sql=None if check is None else str(check),
+                unordered=bool(item.get("unordered", False)),
+                raw=item,
+            )
+        )
+    return tasks, None

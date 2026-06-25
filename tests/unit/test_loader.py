@@ -266,3 +266,43 @@ def test_fetch_function_arguments_version_skew_returns_empty():
 
     # an older vgi extension lacking the table function must not crash
     assert fetch_function_arguments(_RaisingCon(), "v") == []
+
+
+def test_agent_test_tasks_decoded_on_catalog():
+    import json as _json
+
+    tasks = _json.dumps(
+        [
+            {"name": "t1", "prompt": "find top 5", "reference_sql": "SELECT 1", "unordered": True},
+            {
+                "name": "t2",
+                "prompt": "count",
+                "reference_sql": [
+                    {"description": "setup", "sql": "SET x=1"},
+                    {"description": "q", "sql": "SELECT count(*) FROM t"},
+                ],
+                "check_sql": "SELECT true",
+                "success_criteria": "one number",
+            },
+        ]
+    )
+    snap = Snapshot(
+        databases=[{"database_name": "v", "comment": "c", "tags": {"vgi.agent_test_tasks": tasks}}],
+        schemas=[{"database_name": "v", "schema_name": "main", "comment": None, "tags": {}}],
+    )
+    cat = build_catalog(snap, "v", "loc")
+    assert cat.agent_test_tasks_parse_error is None
+    assert [t.name for t in cat.agent_test_tasks] == ["t1", "t2"]
+    assert cat.agent_test_tasks[0].unordered is True
+    assert len(cat.agent_test_tasks[1].reference_statements) == 2
+    assert cat.agent_test_tasks[1].check_sql == "SELECT true"
+
+    # malformed -> parse error recorded, no crash
+    bad = Snapshot(
+        databases=[
+            {"database_name": "v", "comment": "c", "tags": {"vgi.agent_test_tasks": "[{}]"}}
+        ],
+        schemas=[{"database_name": "v", "schema_name": "main", "comment": None, "tags": {}}],
+    )
+    cat2 = build_catalog(bad, "v", "loc")
+    assert cat2.agent_test_tasks == [] and cat2.agent_test_tasks_parse_error is not None

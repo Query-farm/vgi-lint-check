@@ -69,3 +69,13 @@ def test_default_command_routing():
     r = run("does-not-exist-location")
     # routed to lint -> fails to connect/usage, but NOT a "no such command" error
     assert "No such command" not in r.output
+
+
+def test_simulate_help_and_usage():
+    r = run("simulate", "--help")
+    assert r.exit_code == 0
+    assert "agent_test_tasks" in r.output
+    assert "--suggest" in r.output and "--min-pass-rate" in r.output
+    # no location and no config -> usage error
+    r2 = run("simulate")
+    assert r2.exit_code != 0

@@ -71,7 +71,7 @@ families:
 | Content | VGI17x | `vgi.doc_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage + **every column commented**, comment-not-echo, **naive TIMESTAMP documents its timezone** |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, **per-argument descriptions required** (error) that **don't restate the data type** (warning; needs a vgi extension exposing `vgi_function_arguments()`), examples, scalar-function stability (all-VOLATILE smell + per-function VOLATILE flag), **every-parameter-ANY smell**, **parameterless table function should be a table** |
-| Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity, **unknown `vgi.*` key is likely a typo (did-you-mean)**, deprecated-key migration, `vgi.category_tags` valid (JSON array, not on the catalog) |
+| Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity, **unknown `vgi.*` key is likely a typo (did-you-mean)**, deprecated-key migration, `vgi.category_tags` valid, **`vgi.agent_test_tasks` valid** |
 | Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete, **catalog-qualified**, references its object; `vgi.executable_examples` well-formed + **deterministic (ORDER BY)** |
 | Settings | VGI6xx | setting descriptions |
 | Pragmas | VGI7xx | pragma descriptions |
@@ -198,6 +198,50 @@ vgi-lint review <worker> --format json   # machine-readable verdicts
 - Objects are batched per model call (`--review-batch`, default 8) to stay within
   subscription rate limits.
 
+## Agent-suitability testing (`vgi-lint simulate`)
+
+Documentation review grades *prose*. `simulate` answers the harder question: **can
+an agent/SQL-analyst actually accomplish real work here using only what's exposed?**
+A worker declares a **fixed** task suite in `vgi.agent_test_tasks`; `simulate` runs
+an LLM analyst through each one — it sees only the catalog overview and the task
+*prompt* (never the solution), writes read-only / session-local SQL, vgi-lint runs
+it against the live worker, and it iterates until it answers. It's a real test, not
+a vibe check: grading is **execution-based**.
+
+```jsonc
+// vgi.agent_test_tasks (catalog tag) — a fixed, version-controlled acceptance suite
+[
+  {
+    "name": "kwh to joules",
+    "prompt": "How many joules is 100 kWh? Return one column named joules.",  // ONLY this is shown to the analyst
+    "reference_sql": "SELECT units.main.convert(100, 'kWh', 'J') AS joules"    // canonical solution — hidden; re-run to grade
+  }
+]
+```
+
+```bash
+vgi-lint simulate <worker>              # run the suite (gates on --min-pass-rate)
+vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as tag JSON
+```
+
+- **Grading is layered, strongest wins:** (1) compare the analyst's answer to the
+  `reference_sql`'s terminal result (deterministic; stores the *query*, so it
+  survives data drift), (2) a `check_sql` assertion over the analyst's post-session
+  state, (3) an LLM judge against `success_criteria`. Friction (what metadata was
+  missing/confusing) is always surfaced.
+- **The solution is hidden from the analyst** — only `prompt` reaches it, so the
+  test measures whether the path is *discoverable* from metadata, not whether the
+  agent can copy an answer.
+- **Stateful tasks are supported:** the analyst may build session-local state
+  (temp views, `SET`); a guard blocks anything that escapes the disposable session
+  (worker writes, `ATTACH`/`INSTALL`/`COPY … TO`).
+- **It's a test:** exits non-zero when the pass rate is below `--min-pass-rate`
+  (default 1.0); `--advisory` never gates; `--attempts N` retries to tame
+  actor non-determinism. Same `claude`-CLI-by-default backend and verdict cache as
+  `review`.
+- **Double-duty:** the encoded `reference_sql` doubles as curated **few-shot
+  guidance** a worker's MCP server / `suggest_queries` can expose to real agents.
+
 ## Attach options
 
 A worker advertises its attach-time options through `vgi_catalogs()` **before**
@@ -225,6 +269,7 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | `vgi.doc_links` | JSON array of links to more docs — URL strings or `{"title","url"}` objects (validated + resolved) |
 | `vgi.example_queries` | JSON list of `{"description","sql"}` *illustrative* example queries |
 | `vgi.executable_examples` | JSON list of self-contained, **must-run** examples (see below) |
+| `vgi.agent_test_tasks` | JSON list of fixed analyst tasks `{name, prompt, reference_sql?, success_criteria?, check_sql?}` — the suite `vgi-lint simulate` runs (see below) |
 | `vgi.title` | Human/marketing display name (vs. the machine name) |
 | `vgi.keywords` | JSON array of search keywords / synonyms — `["a","b"]` (comma-separated string is now a **VGI138 error**) |
 | `vgi.category_tags` | JSON array of category labels for faceting — on any object **except the catalog** |

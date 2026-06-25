@@ -157,6 +157,30 @@ class UnknownTagKey(Rule):
 
 
 @register
+class AgentTestTasksValid(Rule):
+    code = "VGI407"
+    name = "agent-test-tasks-valid"
+    category = TAGS
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.CATALOG,)
+    summary = (
+        "vgi.agent_test_tasks must be a JSON array of {name, prompt} task objects "
+        "(see `vgi-lint simulate`)."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        err = ctx.catalog.agent_test_tasks_parse_error
+        if err:
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"vgi.agent_test_tasks is not valid: {err}",
+                'use a JSON array of {"name","prompt", "reference_sql"?, '
+                '"success_criteria"?, "check_sql"?} task objects',
+            )
+
+
+@register
 class CategoryTagsValid(Rule):
     code = "VGI406"
     name = "category-tags-valid"

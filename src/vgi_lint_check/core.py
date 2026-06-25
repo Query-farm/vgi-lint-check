@@ -83,6 +83,37 @@ def lint_worker(
     )
 
 
+def with_attached_catalog(
+    location: str,
+    runner: Any,
+    *,
+    alias: str | None = None,
+    catalog_name: str | None = None,
+    install: bool = True,
+    spatial: bool = True,
+    data_version: str | None = None,
+) -> Any:
+    """Run ``runner(catalog, con)`` with the live attached connection still open.
+
+    Used by ``vgi-lint simulate``, which must execute the analyst's SQL against the
+    worker after the catalog is built (``load_catalog`` closes the connection).
+    Returns the runner's result.
+    """
+
+    def _run(catalog: Any, con: Any) -> Any:
+        return runner(catalog, con)
+
+    return _load_catalog(
+        location,
+        alias=alias,
+        catalog_name=catalog_name,
+        install=install,
+        spatial=spatial,
+        data_version=data_version,
+        _while_open=_run,
+    )
+
+
 def load_catalog(
     location: str,
     *,
@@ -95,6 +126,32 @@ def load_catalog(
     """Connect, attach, and return the built :class:`Catalog` (no rules run).
 
     Used by ``vgi-lint review`` to get the metadata without linting it.
+    """
+    return _load_catalog(
+        location,
+        alias=alias,
+        catalog_name=catalog_name,
+        install=install,
+        spatial=spatial,
+        data_version=data_version,
+        _while_open=None,
+    )
+
+
+def _load_catalog(
+    location: str,
+    *,
+    alias: str | None = None,
+    catalog_name: str | None = None,
+    install: bool = True,
+    spatial: bool = True,
+    data_version: str | None = None,
+    _while_open: Any = None,
+) -> Any:
+    """Build the catalog (shared by load_catalog/with_attached_catalog).
+
+    If ``_while_open`` is given, call it with the live connection and return its
+    result; otherwise return the built catalog.
     """
     con, vgi_version = connect_loaded(install=install, spatial=spatial)
     try:
@@ -109,7 +166,7 @@ def load_catalog(
         with attached(con, location, discovery.catalog, local_alias, data_version=data_version):
             after = take_snapshot(con)
             diff = diff_snapshots(before, after, local_alias)
-            return build_catalog(
+            catalog = build_catalog(
                 after,
                 local_alias,
                 location,
@@ -127,6 +184,9 @@ def load_catalog(
                 advertised_catalogs=advertised,
                 argument_rows=fetch_function_arguments(con, local_alias),
             )
+            # When a runner is given (simulate), execute it while the connection
+            # is still attached so it can run SQL against the worker.
+            return _while_open(catalog, con) if _while_open is not None else catalog
     finally:
         con.close()
 

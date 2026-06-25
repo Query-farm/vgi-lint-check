@@ -18,6 +18,7 @@ TAG_DOC_MD = "vgi.doc_md"  # Markdown narrative doc (canonical)
 TAG_DOC_LINKS = "vgi.doc_links"  # JSON array of {title?, url} links to more docs
 TAG_EXAMPLE_QUERIES = "vgi.example_queries"
 TAG_EXECUTABLE_EXAMPLES = "vgi.executable_examples"  # self-contained, must-run examples
+TAG_AGENT_TEST_TASKS = "vgi.agent_test_tasks"  # fixed analyst-task suite for `simulate`
 TAG_TITLE = "vgi.title"  # human/marketing display name (vs the machine name)
 TAG_KEYWORDS = "vgi.keywords"  # JSON array of search keywords / synonyms
 TAG_CATEGORY_TAGS = "vgi.category_tags"  # JSON array of category labels (not on catalog)
@@ -50,6 +51,7 @@ RESERVED_TAG_KEYS = frozenset(
         TAG_DOC_LINKS,
         TAG_EXAMPLE_QUERIES,
         TAG_EXECUTABLE_EXAMPLES,
+        TAG_AGENT_TEST_TASKS,
         TAG_TITLE,
         TAG_KEYWORDS,
         TAG_CATEGORY_TAGS,
@@ -190,6 +192,24 @@ class ExecutableExample:
     name: str | None
     description: str | None
     statements: list[ExampleStatement]
+    raw: object = None
+
+
+@dataclass(frozen=True)
+class AgentTask:
+    """One fixed analyst task from ``vgi.agent_test_tasks`` (catalog-level).
+
+    Only ``prompt`` is shown to the simulated analyst; ``success_criteria``,
+    ``reference_statements`` (the canonical solution sequence), and ``check_sql``
+    are grader-only and must never leak into the actor's context.
+    """
+
+    name: str
+    prompt: str
+    success_criteria: str | None = None
+    reference_statements: list[ExampleStatement] = field(default_factory=list)
+    check_sql: str | None = None
+    unordered: bool = False
     raw: object = None
 
 
@@ -430,6 +450,9 @@ class Catalog:
     # Catalog-level vgi.executable_examples (walkthroughs spanning the catalog).
     executable_examples: list[ExecutableExample] = field(default_factory=list)
     executable_examples_parse_error: str | None = None
+    # Catalog-level vgi.agent_test_tasks (the fixed analyst-task suite).
+    agent_test_tasks: list[AgentTask] = field(default_factory=list)
+    agent_test_tasks_parse_error: str | None = None
     # Lazily-built {name: [tables/views]} index for FK reference resolution.
     _name_index: dict[str, list[Table | View]] | None = field(
         default=None, init=False, repr=False, compare=False

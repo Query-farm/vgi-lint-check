@@ -120,6 +120,7 @@ skipped unless `--execute` is passed.
 | `VGI404` | warning | unknown-vgi-tag-key | A 'vgi.*' tag key that isn't a recognized reserved key is likely a typo. |  |
 | `VGI405` | warning | deprecated-tag-key | Migrate deprecated tag keys (e.g. vgi.description_md -> vgi.doc_md) to the new names. |  |
 | `VGI406` | error | category-tags-valid | vgi.category_tags must be a JSON array of strings, on any object except the catalog. |  |
+| `VGI407` | error | agent-test-tasks-valid | vgi.agent_test_tasks must be a JSON array of {name, prompt} task objects (see `vgi-lint simulate`). |  |
 
 ## Example queries (VGI5xx)
 
@@ -195,4 +196,4 @@ skipped unless `--execute` is passed.
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 
-_110 rules._
+_111 rules._
