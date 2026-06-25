@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -364,7 +365,17 @@ class AdvertisedCatalogsAttachable(Rule):
                 )
 
 
-# --- executable examples (VGI906 / VGI907) --------------------------------
+# --- executable examples (VGI906 / VGI907 / VGI908) -----------------------
+def _example_label(ex: Any) -> str:
+    """How an executable example is named in findings (its name, or #index)."""
+    return ex.name or f"#{ex.index}"
+
+
+def _timing_key(obj_id: Any, ex: Any) -> str:
+    """Stable key for an example's recorded wall-clock time."""
+    return f"{obj_id.qualified()}#{ex.index}"
+
+
 def _run_executable(con: Any, ex: Any, timeout: float) -> dict[int, tuple[list[str], list[Any]]]:
     """Run every statement of an executable example in order.
 
@@ -487,7 +498,8 @@ class ExecutableExamplesExecute(Rule):
 
         def work(pair: tuple[Any, Any], cur: Any) -> Finding | None:
             obj_id, ex = pair
-            label = ex.name or f"#{ex.index}"
+            label = _example_label(ex)
+            start = time.perf_counter()
             try:
                 _run_executable(cur, ex, timeout)
             except Exception as e:  # noqa: BLE001 - surface engine/timeout error
@@ -500,6 +512,8 @@ class ExecutableExamplesExecute(Rule):
                     "filters, and make the example self-contained and "
                     "re-runnable (e.g. CREATE OR REPLACE for any setup)",
                 )
+            # Record elapsed so VGI908 can flag slow examples without re-running.
+            ctx.exec_timings[_timing_key(obj_id, ex)] = time.perf_counter() - start
             return None
 
         results = map_queries(con, items, work, ctx.config.execute_concurrency)
@@ -545,7 +559,7 @@ class ExecutableExampleResultMatches(Rule):
             except Exception:  # noqa: BLE001 - VGI906 reports execution failures
                 return []
             out: list[Finding] = []
-            label = ex.name or f"#{ex.index}"
+            label = _example_label(ex)
             for i, stmt in enumerate(ex.statements):
                 if not stmt.has_expected or i not in captured:
                     continue
@@ -569,3 +583,60 @@ class ExecutableExampleResultMatches(Rule):
 
         for findings in map_queries(con, items, work, ctx.config.execute_concurrency):
             yield from findings
+
+
+@register
+class ExecutableExampleSlow(Rule):
+    code = "VGI908"
+    name = "executable-example-slow"
+    category = EXEC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.MACRO,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    requires_connection = True
+    summary = "An executable example slower than options.slow_example_seconds bloats CI."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        con = ctx.connection
+        if con is None:
+            return
+        threshold = ctx.config.slow_example_seconds
+        if not threshold or threshold <= 0:
+            return
+        timeout = ctx.config.execute_timeout
+        for obj_id, examples, parse_error in ctx.catalog.iter_executable_example_hosts():
+            if parse_error:
+                continue
+            for ex in examples:
+                if not any((s.sql or "").strip() for s in ex.statements):
+                    continue
+                key = _timing_key(obj_id, ex)
+                elapsed = ctx.exec_timings.get(key)
+                if elapsed is None:
+                    # VGI906 didn't record it (e.g. it's disabled) — time it once
+                    # here so the check still works, then cache for reuse.
+                    start = time.perf_counter()
+                    try:
+                        _run_executable(con, ex, timeout)
+                    except Exception:  # noqa: BLE001 - VGI906 reports failures
+                        continue
+                    elapsed = time.perf_counter() - start
+                    ctx.exec_timings[key] = elapsed
+                if elapsed > threshold:
+                    label = _example_label(ex)
+                    yield self.finding(
+                        ctx,
+                        obj_id,
+                        f"executable example {label!r} is slow ({elapsed:.1f}s > {threshold:g}s)",
+                        "speed up the example (smaller inputs, add a LIMIT, avoid "
+                        "full scans) — slow examples run on every lint and bloat CI; "
+                        "raise options.slow_example_seconds if this is expected",
+                    )

@@ -193,5 +193,6 @@ skipped unless `--execute` is passed.
 | `VGI905` | error | advertised-catalogs-attachable | Every catalog vgi_catalogs() advertises must be attachable. | requires `--execute` |
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
+| `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 
-_109 rules._
+_110 rules._

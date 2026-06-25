@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..findings import Category, Finding, Severity
@@ -28,6 +28,9 @@ class RuleContext:
     link_resolver: Any | None = None
     # Resolved severity for the rule currently executing (set by the engine).
     severity: Severity = Severity.WARNING
+    # Per-executable-example wall-clock seconds, recorded by VGI906 as it runs so
+    # VGI908 (slow-example) can report without a second execution pass.
+    exec_timings: dict[str, float] = field(default_factory=dict)
 
 
 class Rule(ABC):

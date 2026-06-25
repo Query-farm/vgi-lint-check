@@ -78,7 +78,7 @@ families:
 | Constraints | VGI8xx | FK/PK/check validity; completeness nudges (no constraints / PKs / NOT NULL anywhere); per-table primary key; **`<table>_id` column with no FK suggests one**; **a key-shaped column shared by several tables with no FK may be a missing relationship** |
 | Attach options | VGI10xx | every `vgi_catalogs()` attach option is documented (description present + meaningful) |
 | Structure | VGI11x/13x | **schema not empty**; warn on excessive table/function counts and over-long table/function names; **schema object-count cap (>50 by default)** |
-| Execution | VGI9xx | example queries **must bind (error)**, runtime/data failures are warnings; **executable examples must run + match expected output**; CHECK constraints bind; advertised attach options are accepted and advertised catalogs attach (`--execute`, **on by default**); per-query timeout so nothing runs forever |
+| Execution | VGI9xx | example queries **must bind (error)**, runtime/data failures are warnings; **executable examples must run + match expected output + run fast** (slow ones warn, naming the example); CHECK constraints bind; advertised attach options are accepted and advertised catalogs attach (`--execute`, **on by default**); per-query timeout so nothing runs forever |
 
 **Strict by default.** `vgi-lint` ships a strict profile: descriptions on every
 table/view/function, classifying/title/keyword/source-url tags, column
@@ -158,7 +158,13 @@ mode        = "explain"  # explain (bind-only, cheapest) | limit | run — for V
 limit       = 1          # row cap for limit/VGI902 modes
 timeout     = 30.0       # per-query seconds; 0 disables the guard
 concurrency = 1          # run example queries across N cursors in parallel
+slow_seconds = 5.0       # VGI908 warns on an executable example slower than this (0 = off)
 ```
+
+**VGI908 flags slow executable examples** that bloat CI — naming the offending
+example and its measured time (`executable example 'heavy-scan' is slow (8.2s >
+5s)`). It reuses the timing VGI906 already measures, so detection adds no extra
+execution pass.
 
 **Parallel execution.** `concurrency > 1` (or `--execute-concurrency N`) runs
 example queries across N cursors that share the attach, so the VGI worker pool

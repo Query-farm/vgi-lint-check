@@ -585,3 +585,33 @@ def test_vgi404_unknown_vgi_namespace_tag():
     assert run404({"team": "data-eng", "provider": "acme"}) == []
     # a valid reserved key is fine
     assert run404({"vgi.keywords": '["a"]'}) == []
+
+
+def test_vgi908_slow_executable_example_identifies_it():
+    import time as _time
+
+    from vgi_lint_check.findings import Severity as Sev
+    from vgi_lint_check.rules.execution import ExecutableExampleSlow
+
+    fast = F.exec_example(0, "fast", [("s", "SELECT 1")], name="quick")
+    slow = F.exec_example(1, "slow", [("s", "SELECT sleep(1)")], name="heavy-scan")
+    fn = F.func("main", "f", description="d", executable_examples=[fast, slow])
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[fn])
+
+    class Con:
+        def execute(self, sql):
+            if "sleep" in sql:
+                _time.sleep(0.2)
+            return self
+
+        def fetchall(self):
+            return []
+
+    cfg = Config(execute=True)
+    cfg.slow_example_seconds = 0.1  # 100ms threshold
+    ctx = RuleContext(F.catalog(s), cfg, connection=Con())
+    ctx.severity = Sev.WARNING
+    out = list(ExecutableExampleSlow().check(ctx))
+    assert len(out) == 1  # only the slow one
+    assert "heavy-scan" in out[0].message  # the message names the slow example
+    assert "quick" not in out[0].message
