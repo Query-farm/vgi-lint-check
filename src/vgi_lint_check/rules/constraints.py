@@ -9,7 +9,9 @@ that exist. CHECK expressions can additionally be bound against the worker
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from collections.abc import Iterator
+from typing import Any
 
 from ..findings import Category, Finding, Severity
 from ..model import Catalog, ObjectKind
@@ -307,3 +309,52 @@ class ForeignKeySuggested(Rule):
                 if t.name.lower() == cand:
                     return str(t.name)
         return None
+
+
+# A column name shaped like a key/reference (prefixed, so not a bare per-table id).
+_REF_COLUMN = re.compile(r".+_(id|key|code|uuid|guid|ref|fk)$", re.IGNORECASE)
+
+
+@register
+class SharedColumnSuggestsRelationship(Rule):
+    code = "VGI809"
+    name = "shared-column-suggests-relationship"
+    category = CON
+    default_severity = Severity.INFO
+    targets = (ObjectKind.TABLE,)
+    summary = (
+        "A key-shaped column shared by several tables with no FK may be a missing relationship."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        # Columns already participating in a declared foreign key (local or referenced).
+        fk_cols: set[str] = set()
+        for _t, c in cat.iter_constraints():
+            if c.constraint_type == "FOREIGN KEY":
+                for fk_col in (*c.columns, *c.referenced_columns):
+                    fk_cols.add(fk_col.lower())
+        # Group reference-shaped columns by name across tables.
+        by_col: dict[str, list[Any]] = defaultdict(list)
+        for t in cat.iter_tables():
+            for column in t.columns:
+                if _REF_COLUMN.match(column.name or ""):
+                    by_col[column.name.lower()].append(t)
+        for col_name, tables in by_col.items():
+            names = sorted({t.name for t in tables})
+            if len(names) < 2 or col_name in fk_cols:
+                continue
+            # If the column's base matches a real table, VGI808 already suggests
+            # the FK target — don't double-flag here.
+            base = re.sub(r"_(id|key|code|uuid|guid|ref|fk)$", "", col_name, flags=re.IGNORECASE)
+            if base and (cat.find_table_like(base) or cat.find_table_like(base + "s")):
+                continue
+            for t in tables:
+                others = ", ".join(n for n in names if n != t.name)
+                yield self.finding(
+                    ctx,
+                    t.id,
+                    f"column {col_name!r} also appears in {others} with no foreign key declared",
+                    "if these tables relate on this column, declare a FOREIGN KEY so "
+                    "the join is discoverable to agents; otherwise this is fine to ignore",
+                )

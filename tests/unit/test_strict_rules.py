@@ -374,3 +374,69 @@ def test_vgi103_listing_descriptions_detailed():
         ok, tags={**F.catalog(ok).tags.raw, "vgi.doc_llm": "Short.", "vgi.doc_md": "## x\nShort."}
     )
     assert "VGI103" in _codes(cat)
+
+
+def test_vgi809_shared_column_suggests_relationship():
+    # 'customer_id' in two tables, no FK, no 'customer' table -> INFO suggestion
+    orders = F.table(
+        "main",
+        "orders",
+        comment="c",
+        tags=_TAGS,
+        columns=[F.col("main", "orders", "customer_id"), F.col("main", "orders", "total")],
+    )
+    invoices = F.table(
+        "main",
+        "invoices",
+        comment="c",
+        tags=_TAGS,
+        columns=[F.col("main", "invoices", "customer_id"), F.col("main", "invoices", "amount")],
+    )
+    s = F.schema("main", comment="c", tags=_TAGS, tables=[orders, invoices])
+    found = [
+        f
+        for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))
+        if f.code == "VGI809"
+    ]
+    assert found and any("customer_id" in f.message for f in found)
+    # declaring a FK on customer_id silences it
+    orders2 = F.table(
+        "main",
+        "orders",
+        comment="c",
+        tags=_TAGS,
+        columns=[F.col("main", "orders", "customer_id")],
+        constraints=[
+            F.constraint(
+                "main",
+                "orders",
+                "FOREIGN KEY",
+                columns=["customer_id"],
+                referenced_table="invoices",
+                referenced_columns=["customer_id"],
+            )
+        ],
+    )
+    s2 = F.schema("main", comment="c", tags=_TAGS, tables=[orders2, invoices])
+    assert "VGI809" not in [
+        f.code for f in run(select_rules(Config()), RuleContext(F.catalog(s2), Config()))
+    ]
+    # a generic per-table 'id' (not prefixed) and unique columns are not flagged
+    a = F.table(
+        "main",
+        "a",
+        comment="c",
+        tags=_TAGS,
+        columns=[F.col("main", "a", "id"), F.col("main", "a", "x")],
+    )
+    b = F.table(
+        "main",
+        "b",
+        comment="c",
+        tags=_TAGS,
+        columns=[F.col("main", "b", "id"), F.col("main", "b", "y")],
+    )
+    s3 = F.schema("main", comment="c", tags=_TAGS, tables=[a, b])
+    assert "VGI809" not in [
+        f.code for f in run(select_rules(Config()), RuleContext(F.catalog(s3), Config()))
+    ]

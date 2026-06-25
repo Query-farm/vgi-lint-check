@@ -159,6 +159,7 @@ skipped unless `--execute` is passed.
 | `VGI806` | info | no-constraints | A worker that declares no constraints at all is likely incomplete. |  |
 | `VGI807` | info | table-has-primary-key | Each table should declare a primary key so agents know each row's identity. |  |
 | `VGI808` | info | foreign-key-suggested | A column named like a key (<table>_id) with no FK likely needs one declared. |  |
+| `VGI809` | info | shared-column-suggests-relationship | A key-shaped column shared by several tables with no FK may be a missing relationship. |  |
 
 ## Structure & size limits (VGI11x/13x)
 
@@ -190,4 +191,4 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 
-_105 rules._
+_106 rules._
