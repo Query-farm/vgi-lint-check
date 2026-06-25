@@ -186,6 +186,21 @@ def decode_executable_examples(tags: TagSet) -> tuple[list[ExecutableExample], s
     return examples, None
 
 
+def decode_string_list(value: str | None) -> tuple[list[str], str | None]:
+    """Decode a value that must be a JSON array of strings into (items, error)."""
+    if value is None or not str(value).strip():
+        return [], None
+    try:
+        data = json.loads(str(value))
+    except (ValueError, TypeError) as e:
+        return [], f"invalid JSON: {e}"
+    if not isinstance(data, list):
+        return [], f"expected a JSON array of strings, got {type(data).__name__}"
+    if not all(isinstance(k, str) for k in data):
+        return [], "every element must be a string"
+    return [k.strip() for k in data if k.strip()], None
+
+
 def decode_doc_links(tags: TagSet) -> tuple[list[DocLink], str | None]:
     """Decode the ``vgi.doc_links`` tag into (links, parse_error).
 

@@ -19,7 +19,8 @@ TAG_DOC_LINKS = "vgi.doc_links"  # JSON array of {title?, url} links to more doc
 TAG_EXAMPLE_QUERIES = "vgi.example_queries"
 TAG_EXECUTABLE_EXAMPLES = "vgi.executable_examples"  # self-contained, must-run examples
 TAG_TITLE = "vgi.title"  # human/marketing display name (vs the machine name)
-TAG_KEYWORDS = "vgi.keywords"  # comma-separated search keywords / synonyms
+TAG_KEYWORDS = "vgi.keywords"  # JSON array of search keywords / synonyms
+TAG_CATEGORY_TAGS = "vgi.category_tags"  # JSON array of category labels (not on catalog)
 TAG_RESULT_COLUMNS_MD = "vgi.result_columns_md"  # Markdown doc of a table fn's result columns
 TAG_SOURCE_URL = "vgi.source_url"  # link to where this object is implemented (repo/file)
 TAG_AUTHOR = "vgi.author"  # author / maintainer attribution
@@ -51,6 +52,7 @@ RESERVED_TAG_KEYS = frozenset(
         TAG_EXECUTABLE_EXAMPLES,
         TAG_TITLE,
         TAG_KEYWORDS,
+        TAG_CATEGORY_TAGS,
         TAG_RESULT_COLUMNS_MD,
         TAG_SOURCE_URL,
         TAG_AUTHOR,

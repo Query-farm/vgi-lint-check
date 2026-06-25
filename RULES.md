@@ -51,7 +51,7 @@ skipped unless `--execute` is passed.
 | `VGI131` | warning | column-units | Numeric column comments should state units/definition where relevant. |  |
 | `VGI132` | warning | classifying-tags-reused | A classifying tag should be a small, reused vocabulary — not unique per object. |  |
 | `VGI133` | warning | join-path-documented | A table with foreign keys should explain how to join to the referenced tables. |  |
-| `VGI138` | warning | keywords-json-array | 'vgi.keywords' should be a JSON array of strings, not a comma-separated string. |  |
+| `VGI138` | error | keywords-json-array | 'vgi.keywords' must be a JSON array of strings, not a comma-separated string. |  |
 | `VGI139` | warning | source-url-catalog-only | vgi.source_url belongs on the catalog, not repeated on every object. |  |
 | `VGI140` | info | release-dated | Published data-version releases should carry a release date (freshness). |  |
 | `VGI141` | info | release-documented | Releases should have a summary or notes_url ('what's new'). |  |
@@ -104,6 +104,7 @@ skipped unless `--execute` is passed.
 | `VGI307` | warning | table-function-columns-documented | A table function with a dynamic schema (no backing table) must document its returned columns in a 'vgi.result_columns_md' tag. |  |
 | `VGI308` | warning | all-scalar-functions-volatile | Every scalar function being VOLATILE usually means stability was never set. |  |
 | `VGI309` | warning | volatile-scalar-function | Flag each VOLATILE scalar/aggregate function for a stability audit. |  |
+| `VGI310` | warning | function-overuses-any | A function whose every parameter is typed ANY usually means types weren't declared. |  |
 
 ## Tags (VGI4xx)
 
@@ -113,6 +114,7 @@ skipped unless `--execute` is passed.
 | `VGI402` | warning | reserved-tag-not-empty | A reserved vgi.* tag must not be present with an empty value. |  |
 | `VGI403` | info | unknown-tag-key | When an allow-list is configured, flag tag keys outside it. |  |
 | `VGI405` | warning | deprecated-tag-key | Migrate deprecated tag keys (e.g. vgi.description_md -> vgi.doc_md) to the new names. |  |
+| `VGI406` | error | category-tags-valid | vgi.category_tags must be a JSON array of strings, on any object except the catalog. |  |
 
 ## Example queries (VGI5xx)
 
@@ -186,4 +188,4 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 
-_101 rules._
+_103 rules._

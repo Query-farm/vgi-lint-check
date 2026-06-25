@@ -62,8 +62,8 @@ families:
 | Discoverability | VGI12x/13x | duplicate/short/echoed descriptions, **no placeholder text (TODO/TBD/…)**, classifying tag present + **reused (small vocabulary)**, title/keywords present (**keywords as a JSON array**), **source_url is catalog-only**, join-path docs, release freshness, example richness, column units |
 | Content | VGI17x | `vgi.doc_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage + **every column commented**, comment-not-echo, **naive TIMESTAMP documents its timezone** |
-| Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples, scalar-function stability (all-VOLATILE smell + per-function VOLATILE flag) |
-| Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity |
+| Functions | VGI3xx | description (+ quality), documented parameters, named arguments, examples, scalar-function stability (all-VOLATILE smell + per-function VOLATILE flag), **every-parameter-ANY smell** |
+| Tags | VGI4xx | required tag keys (opt-in), reserved-tag validity, deprecated-key migration, **`vgi.category_tags` valid (JSON array, not on the catalog)** |
 | Examples | VGI5xx | `vgi.example_queries` present, valid JSON, complete, **catalog-qualified**, references its object; `vgi.executable_examples` well-formed + **deterministic (ORDER BY)** |
 | Settings | VGI6xx | setting descriptions |
 | Pragmas | VGI7xx | pragma descriptions |
@@ -185,7 +185,8 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | `vgi.example_queries` | JSON list of `{"description","sql"}` *illustrative* example queries |
 | `vgi.executable_examples` | JSON list of self-contained, **must-run** examples (see below) |
 | `vgi.title` | Human/marketing display name (vs. the machine name) |
-| `vgi.keywords` | JSON array of search keywords / synonyms — `["a","b"]` (legacy comma-separated still parses; VGI138 nudges) |
+| `vgi.keywords` | JSON array of search keywords / synonyms — `["a","b"]` (comma-separated string is now a **VGI138 error**) |
+| `vgi.category_tags` | JSON array of category labels for faceting — on any object **except the catalog** |
 | `vgi.result_columns_md` | Markdown doc of a table function's returned columns (for dynamic schemas DuckDB can't expose) |
 | `vgi.source_url` | Link to where the object is implemented (repo/file) |
 | `vgi.author` | Author / maintainer attribution (catalog) |

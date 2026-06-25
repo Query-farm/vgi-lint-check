@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 
 from ..findings import Category, Finding, Severity
-from ..model import RESERVED_TAG_KEYS, Catalog, ObjectId, ObjectKind, TagSet
+from ..model import RESERVED_TAG_KEYS, TAG_CATEGORY_TAGS, Catalog, ObjectId, ObjectKind, TagSet
+from ..tags import decode_string_list
 from .base import Rule, RuleContext
 from .registry import register
 
@@ -19,6 +20,17 @@ def _tagged_objects(catalog: Catalog) -> Iterator[tuple[ObjectId, TagSet]]:
     for t in catalog.iter_table_like():
         yield t.id, t.tags
     for f in catalog.iter_functions():
+        yield f.id, f.tags
+
+
+def _all_objects(catalog: Catalog) -> Iterator[tuple[ObjectId, TagSet]]:
+    """(id, tags) for every object including the catalog and table-functions."""
+    yield catalog.id, catalog.tags
+    for s in catalog.iter_schemas():
+        yield s.id, s.tags
+    for t in catalog.iter_table_like():
+        yield t.id, t.tags
+    for f in catalog.iter_all_functions():
         yield f.id, f.tags
 
 
@@ -101,6 +113,48 @@ class UnknownTagKey(Rule):
                         f"unknown tag key {key!r}",
                         "remove the tag or add the key to allowed_tag_keys",
                     )
+
+
+@register
+class CategoryTagsValid(Rule):
+    code = "VGI406"
+    name = "category-tags-valid"
+    category = TAGS
+    default_severity = Severity.ERROR
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "vgi.category_tags must be a JSON array of strings, on any object except the catalog."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags in _all_objects(ctx.catalog):
+            value = tags.get(TAG_CATEGORY_TAGS)
+            if value is None or not str(value).strip():
+                continue
+            if oid.kind is ObjectKind.CATALOG:
+                yield self.finding(
+                    ctx,
+                    oid,
+                    "vgi.category_tags is not allowed on the catalog",
+                    "categorize the catalog's objects (schemas/tables/functions), "
+                    "not the catalog itself — remove it here",
+                )
+                continue
+            _items, err = decode_string_list(value)
+            if err:
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"vgi.category_tags is not valid: {err}",
+                    'use a JSON array of strings, e.g. ["geospatial", "timeseries"]',
+                )
 
 
 @register

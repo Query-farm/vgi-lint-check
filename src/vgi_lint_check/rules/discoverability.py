@@ -389,9 +389,9 @@ class KeywordsJsonArray(Rule):
     code = "VGI138"
     name = "keywords-json-array"
     category = DISC
-    default_severity = Severity.WARNING
+    default_severity = Severity.ERROR
     targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
-    summary = "'vgi.keywords' should be a JSON array of strings, not a comma-separated string."
+    summary = "'vgi.keywords' must be a JSON array of strings, not a comma-separated string."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for oid, tags, _name in _taggable(ctx):
@@ -402,8 +402,8 @@ class KeywordsJsonArray(Rule):
                 ctx,
                 oid,
                 "'vgi.keywords' is not a JSON array of strings",
-                'use a JSON array, e.g. ["seismic", "tremor"] — the legacy '
-                "comma-separated string still parses but is deprecated",
+                'use a JSON array, e.g. ["seismic", "tremor"] — the comma-separated '
+                "string is no longer accepted",
             )
 
 

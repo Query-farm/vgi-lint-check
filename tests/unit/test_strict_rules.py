@@ -277,3 +277,56 @@ def test_vgi139_source_url_catalog_only():
     # a catalog-level source_url (the discovery field) does not trip VGI139
     clean = F.schema("main", comment="c", tags=_TAGS, tables=[F.table("main", "t", comment="c")])
     assert "VGI139" not in _codes(F.catalog(clean))
+
+
+def test_vgi310_function_overuses_any():
+    all_any = F.func("main", "f", description="d", parameters=["a", "b", "c"])
+    all_any.parameter_types[:] = ["ANY", "ANY", "ANY"]
+    typed = F.func("main", "g", description="d", parameters=["a", "b"])
+    typed.parameter_types[:] = ["VARCHAR", "ANY"]
+    one_any = F.func("main", "h", description="d", parameters=["a"])
+    one_any.parameter_types[:] = ["ANY"]  # single generic arg is fine
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[all_any, typed, one_any])
+    flagged = {
+        f.object_id.name
+        for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))
+        if f.code == "VGI310"
+    }
+    assert flagged == {"f"}
+
+
+def test_vgi138_keywords_comma_is_error():
+    from vgi_lint_check.findings import Severity as Sev
+
+    legacy = F.table("main", "t", comment="c", tags={**_TAGS, "vgi.keywords": "a, b"})
+    s = F.schema("main", comment="c", tags=_TAGS, tables=[legacy])
+    findings = [
+        f
+        for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))
+        if f.code == "VGI138"
+    ]
+    assert findings and findings[0].severity is Sev.ERROR
+
+
+def test_vgi406_category_tags():
+    # valid array on a table -> clean
+    ok = F.table(
+        "main", "t", comment="c", tags={**_TAGS, "vgi.category_tags": '["geo","timeseries"]'}
+    )
+    s = F.schema("main", comment="c", tags=_TAGS, tables=[ok])
+    assert "VGI406" not in _codes(F.catalog(s))
+    # malformed (not a JSON array of strings) -> flagged
+    bad = F.table("main", "t", comment="c", tags={**_TAGS, "vgi.category_tags": "geo, timeseries"})
+    s2 = F.schema("main", comment="c", tags=_TAGS, tables=[bad])
+    assert "VGI406" in _codes(F.catalog(s2))
+    # present on the catalog -> not allowed
+    cat = F.catalog(
+        F.schema("main", comment="c", tags=_TAGS, tables=[F.table("main", "t", comment="c")])
+    )
+    cat.tags.raw["vgi.category_tags"] = '["x"]'
+    msgs = [
+        f.message
+        for f in run(select_rules(Config()), RuleContext(cat, Config()))
+        if f.code == "VGI406"
+    ]
+    assert any("not allowed on the catalog" in m for m in msgs)

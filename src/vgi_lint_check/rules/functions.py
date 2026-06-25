@@ -248,3 +248,33 @@ class VolatileScalarFunction(Rule):
                     "always returns the same output for the same input, mark it "
                     "CONSISTENT so the engine can optimize it",
                 )
+
+
+@register
+class FunctionOverusesAny(Rule):
+    code = "VGI310"
+    name = "function-overuses-any"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "A function whose every parameter is typed ANY usually means types weren't declared."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for f in ctx.catalog.iter_all_functions():
+            types = [str(t).strip() for t in f.parameter_types if str(t).strip()]
+            # 2+ params, all ANY: the "didn't bother typing anything" smell. A
+            # single ANY arg is often a legitimately type-generic function.
+            if len(types) >= 2 and all(t.upper() == "ANY" for t in types):
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    f"all {len(types)} parameters are typed ANY",
+                    "declare concrete parameter types where you can — ANY on every "
+                    "argument disables type checking and weakens validation. Use ANY "
+                    "only for genuinely type-generic arguments.",
+                )
