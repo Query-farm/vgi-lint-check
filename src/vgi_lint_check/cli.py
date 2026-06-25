@@ -304,6 +304,89 @@ def versions_cmd(location: str, install: bool) -> None:
 
 
 # --------------------------------------------------------------------------
+# review (LLM-as-judge, opt-in)
+# --------------------------------------------------------------------------
+@app.command(name="review")
+@click.argument("location", required=False)
+@click.option("--as", "alias", default=None, help="Local catalog alias handle.")
+@click.option("--catalog", "catalog_name", default=None, help="Worker catalog name.")
+@click.option("--spatial/--no-spatial", default=False)
+@click.option("--install/--no-install", default=True)
+@click.option("--data-version", default=None, help="Review a specific data version.")
+@click.option(
+    "--review-backend",
+    type=click.Choice(["claude", "api"]),
+    default="claude",
+    help="claude = local Claude Code CLI (your subscription); api = Anthropic API (per-token).",
+)
+@click.option("--review-model", default=None, help="Model override passed to the backend.")
+@click.option(
+    "--review-cache",
+    type=click.Path(dir_okay=False),
+    default=".vgi-review-cache.json",
+    help="Verdict cache file (content-hashed); reused so unchanged docs aren't re-judged.",
+)
+@click.option("--no-review-cache", is_flag=True, help="Disable the verdict cache.")
+@click.option("--review-batch", type=int, default=8, help="Objects per model call.")
+@click.option("--format", "fmt", type=click.Choice(["terminal", "json"]), default="terminal")
+@click.option("--output", type=click.Path(dir_okay=False), default=None)
+@click.option("--traceback", is_flag=True)
+@click.pass_context
+def review_cmd(
+    ctx: click.Context,
+    location: str | None,
+    alias: str | None,
+    catalog_name: str | None,
+    spatial: bool,
+    install: bool,
+    data_version: str | None,
+    review_backend: str,
+    review_model: str | None,
+    review_cache: str,
+    no_review_cache: bool,
+    review_batch: int,
+    fmt: str,
+    output: str | None,
+    traceback: bool,
+) -> None:
+    """LLM-judge the documentation quality of a worker's objects (advisory)."""
+    from . import review as rv
+    from .core import load_catalog
+
+    location = location or load_config().location
+    if not location:
+        raise click.UsageError("no worker LOCATION given and none configured")
+    try:
+        catalog = load_catalog(
+            location,
+            alias=alias,
+            catalog_name=catalog_name,
+            install=install,
+            spatial=spatial,
+            data_version=data_version,
+        )
+        backend = rv.make_backend(review_backend, review_model)
+        cache = None if no_review_cache else rv.ReviewCache(Path(review_cache)).load()
+        report = rv.review_catalog(
+            catalog, backend, backend_name=review_backend, cache=cache, batch_size=review_batch
+        )
+    except WorkerConnectionError as e:
+        click.secho(f"error: {e}", fg="red", err=True)
+        ctx.exit(EXIT_CONNECTION)
+    except Exception as e:  # noqa: BLE001 - top-level guard
+        if traceback:
+            raise
+        click.secho(f"error: {type(e).__name__}: {e}", fg="red", err=True)
+        ctx.exit(EXIT_TOOL_ERROR)
+
+    text = rv.render_json(report) if fmt == "json" else rv.render_terminal(report)
+    if output:
+        Path(output).write_text(text if text.endswith("\n") else text + "\n")
+    else:
+        click.echo(text)
+
+
+# --------------------------------------------------------------------------
 # init
 # --------------------------------------------------------------------------
 @app.command()

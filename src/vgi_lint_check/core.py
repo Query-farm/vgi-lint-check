@@ -83,6 +83,53 @@ def lint_worker(
     )
 
 
+def load_catalog(
+    location: str,
+    *,
+    alias: str | None = None,
+    catalog_name: str | None = None,
+    install: bool = True,
+    spatial: bool = False,
+    data_version: str | None = None,
+) -> Any:
+    """Connect, attach, and return the built :class:`Catalog` (no rules run).
+
+    Used by ``vgi-lint review`` to get the metadata without linting it.
+    """
+    con, vgi_version = connect_loaded(install=install, spatial=spatial)
+    try:
+        catalogs = discover_catalogs(con, location)
+        discovery = _choose(catalogs, location, catalog_name)
+        advertised = [c.catalog for c in catalogs] or [discovery.catalog]
+        local_alias = validate_alias(alias) if alias else derive_alias(discovery.catalog)
+        releases = [
+            Release(r.version, r.released_at, r.summary, r.notes_url) for r in discovery.releases
+        ]
+        before = take_snapshot(con)
+        with attached(con, location, discovery.catalog, local_alias, data_version=data_version):
+            after = take_snapshot(con)
+            diff = diff_snapshots(before, after, local_alias)
+            return build_catalog(
+                after,
+                local_alias,
+                location,
+                vgi_version=vgi_version,
+                data_version=data_version,
+                catalog_name=discovery.catalog,
+                source_url=discovery.source_url,
+                implementation_version=discovery.implementation_version,
+                data_version_spec=discovery.data_version_spec,
+                default_schema=read_default_schema(con, local_alias),
+                releases=releases,
+                setting_rows=diff.setting_rows,
+                pragma_rows=diff.pragma_rows,
+                attach_options=discovery.attach_options,
+                advertised_catalogs=advertised,
+            )
+    finally:
+        con.close()
+
+
 def _choose(
     catalogs: list[CatalogDiscovery], location: str, catalog_name: str | None
 ) -> CatalogDiscovery:

@@ -157,6 +157,31 @@ linear (measured ~3.5× at N=4 on `vgi-units`); on a tiny/local worker it's a
 wash, since there's no per-query work to overlap. Multi-statement executable
 examples stay ordered on their own cursor; findings remain deterministic.
 
+## Documentation review (LLM-as-judge)
+
+The deterministic linter checks *mechanics* (presence, length, echoes, validity).
+`vgi-lint review` adds an **advisory, opt-in** layer that judges what rules can't —
+**accuracy, clarity, completeness, audience-fit** — by sending each object's
+descriptions **plus its real structure** (columns, types, constraints, examples)
+to an LLM with a rubric. Grounding it in the facts is what makes the feedback
+reliable (it catches prose that contradicts the schema), not a vibe check.
+
+```bash
+vgi-lint review <worker>                 # default backend: the local `claude` CLI
+vgi-lint review <worker> --format json   # machine-readable verdicts
+```
+
+- **Default backend is the local `claude` CLI** (`claude -p`), so judging runs on
+  your **Claude Pro/Max subscription** — no per-token API fees. `--review-backend
+  api` uses the Anthropic API instead (needs `ANTHROPIC_API_KEY` + the `anthropic`
+  package). Pick a model with `--review-model`.
+- **Verdicts are cached by content hash** (`.vgi-review-cache.json`), so unchanged
+  docs aren't re-judged — a re-run is free. `--no-review-cache` disables it.
+- It's **separate from the lint and never gates** — per-object sub-scores (1–5)
+  and concrete suggestions, advisory only. The deterministic lint stays the gate.
+- Objects are batched per model call (`--review-batch`, default 8) to stay within
+  subscription rate limits.
+
 ## Attach options
 
 A worker advertises its attach-time options through `vgi_catalogs()` **before**
