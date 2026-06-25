@@ -67,7 +67,7 @@ families:
 | --- | --- | --- |
 | Catalog | VGI0xx | catalog description, `vgi.doc_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty**, worker advertises 1–N catalogs, `vgi.license` is a valid SPDX id |
 | Descriptions | VGI1xx | schema/table/view/function comment, `vgi.doc_llm`, `vgi.doc_md`; **catalog/schema docs must be detailed** (≥300/≥160 chars) |
-| Discoverability | VGI12x/13x | duplicate/short/echoed descriptions, **no placeholder text (TODO/TBD/…)**, classifying tag present + **reused (small vocabulary)**, title/keywords present (**keywords as a JSON array**), **source_url is catalog-only**, join-path docs, release freshness, example richness, column units |
+| Discoverability | VGI12x/13x | duplicate/short/echoed descriptions, **no placeholder text (TODO/TBD/…)**, classifying tag present + **reused (small vocabulary)**, **`vgi.title` required on catalog + schemas** (optional, validated when set, below), keywords present (**JSON array**), **source_url is catalog-only**, join-path docs, release freshness, example richness, column units |
 | Content | VGI17x | `vgi.doc_md` is valid Markdown; description links/images & source URLs resolve (no 404) |
 | Columns | VGI2xx | column-comment coverage + **every column commented**, comment-not-echo, **naive TIMESTAMP documents its timezone** |
 | Functions | VGI3xx | description (+ quality), documented parameters, named arguments, **per-argument descriptions required** (error) that **don't restate the data type** (warning; needs a vgi extension exposing `vgi_function_arguments()`), examples, scalar-function stability (all-VOLATILE smell + per-function VOLATILE flag), **every-parameter-ANY smell**, **parameterless table function should be a table** |
@@ -238,11 +238,11 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 `vgi.doc_llm`/`vgi.doc_md` are **required on the catalog, every schema, and
 (under the strict default) every table, view, and function** — and validated
 when set (minimum length, must differ from each other and from the object's own
-description). The catalog `source_url`, titles, keywords, and per-object source
-links are enforced by the strict default; author/copyright/license are
-encouraged (info). Relax any of this (e.g. back to optional docs on
-tables/views/functions) via
-config.
+description). The catalog `source_url` and keywords are enforced by the strict
+default; `vgi.title` is required on the **catalog and schemas** only (optional
+elsewhere, but validated when set); author/copyright/license are encouraged
+(info). Relax any of this (e.g. back to optional docs on tables/views/functions)
+via config.
 
 ## Data versions
 

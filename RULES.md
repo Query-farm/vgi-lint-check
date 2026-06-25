@@ -41,7 +41,7 @@ skipped unless `--execute` is passed.
 | `VGI121` | info | description-too-short | A description should be substantive enough to index and read well. |  |
 | `VGI122` | info | description-echoes-name | A description that just restates the name adds no searchable signal. |  |
 | `VGI123` | warning | classifying-tag-present | Objects should carry a classifying tag (domain/category/...) for faceting. |  |
-| `VGI124` | warning | title-present | Objects should carry a 'vgi.title' display name (human/marketing). |  |
+| `VGI124` | warning | title-present | The catalog and each schema should carry a 'vgi.title' display name. |  |
 | `VGI125` | info | title-quality | A 'vgi.title', when set, should differ from the machine name. |  |
 | `VGI126` | warning | keywords-present | Objects should carry 'vgi.keywords' (search terms / synonyms). |  |
 | `VGI127` | info | keywords-well-formed | 'vgi.keywords', when set, should be non-empty with no duplicates. |  |

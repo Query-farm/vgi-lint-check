@@ -327,17 +327,23 @@ class TitlePresent(Rule):
     code = "VGI124"
     name = "title-present"
     category = DISC
-    default_severity = Severity.WARNING  # strict default
-    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
-    summary = "Objects should carry a 'vgi.title' display name (human/marketing)."
+    default_severity = Severity.WARNING
+    # Required only on the catalog and its schemas — the worker's listing and its
+    # sections, where a human display name pays off. Optional (but validated when
+    # set, see VGI125) on tables/views/functions.
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA)
+    summary = "The catalog and each schema should carry a 'vgi.title' display name."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        for oid, tags, _name in _taggable(ctx):
+        cat = ctx.catalog
+        listings = [(cat.id, cat.tags, "catalog")]
+        listings += [(s.id, s.tags, "schema") for s in cat.iter_schemas()]
+        for oid, tags, label in listings:
             if not tags.has(TAG_TITLE):
                 yield self.finding(
                     ctx,
                     oid,
-                    "no 'vgi.title' display name",
+                    f"{label} has no 'vgi.title' display name",
                     "add a 'vgi.title' tag — a human-friendly name for listings/UIs",
                 )
 

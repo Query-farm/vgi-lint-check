@@ -148,6 +148,14 @@ def test_title_keywords_present_strict_default_and_quality():
     cat = F.catalog(F.schema("main", tables=[t]))
     base = set(codes(cat))
     assert "VGI124" in base and "VGI126" in base
+    # VGI124 (title) is required only on the catalog + schemas, not on tables
+    cfg = Config()
+    title_objs = {
+        f.object_id.kind
+        for f in run(select_rules(cfg), RuleContext(cat, cfg))
+        if f.code == "VGI124"
+    }
+    assert title_objs == {"catalog", "schema"}
 
     # quality rules fire when the tags ARE set badly
     bad = F.table(
