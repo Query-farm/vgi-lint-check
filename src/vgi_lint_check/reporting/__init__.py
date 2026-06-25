@@ -14,10 +14,17 @@ if TYPE_CHECKING:
 FORMATS = ("terminal", "json", "agent", "jsonl")
 
 
-def render(report: Report, fmt: str, *, color: bool = True) -> str:
+def render(
+    report: Report,
+    fmt: str,
+    *,
+    color: bool = True,
+    group_by: str = "rule",
+    max_per_rule: int = 10,
+) -> str:
     """Render ``report`` in the requested format (terminal/json/jsonl/agent)."""
     if fmt == "terminal":
-        return render_terminal(report, color=color)
+        return render_terminal(report, color=color, group_by=group_by, max_per_rule=max_per_rule)
     if fmt == "json":
         return render_json(report)
     if fmt == "jsonl":

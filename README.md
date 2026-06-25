@@ -49,6 +49,14 @@ with a `location`, then just run `vgi-lint` with no arguments.
 > v1 supports **local subprocess** and **no-auth HTTP** workers. Authenticated
 > (OAuth) workers are not yet supported.
 
+**Findings are grouped by rule** by default, so a rule firing on many objects
+reads as one block — the fix stated once, the affected objects listed beneath
+(capped at `--max-per-rule`, default 10, with `… +N more`; `0` = list all). Use
+`--group-by object` for the per-object layout. The `agent` format groups by rule
+too but never truncates, so an LLM gets one fix instruction plus the full object
+list (far fewer tokens than repeating the fix per object). `json`/`jsonl` are
+unchanged — the complete, ungrouped contract.
+
 ## What it checks
 
 Object coverage: the catalog itself, schemas, tables, views, columns,

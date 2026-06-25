@@ -109,6 +109,18 @@ def app() -> None:
 @click.option("--fail-on", type=click.Choice(["info", "warning", "error", "never"]), default=None)
 @click.option("--format", "fmt", type=click.Choice(list(reporting.FORMATS)), default="terminal")
 @click.option(
+    "--group-by",
+    type=click.Choice(["rule", "object"]),
+    default="rule",
+    help="Group findings by rule (collapse a rule firing on many objects) or by object.",
+)
+@click.option(
+    "--max-per-rule",
+    type=int,
+    default=10,
+    help="Objects listed per rule before collapsing the tail into '+N more' (0 = all).",
+)
+@click.option(
     "--output", type=click.Path(dir_okay=False), default=None, help="Write report to FILE."
 )
 @click.option("--color", type=click.Choice(["auto", "always", "never"]), default="auto")
@@ -140,6 +152,8 @@ def lint(
     update_baseline: bool,
     fail_on: str | None,
     fmt: str,
+    group_by: str,
+    max_per_rule: int,
     output: str | None,
     color: str,
     config_path: str | None,
@@ -199,7 +213,9 @@ def lint(
         click.secho("baseline refreshed — gating skipped for this run", fg="yellow", err=True)
 
     use_color = _resolve_color(color)
-    text = reporting.render(report, fmt, color=use_color)
+    text = reporting.render(
+        report, fmt, color=use_color, group_by=group_by, max_per_rule=max_per_rule
+    )
     if output:
         try:
             payload = text if text.endswith("\n") else text + "\n"

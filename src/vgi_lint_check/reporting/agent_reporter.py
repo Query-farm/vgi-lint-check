@@ -1,15 +1,18 @@
 """LLM/agent-oriented Markdown rendering of a Report.
 
 Same data as the JSON contract, formatted as compact sectioned Markdown that
-pastes cleanly into a coding-agent prompt: every finding carries an imperative
-fix and an inline rule summary, grouped by object, with coverage and score.
+pastes cleanly into a coding-agent prompt. Findings are grouped **by rule**: the
+fix is stated once per rule and the affected objects are listed under it, so a
+rule firing on many objects costs one fix instruction plus a short list — far
+fewer tokens (and far less repetition) than restating the fix per object.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from .json_reporter import to_dict
+from ._collapse import group_by_rule
+from .json_reporter import _rule_summaries, to_dict
 
 if TYPE_CHECKING:
     from ..result import Report
@@ -18,6 +21,7 @@ if TYPE_CHECKING:
 def render_agent(report: Report) -> str:
     """Render ``report`` as compact, agent-friendly Markdown."""
     doc = to_dict(report)
+    summaries = _rule_summaries()
     out: list[str] = []
     w = doc["worker"]
     out.append(f"# vgi-lint report: {w['alias']} ({w['location']})")
@@ -41,18 +45,22 @@ def render_agent(report: Report) -> str:
             out.append("No findings. ✓")
             out.append("")
             continue
-        by_obj: dict[str, list[Any]] = {}
-        for f in r["findings"]:
-            by_obj.setdefault(f["object"]["qualified"], []).append(f)
-        for obj, items in by_obj.items():
-            kind = items[0]["object"]["kind"]
-            out.append(f"### {obj} ({kind})")
-            for f in items:
+        for g in group_by_rule(r["findings"], summaries):
+            out.append(f"### {g.code} ({g.severity}) — {g.summary}  · {g.count} object(s)")
+            shared_fix = g.shared_fix
+            if shared_fix:
+                out.append(f"- fix: {shared_fix}")
+            shared_msg = g.shared_message
+            if shared_msg:
+                out.append(f"- detail: {shared_msg}")
+            for f in g.items:
                 new = " [new]" if f["is_new"] else ""
-                out.append(f"- **{f['code']}** ({f['severity']}){new}: {f['message']}")
-                out.append(f"  - fix: {f['fix']}")
-                if f["rule"]["summary"]:
-                    out.append(f"  - rule: {f['rule']['summary']}")
+                line = f"  - `{f['object']['qualified']}`{new}"
+                if not shared_msg:
+                    line += f": {f['message']}"
+                out.append(line)
+                if not shared_fix:
+                    out.append(f"    - fix: {f['fix']}")
             out.append("")
 
     comp = doc.get("comparison")

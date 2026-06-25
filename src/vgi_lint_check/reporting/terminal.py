@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 
-from .json_reporter import to_dict
+from ._collapse import group_by_rule
+from .json_reporter import _rule_summaries, to_dict
 
 if TYPE_CHECKING:
     from rich.console import Console as RichConsole
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
     from ..result import Report
 
 _SEV_STYLE = {"error": "bold red", "warning": "yellow", "info": "cyan"}
+# Objects listed per rule before collapsing the tail into "+N more".
+_MAX_PER_RULE = 10
 
 
 def _bar(ratio: float, width: int = 10) -> str:
@@ -26,9 +29,20 @@ def _bar(ratio: float, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-def render_terminal(report: Report, *, color: bool = True) -> str:
-    """Render the report as a rich-formatted terminal string."""
+def render_terminal(
+    report: Report,
+    *,
+    color: bool = True,
+    group_by: str = "rule",
+    max_per_rule: int = _MAX_PER_RULE,
+) -> str:
+    """Render the report as a rich-formatted terminal string.
+
+    ``group_by`` is ``"rule"`` (default — collapse a rule that fires on many
+    objects into one block) or ``"object"`` (the per-object layout).
+    """
     doc = to_dict(report)
+    summaries = _rule_summaries()
     buf = io.StringIO()
     con = Console(file=buf, force_terminal=color, no_color=not color, width=100, highlight=False)
 
@@ -47,7 +61,10 @@ def render_terminal(report: Report, *, color: bool = True) -> str:
             added = " · ".join(f"{v} {k}" for k, v in diff.items() if v)
             if added:
                 con.print(f"  [dim]worker added {added}[/dim]")
-        _print_findings(con, r["findings"])
+        if group_by == "object":
+            _print_findings_by_object(con, r["findings"])
+        else:
+            _print_findings_by_rule(con, r["findings"], summaries, max_per_rule)
         _print_coverage(con, r["coverage"])
         con.print(
             f"  [bold]Catalog Quality Score[/bold]  {r['score']} / 100"
@@ -69,7 +86,41 @@ def render_terminal(report: Report, *, color: bool = True) -> str:
     return buf.getvalue()
 
 
-def _print_findings(con: RichConsole, findings: list[dict[str, Any]]) -> None:
+def _print_findings_by_rule(
+    con: RichConsole,
+    findings: list[dict[str, Any]],
+    summaries: dict[str, str],
+    max_per_rule: int,
+) -> None:
+    """Group by rule: state the rule + fix once, list affected objects compactly."""
+    if not findings:
+        con.print("  [green]✓ no findings[/green]")
+        return
+    for g in group_by_rule(findings, summaries):
+        style = _SEV_STYLE.get(g.severity, "white")
+        n = g.count
+        head = f"  [{style}]{g.code}[/{style}]  {g.severity:<7} {g.summary}"
+        head += f"  [dim]({n} object{'s' if n != 1 else ''})[/dim]"
+        con.print(head)
+        shared_fix = g.shared_fix
+        if shared_fix:
+            con.print(f"      [dim]↳ {shared_fix}[/dim]")
+        shared_msg = g.shared_message
+        shown = g.items if max_per_rule <= 0 else g.items[:max_per_rule]
+        for f in shown:
+            new = " [dim](new)[/dim]" if f["is_new"] else ""
+            # Drop the message when identical for all (it adds nothing per line);
+            # show per-object fix only when fixes vary across the rule.
+            detail = "" if shared_msg else f"  [dim]{f['message']}[/dim]"
+            con.print(f"      · [bold]{f['object']['qualified']}[/bold]{detail}{new}")
+            if not shared_fix:
+                con.print(f"          [dim]↳ {f['fix']}[/dim]")
+        hidden = n - len(shown)
+        if hidden > 0:
+            con.print(f"      [dim]… +{hidden} more (use --format json for all)[/dim]")
+
+
+def _print_findings_by_object(con: RichConsole, findings: list[dict[str, Any]]) -> None:
     if not findings:
         con.print("  [green]✓ no findings[/green]")
         return

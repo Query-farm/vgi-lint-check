@@ -78,3 +78,35 @@ def test_fail_on_warning_changes_pass():
     report = build_report(sample_catalog(), fail_on=Severity.WARNING)
     assert report.passed() is False  # there are warnings
     assert "✗ failed" in reporting.render_terminal(report, color=False)
+
+
+def _many_bare_tables(n):
+    # n tables with no comment -> VGI111 fires on each (same code/message/fix)
+    tables = [F.table("main", f"t{i}") for i in range(n)]
+    return F.catalog(F.schema("main", comment="c", tables=tables))
+
+
+def test_terminal_groups_by_rule_and_caps():
+    report = build_report(_many_bare_tables(25))
+    out = reporting.render(report, "terminal", color=False, group_by="rule", max_per_rule=10)
+    # the rule appears once with the total count, the fix once, and the tail collapses
+    assert out.count("VGI111") == 1
+    assert "(25 objects)" in out
+    assert out.count("add a one-line comment") == 1  # fix stated once, not 25x
+    assert "+15 more" in out
+
+
+def test_terminal_group_by_object_lists_each():
+    report = build_report(_many_bare_tables(3))
+    out = reporting.render(report, "terminal", color=False, group_by="object")
+    # legacy layout: VGI111 printed per object
+    assert out.count("VGI111") == 3
+
+
+def test_agent_groups_by_rule_no_cap():
+    report = build_report(_many_bare_tables(25))
+    out = reporting.render(report, "agent")
+    # grouped by rule code (not by object), and never truncated for LLMs
+    assert "### VGI111" in out
+    assert "`v.main.t24`" in out  # the 25th object — beyond the terminal cap — is present
+    assert "more (use" not in out

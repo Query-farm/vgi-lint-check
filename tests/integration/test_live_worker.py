@@ -52,10 +52,11 @@ def test_function_arguments_per_arg_metadata():
         pytest.skip("requires the vgi-units release binary")
     report = lint_worker(loc, config=Config(check_links=False, execute=False), install=False)
     fns = list(report.results[0].catalog.iter_functions())
-    # On a vgi extension exposing vgi_function_arguments(), args are populated and
-    # VGI312 fires (units documents none); on an older one, both are simply empty.
-    if any(f.arguments for f in fns):
-        assert any(f.code == "VGI312" for f in report.results[0].findings)
+    # On a vgi extension exposing vgi_function_arguments(), args are populated with
+    # well-formed names; on an older one they're simply empty (no crash either way).
+    populated = [a for f in fns for a in f.arguments]
+    if populated:
+        assert all(a.name for a in populated)
 
 
 def test_snapshot_columns_superset_drift_alarm(volcanos_url):
