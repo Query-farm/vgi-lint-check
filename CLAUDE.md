@@ -103,8 +103,10 @@ declared in the catalog tag `vgi.agent_test_tasks` (decoded to `AgentTask`).
   problem — fix the worker (add an example / tighten docs) rather than raise
   `--attempts`, which only masks it.
 - **Coverage + parallelism.** `compute_coverage(catalog)` statically reports which
-  worker functions the suite's `reference_sql`/`check_sql` exercise vs. miss (in
-  `SimReport.coverage`, rendered as `function coverage N/M`). `suggest_tasks` is
+  worker **objects** — functions *and* tables/views (`_unique_objects`) — the suite's
+  `reference_sql`/`check_sql` exercise vs. miss (in `SimReport.coverage`, rendered as
+  `object coverage N/M`). Counting tables is load-bearing for table-centric workers
+  (a geodata worker whose surface is all tables would otherwise read 0/1). `suggest_tasks` is
   coverage-driven (sizes the suite to the worker, not a fixed N). `simulate_tasks`
   judges cache-miss tasks in parallel via `ThreadPoolExecutor` (`SimLimits.concurrency`,
   default 4) — each task already uses its own `con.cursor()`, results reassemble in

@@ -257,10 +257,12 @@ vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as 
   (default 1.0); `--advisory` never gates; `--attempts N` retries to tame
   actor non-determinism. Same `claude`-CLI-by-default backend and verdict cache as
   `review`.
-- **Function coverage:** the report shows how many of the worker's functions the
-  suite's `reference_sql` actually exercises (`function coverage 8/24 (33%)`) and
-  names the untested ones — so a suite can't quietly leave half the API unchecked
-  while scoring 100% pass-rate. `vgi-lint simulate <worker> --suggest` is
+- **Object coverage:** the report shows how many of the worker's objects — functions
+  **and tables/views** — the suite's `reference_sql` actually exercises
+  (`object coverage 16/16 (100%)`) and names the untested ones — so a suite can't
+  quietly leave half the API unchecked while scoring 100% pass-rate. (Counting tables
+  matters for table-centric workers: a geodata worker whose surface is all tables would
+  otherwise read 0/1.) `vgi-lint simulate <worker> --suggest` is
   **coverage-driven**: it proposes a suite sized to cover the worker's functions
   (bare `--suggest` auto-sizes; `--suggest N` caps at N) rather than a fixed count.
 - **Tasks run in parallel** (`--concurrency`, default 4): each task is judged on its

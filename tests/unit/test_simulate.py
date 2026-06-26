@@ -339,11 +339,14 @@ def test_report_renders_coverage():
     ]
     backend = _Backend([json.dumps({"action": "final", "answer_sql": "SELECT v.main.used()"})])
     rep = sim.simulate_tasks(cat, _Con(), backend)
-    assert rep.coverage.pct == 50
+    # objects = used + skipped functions + the untouched `things` table -> 1/3 covered
+    assert rep.coverage.covered == [f"{cat.qualifier}.main.used"]
+    assert rep.coverage.total == 3 and rep.coverage.pct == 33
     txt = sim.render_terminal(rep)
-    assert "function coverage 1/2 (50%)" in txt and "untested" in txt
+    assert "object coverage 1/3 (33%)" in txt and "untested" in txt
     doc = json.loads(sim.render_json(rep))
-    assert doc["coverage"]["pct"] == 50 and doc["coverage"]["uncovered"][0].endswith(".skipped")
+    assert doc["coverage"]["pct"] == 33
+    assert {u.rsplit(".", 1)[1] for u in doc["coverage"]["uncovered"]} == {"skipped", "things"}
 
 
 def test_tasks_run_in_parallel_preserving_order():
@@ -371,7 +374,7 @@ def test_suggest_is_coverage_driven():
     assert json.loads(out) == [{"name": "t1", "prompt": "p1", "reference_sql": "SELECT 1"}]
     # the prompt told the model to cover the worker's functions
     assert any("COVER THE MAJORITY" in p for p in backend.prompts)
-    assert any("WORKER FUNCTIONS" in p for p in backend.prompts)
+    assert any("WORKER OBJECTS" in p for p in backend.prompts)
 
 
 # --------------------------------------------------------------------------

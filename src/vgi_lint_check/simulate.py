@@ -912,8 +912,10 @@ def _cache_put(cache: ReviewCache | None, key: str, v: TaskVerdict) -> None:
 # --------------------------------------------------------------------------
 @dataclass
 class Coverage:
-    """Static coverage: the worker functions a declared suite's reference SQL calls.
+    """Static coverage: the worker objects a declared suite's reference SQL touches.
 
+    "Objects" are the queryable API surface — functions plus tables/views — so the
+    metric is meaningful for both function-centric and table-centric workers.
     Computed from the tasks' ``reference_sql`` / ``check_sql`` (not from a run), so
     it answers "does this suite even touch the whole API?" independent of pass/fail.
     """
@@ -923,20 +925,22 @@ class Coverage:
 
     @property
     def total(self) -> int:
-        """Number of distinct worker functions considered."""
+        """Number of distinct worker objects considered."""
         return len(self.covered) + len(self.uncovered)
 
     @property
     def pct(self) -> int:
-        """Percent of the worker's functions exercised by ≥1 task (100 if none)."""
+        """Percent of the worker's objects exercised by ≥1 task (100 if none)."""
         return round(100 * len(self.covered) / self.total) if self.total else 100
 
 
-def _unique_functions(catalog: Catalog) -> list[tuple[str, str]]:
-    """Distinct (qualified_name, bare_name) for the worker's functions, sorted."""
+def _unique_objects(catalog: Catalog) -> list[tuple[str, str]]:
+    """Distinct (qualified_name, bare_name) for the worker's functions + tables/views."""
     seen: dict[str, str] = {}
     for f in catalog.iter_all_functions():
         seen[f"{catalog.qualifier}.{f.schema}.{f.name}"] = f.name
+    for t in catalog.iter_table_like():
+        seen.setdefault(f"{catalog.qualifier}.{t.schema}.{t.name}", t.name)
     return sorted(seen.items())
 
 
@@ -951,11 +955,11 @@ def _suite_sql(catalog: Catalog) -> str:
 
 
 def compute_coverage(catalog: Catalog) -> Coverage:
-    """Which functions the declared suite's reference/check SQL exercises (static)."""
+    """Which objects (functions + tables) the suite's reference/check SQL touches."""
     text = _suite_sql(catalog)
     covered: list[str] = []
     uncovered: list[str] = []
-    for qualified, name in _unique_functions(catalog):
+    for qualified, name in _unique_objects(catalog):
         if re.search(rf"\b{re.escape(name.lower())}\b", text):
             covered.append(qualified)
         else:
@@ -978,21 +982,33 @@ _SUGGEST = (
     "{size}\n\nReturn ONLY a JSON array of "
     '{{"name": "...", "prompt": "...", "reference_sql": "<a correct canonical solution>"}} '
     "objects suitable for the vgi.agent_test_tasks tag.\n\n"
-    "WORKER FUNCTIONS (aim to cover these):\n{inventory}\n\n{coverage_note}"
+    "WORKER OBJECTS (functions + tables — aim to cover these):\n{inventory}\n\n{coverage_note}"
     "CATALOG OVERVIEW:\n{overview}"
 )
 
 
-def _function_inventory(catalog: Catalog) -> str:
-    """One line per function: usage signature + a short description (deduped overloads)."""
+def _object_inventory(catalog: Catalog) -> str:
+    """One line per function + table: signature/name and a short description.
+
+    Long arg signatures are truncated so a worker with huge UNION/STRUCT parameter
+    types can't blow the suggest prompt past the backend's limits.
+    """
     lines: list[str] = []
     for f in catalog.iter_all_functions():
         usage = _usage_hint(catalog, f.schema, f.name, f.arguments)
         sig = usage or f"{catalog.qualifier}.{f.schema}.{f.name}({', '.join(f.parameters)})"
+        if len(sig) > 160:
+            sig = sig[:157] + "…)"
         desc = (
             (f.description or f.comment or f.tags.get(TAG_DOC_LLM) or "").strip().replace("\n", " ")
         )
         lines.append(f"- {sig}" + (f" — {desc[:140]}" if desc else ""))
+    for t in catalog.iter_table_like():
+        desc = (t.description_llm or t.comment or "").strip().replace("\n", " ")
+        lines.append(
+            f"- {catalog.qualifier}.{t.schema}.{t.name} (table)"
+            + (f" — {desc[:140]}" if desc else "")
+        )
     return "\n".join(dict.fromkeys(lines))
 
 
@@ -1020,7 +1036,7 @@ def suggest_tasks(catalog: Catalog, backend: ReviewBackend, cap: int = 0) -> str
         )
     prompt = _SUGGEST.format(
         size=size,
-        inventory=_function_inventory(catalog),
+        inventory=_object_inventory(catalog),
         coverage_note=note,
         overview=build_listing(catalog),
     )
@@ -1043,7 +1059,7 @@ def render_terminal(report: SimReport) -> str:
         f"suitability {report.score}/100  ·  pass rate {int(report.pass_rate * 100)}% "
         f"({sum(v.passed for v in report.verdicts)}/{len(report.verdicts)} tasks)  ·  "
         f"discoverability {report.discoverability}/100",
-        f"function coverage {len(report.coverage.covered)}/{report.coverage.total} "
+        f"object coverage {len(report.coverage.covered)}/{report.coverage.total} "
         f"({report.coverage.pct}%)"
         + (
             f"  ·  untested: {', '.join(report.coverage.uncovered)}"
