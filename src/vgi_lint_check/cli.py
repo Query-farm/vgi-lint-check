@@ -444,6 +444,12 @@ def review_cmd(
 @click.option("--query-timeout", type=float, default=30.0, help="Per-query wall-clock seconds.")
 @click.option("--row-limit", type=int, default=50, help="Row cap on exploration queries.")
 @click.option(
+    "--concurrency",
+    type=int,
+    default=4,
+    help="Tasks to judge in parallel (each on its own cursor).",
+)
+@click.option(
     "--min-pass-rate",
     type=float,
     default=1.0,
@@ -453,8 +459,11 @@ def review_cmd(
 @click.option(
     "--suggest",
     type=int,
+    is_flag=False,
+    flag_value=0,
     default=None,
-    help="Authoring mode: print N candidate tasks as vgi.agent_test_tasks JSON and exit.",
+    help="Authoring mode: print coverage-driven candidate tasks as vgi.agent_test_tasks JSON "
+    "and exit. Bare --suggest sizes the suite to cover the worker; --suggest N caps it at N.",
 )
 @click.option("--format", "fmt", type=click.Choice(["terminal", "json"]), default="terminal")
 @click.option("--output", type=click.Path(dir_okay=False), default=None)
@@ -477,6 +486,7 @@ def simulate_cmd(
     attempts: int,
     query_timeout: float,
     row_limit: int,
+    concurrency: int,
     min_pass_rate: float,
     advisory: bool,
     suggest: int | None,
@@ -499,11 +509,12 @@ def simulate_cmd(
         attempts=attempts,
         timeout=query_timeout,
         row_limit=row_limit,
+        concurrency=concurrency,
     )
 
     def runner(catalog: Any, con: Any) -> Any:
         if suggest is not None:
-            return ("suggest", sm.suggest_tasks(catalog, backend, max(1, suggest)))
+            return ("suggest", sm.suggest_tasks(catalog, backend, cap=max(0, suggest)))
         cache = None if no_cache else ReviewCache(Path(cache_path)).load()
         return (
             "report",

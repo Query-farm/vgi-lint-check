@@ -257,6 +257,15 @@ vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as 
   (default 1.0); `--advisory` never gates; `--attempts N` retries to tame
   actor non-determinism. Same `claude`-CLI-by-default backend and verdict cache as
   `review`.
+- **Function coverage:** the report shows how many of the worker's functions the
+  suite's `reference_sql` actually exercises (`function coverage 8/24 (33%)`) and
+  names the untested ones — so a suite can't quietly leave half the API unchecked
+  while scoring 100% pass-rate. `vgi-lint simulate <worker> --suggest` is
+  **coverage-driven**: it proposes a suite sized to cover the worker's functions
+  (bare `--suggest` auto-sizes; `--suggest N` caps at N) rather than a fixed count.
+- **Tasks run in parallel** (`--concurrency`, default 4): each task is judged on its
+  own cursor against the VGI worker pool, so a multi-task suite finishes in roughly
+  the time of its slowest task, not the sum (~3.4× on a 4-task suite).
 - **Double-duty:** the encoded `reference_sql` doubles as curated **few-shot
   guidance** a worker's MCP server / `suggest_queries` can expose to real agents.
 

@@ -102,6 +102,13 @@ declared in the catalog tag `vgi.agent_test_tasks` (decoded to `AgentTask`).
   that *passes but scores low* means the worker's metadata, not the task, is the
   problem — fix the worker (add an example / tighten docs) rather than raise
   `--attempts`, which only masks it.
+- **Coverage + parallelism.** `compute_coverage(catalog)` statically reports which
+  worker functions the suite's `reference_sql`/`check_sql` exercise vs. miss (in
+  `SimReport.coverage`, rendered as `function coverage N/M`). `suggest_tasks` is
+  coverage-driven (sizes the suite to the worker, not a fixed N). `simulate_tasks`
+  judges cache-miss tasks in parallel via `ThreadPoolExecutor` (`SimLimits.concurrency`,
+  default 4) — each task already uses its own `con.cursor()`, results reassemble in
+  declaration order, and the cache is written on the main thread (no lock).
 - **Strict-grading caveat for complex tasks:** open-ended "which X has the most"
   questions can have defensible-but-divergent correct answers (e.g. spatial bbox
   overlap-vs-containment) and are unsuitable for strict reference grading — scope such

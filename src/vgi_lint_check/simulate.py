@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -66,6 +67,7 @@ class SimLimits:
     attempts: int = 1
     timeout: float = 30.0
     row_limit: int = 50
+    concurrency: int = 4  # tasks judged in parallel (each on its own cursor)
 
 
 @dataclass
@@ -153,6 +155,7 @@ class SimReport:
     verdicts: list[TaskVerdict]
     judged: int
     cached: int
+    coverage: Coverage = field(default_factory=lambda: Coverage())
 
     @property
     def pass_rate(self) -> float:
@@ -825,18 +828,16 @@ def simulate_tasks(
     limits: SimLimits | None = None,
     cache: ReviewCache | None = None,
 ) -> SimReport:
-    """Run every declared task (with retries) and aggregate a suitability report."""
+    """Run every declared task (with retries) and aggregate a suitability report.
+
+    Cache-miss tasks are judged in parallel (``limits.concurrency``), each on its
+    own ``con.cursor()`` so the worker pool serves them concurrently; results are
+    reassembled in declaration order and the cache is written on the main thread.
+    """
     limits = limits or SimLimits()
     listing = build_listing(catalog)
-    verdicts: list[TaskVerdict] = []
-    judged = cached = 0
-    for task in catalog.agent_test_tasks:
-        key = _task_key(listing, task, catalog.data_version)
-        hit = _cache_get(cache, key)
-        if hit is not None:
-            verdicts.append(hit)
-            cached += 1
-            continue
+
+    def judge(task: AgentTask) -> TaskVerdict:
         best: TaskVerdict | None = None
         best_run: TaskRun | None = None
         attempts = 0
@@ -852,12 +853,41 @@ def simulate_tasks(
         best.path = compute_path_metrics(best_run)
         best.suggestions = build_suggestions(best_run, best.path)
         best.attempts_used = attempts
-        verdicts.append(best)
-        judged += 1
-        _cache_put(cache, key, best)
+        return best
+
+    # Resolve cache hits up front; collect the misses (with their slot + key) to judge.
+    slots: list[TaskVerdict | None] = [None] * len(catalog.agent_test_tasks)
+    misses: list[tuple[int, AgentTask, str]] = []
+    cached = 0
+    for i, task in enumerate(catalog.agent_test_tasks):
+        key = _task_key(listing, task, catalog.data_version)
+        hit = _cache_get(cache, key)
+        if hit is not None:
+            slots[i] = hit
+            cached += 1
+        else:
+            misses.append((i, task, key))
+
+    if limits.concurrency > 1 and len(misses) > 1:
+        with ThreadPoolExecutor(max_workers=limits.concurrency) as ex:
+            futs = {ex.submit(judge, task): (i, key) for i, task, key in misses}
+            for fut in as_completed(futs):
+                i, key = futs[fut]
+                v = fut.result()
+                slots[i] = v
+                _cache_put(cache, key, v)  # main thread only — no lock needed
+    else:
+        for i, task, key in misses:
+            v = judge(task)
+            slots[i] = v
+            _cache_put(cache, key, v)
+
     if cache:
         cache.save()
-    return SimReport(catalog.location, backend_name, verdicts, judged, cached)
+    verdicts = [v for v in slots if v is not None]
+    return SimReport(
+        catalog.location, backend_name, verdicts, len(misses), cached, compute_coverage(catalog)
+    )
 
 
 def _cache_get(cache: ReviewCache | None, key: str) -> TaskVerdict | None:
@@ -878,19 +908,123 @@ def _cache_put(cache: ReviewCache | None, key: str, v: TaskVerdict) -> None:
 
 
 # --------------------------------------------------------------------------
-# Suggest mode (authoring helper)
+# Suite coverage (which of the worker's functions the declared tasks exercise)
+# --------------------------------------------------------------------------
+@dataclass
+class Coverage:
+    """Static coverage: the worker functions a declared suite's reference SQL calls.
+
+    Computed from the tasks' ``reference_sql`` / ``check_sql`` (not from a run), so
+    it answers "does this suite even touch the whole API?" independent of pass/fail.
+    """
+
+    covered: list[str] = field(default_factory=list)
+    uncovered: list[str] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        """Number of distinct worker functions considered."""
+        return len(self.covered) + len(self.uncovered)
+
+    @property
+    def pct(self) -> int:
+        """Percent of the worker's functions exercised by ≥1 task (100 if none)."""
+        return round(100 * len(self.covered) / self.total) if self.total else 100
+
+
+def _unique_functions(catalog: Catalog) -> list[tuple[str, str]]:
+    """Distinct (qualified_name, bare_name) for the worker's functions, sorted."""
+    seen: dict[str, str] = {}
+    for f in catalog.iter_all_functions():
+        seen[f"{catalog.qualifier}.{f.schema}.{f.name}"] = f.name
+    return sorted(seen.items())
+
+
+def _suite_sql(catalog: Catalog) -> str:
+    """All reference/check SQL across the declared suite, lowercased, for scanning."""
+    parts: list[str] = []
+    for t in catalog.agent_test_tasks:
+        parts.extend(s.sql or "" for s in t.reference_statements)
+        if t.check_sql:
+            parts.append(t.check_sql)
+    return " ".join(parts).lower()
+
+
+def compute_coverage(catalog: Catalog) -> Coverage:
+    """Which functions the declared suite's reference/check SQL exercises (static)."""
+    text = _suite_sql(catalog)
+    covered: list[str] = []
+    uncovered: list[str] = []
+    for qualified, name in _unique_functions(catalog):
+        if re.search(rf"\b{re.escape(name.lower())}\b", text):
+            covered.append(qualified)
+        else:
+            uncovered.append(qualified)
+    return Coverage(covered=covered, uncovered=uncovered)
+
+
+# --------------------------------------------------------------------------
+# Suggest mode (authoring helper) — coverage-driven
 # --------------------------------------------------------------------------
 _SUGGEST = (
-    "Propose {n} realistic analyst tasks an end user would want to accomplish against this "
-    "catalog, each solvable with SQL using ONLY what's exposed. Return ONLY a JSON array of "
+    "You are designing a FIXED acceptance suite of analyst tasks for a data worker, run by an "
+    "automated agent-suitability test. The suite must COVER THE MAJORITY of the worker's "
+    "functions: across the whole suite, every important function below should be exercised by at "
+    "least one task. Prefer a mix of difficulty (single-call smoke tests and multi-step tasks), "
+    "and where a function has distinct modes (e.g. encodings, framings, formats) lean toward "
+    "covering the important ones. Each task must be a realistic thing an end user would ask, "
+    "solvable with SQL using ONLY what's exposed, with a correct canonical reference_sql, and it "
+    "should name its output columns (grading is strict on column names, values, and row order). "
+    "{size}\n\nReturn ONLY a JSON array of "
     '{{"name": "...", "prompt": "...", "reference_sql": "<a correct canonical solution>"}} '
-    "objects suitable for the vgi.agent_test_tasks tag.\n\nCATALOG OVERVIEW:\n{overview}"
+    "objects suitable for the vgi.agent_test_tasks tag.\n\n"
+    "WORKER FUNCTIONS (aim to cover these):\n{inventory}\n\n{coverage_note}"
+    "CATALOG OVERVIEW:\n{overview}"
 )
 
 
-def suggest_tasks(catalog: Catalog, backend: ReviewBackend, n: int = 5) -> str:
-    """Ask the LLM to propose candidate tasks as ready-to-paste tag JSON."""
-    raw = backend.complete(_SUGGEST.format(n=n, overview=build_listing(catalog)))
+def _function_inventory(catalog: Catalog) -> str:
+    """One line per function: usage signature + a short description (deduped overloads)."""
+    lines: list[str] = []
+    for f in catalog.iter_all_functions():
+        usage = _usage_hint(catalog, f.schema, f.name, f.arguments)
+        sig = usage or f"{catalog.qualifier}.{f.schema}.{f.name}({', '.join(f.parameters)})"
+        desc = (
+            (f.description or f.comment or f.tags.get(TAG_DOC_LLM) or "").strip().replace("\n", " ")
+        )
+        lines.append(f"- {sig}" + (f" — {desc[:140]}" if desc else ""))
+    return "\n".join(dict.fromkeys(lines))
+
+
+def suggest_tasks(catalog: Catalog, backend: ReviewBackend, cap: int = 0) -> str:
+    """Propose a coverage-driven suite as ready-to-paste tag JSON.
+
+    ``cap`` 0 means "size the suite to cover the worker"; a positive ``cap`` is an
+    upper bound on the number of tasks proposed.
+    """
+    cov = compute_coverage(catalog)
+    if cov.covered:
+        note = (
+            f"Already covered by the existing suite: {', '.join(cov.covered)}.\n"
+            f"Focus on the UNCOVERED functions: {', '.join(cov.uncovered) or '(none)'}.\n\n"
+        )
+    else:
+        note = ""
+    if cap and cap > 0:
+        size = f"Propose at most {cap} tasks, prioritizing the broadest coverage."
+    else:
+        size = (
+            "Use as many tasks as it takes to cover the majority of the functions above "
+            "(roughly one per function, combined where natural) — but do not pad with trivial "
+            "variants of the same call."
+        )
+    prompt = _SUGGEST.format(
+        size=size,
+        inventory=_function_inventory(catalog),
+        coverage_note=note,
+        overview=build_listing(catalog),
+    )
+    raw = backend.complete(prompt)
     try:
         data = _extract_json(raw)
     except (ValueError, json.JSONDecodeError):
@@ -909,6 +1043,13 @@ def render_terminal(report: SimReport) -> str:
         f"suitability {report.score}/100  ·  pass rate {int(report.pass_rate * 100)}% "
         f"({sum(v.passed for v in report.verdicts)}/{len(report.verdicts)} tasks)  ·  "
         f"discoverability {report.discoverability}/100",
+        f"function coverage {len(report.coverage.covered)}/{report.coverage.total} "
+        f"({report.coverage.pct}%)"
+        + (
+            f"  ·  untested: {', '.join(report.coverage.uncovered)}"
+            if report.coverage.uncovered
+            else ""
+        ),
         "",
     ]
     mark = {"pass": "✓", "partial": "~", "fail": "✗"}
@@ -964,6 +1105,11 @@ def render_json(report: SimReport) -> str:
             "score": report.score,
             "pass_rate": report.pass_rate,
             "discoverability": report.discoverability,
+            "coverage": {
+                "pct": report.coverage.pct,
+                "covered": report.coverage.covered,
+                "uncovered": report.coverage.uncovered,
+            },
             "judged": report.judged,
             "cached": report.cached,
             "suggestions": report.suggestions,

@@ -5,6 +5,7 @@ result sets keyed by SQL content. No real model or worker is contacted.
 """
 
 import json
+import threading
 
 from tests import fixtures as F
 from vgi_lint_check import simulate as sim
@@ -79,16 +80,18 @@ class _Con:
 
 
 class _Backend:
-    """Emits scripted completions; records every prompt it saw."""
+    """Emits scripted completions; records every prompt it saw (thread-safe)."""
 
     def __init__(self, script):
         self.script, self.i, self.prompts = script, 0, []
+        self._lock = threading.Lock()
 
     def complete(self, prompt):
-        self.prompts.append(prompt)
-        out = self.script[min(self.i, len(self.script) - 1)]
-        self.i += 1
-        return out
+        with self._lock:
+            self.prompts.append(prompt)
+            out = self.script[min(self.i, len(self.script) - 1)]
+            self.i += 1
+            return out
 
 
 def _catalog_with_tasks(tasks):
@@ -280,6 +283,95 @@ def test_compute_path_metrics_ceiling_and_requirement():
     sugg = sim.build_suggestions(run, m)
     assert any("never converged" in s for s in sugg)
     assert any("usage requirement" in s for s in sugg)
+
+
+# --------------------------------------------------------------------------
+# Suite coverage
+# --------------------------------------------------------------------------
+def test_compute_coverage_flags_untested_functions():
+    cat = F.catalog(
+        F.schema(
+            "main",
+            comment="c",
+            tags=_TAGS,
+            functions=[
+                F.func("main", "convert", description="d"),
+                F.func("main", "to_base", description="d"),
+                F.func("main", "dimension", description="d"),
+            ],
+        )
+    )
+    cat.agent_test_tasks = [
+        AgentTask(
+            name="t",
+            prompt="p",
+            reference_statements=[ExampleStatement(None, "SELECT v.main.convert(1,'mi','km')")],
+            check_sql="SELECT v.main.dimension('mi') IS NOT NULL",
+        )
+    ]
+    cov = sim.compute_coverage(cat)
+    # convert (reference) + dimension (check_sql) are covered; to_base is not
+    assert any(c.endswith(".convert") for c in cov.covered)
+    assert any(c.endswith(".dimension") for c in cov.covered)
+    assert cov.uncovered == [f"{cat.qualifier}.main.to_base"]
+    assert cov.total == 3 and cov.pct == 67
+
+
+def test_report_renders_coverage():
+    cat = F.catalog(
+        F.schema(
+            "main",
+            comment="c",
+            tags=_TAGS,
+            tables=[F.table("main", "things", comment="c")],
+            functions=[
+                F.func("main", "used", description="d"),
+                F.func("main", "skipped", description="d"),
+            ],
+        )
+    )
+    cat.agent_test_tasks = [
+        AgentTask(
+            name="t",
+            prompt="p",
+            reference_statements=[ExampleStatement(None, "SELECT v.main.used()")],
+        )
+    ]
+    backend = _Backend([json.dumps({"action": "final", "answer_sql": "SELECT v.main.used()"})])
+    rep = sim.simulate_tasks(cat, _Con(), backend)
+    assert rep.coverage.pct == 50
+    txt = sim.render_terminal(rep)
+    assert "function coverage 1/2 (50%)" in txt and "untested" in txt
+    doc = json.loads(sim.render_json(rep))
+    assert doc["coverage"]["pct"] == 50 and doc["coverage"]["uncovered"][0].endswith(".skipped")
+
+
+def test_tasks_run_in_parallel_preserving_order():
+    # 3 distinct tasks, all solvable by the same fixed final answer; concurrency>1.
+    tasks = [
+        AgentTask(
+            name=f"t{i}",
+            prompt=f"p{i}",
+            reference_statements=[ExampleStatement(None, "SELECT 'strong' AS band")],
+        )
+        for i in range(3)
+    ]
+    backend = _Backend([json.dumps({"action": "final", "answer_sql": "SELECT 'strong' AS band"})])
+    rep = sim.simulate_tasks(
+        _catalog_with_tasks(tasks), _Con(), backend, limits=sim.SimLimits(concurrency=3)
+    )
+    assert [v.name for v in rep.verdicts] == ["t0", "t1", "t2"]  # declaration order preserved
+    assert all(v.outcome == "pass" for v in rep.verdicts) and rep.judged == 3
+
+
+def test_suggest_is_coverage_driven():
+    cat = _catalog_with_tasks([])
+    backend = _Backend([json.dumps([{"name": "t1", "prompt": "p1", "reference_sql": "SELECT 1"}])])
+    out = sim.suggest_tasks(cat, backend, cap=0)
+    assert json.loads(out) == [{"name": "t1", "prompt": "p1", "reference_sql": "SELECT 1"}]
+    # the prompt told the model to cover the worker's functions
+    assert any("COVER THE MAJORITY" in p for p in backend.prompts)
+    assert any("WORKER FUNCTIONS" in p for p in backend.prompts)
 
 
 # --------------------------------------------------------------------------
