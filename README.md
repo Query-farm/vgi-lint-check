@@ -277,6 +277,12 @@ vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as 
 - **Tasks run in parallel** (`--concurrency`, default 4): each task is judged on its
   own cursor against the VGI worker pool, so a multi-task suite finishes in roughly
   the time of its slowest task, not the sum (~3.4× on a 4-task suite).
+- **Sessions, not re-sends** (`--session`, default on): the analyst's ReAct loop runs
+  over a `claude` session — turn 1 sets `--session-id`, later turns `--resume` it — so
+  only the new tool result is sent each turn instead of re-transmitting the whole
+  transcript. Each task gets its own session id (safe under `--concurrency`); the
+  Anthropic API backend accumulates messages instead. `--no-session` forces the
+  stateless re-send.
 - **Double-duty:** the encoded `reference_sql` doubles as curated **few-shot
   guidance** a worker's MCP server / `suggest_queries` can expose to real agents.
 

@@ -217,9 +217,10 @@ def test_actor_uses_discovery_tools():
     )
     rep = sim.simulate_tasks(_catalog_with_tasks([task]), _Con(), backend)
     assert rep.verdicts[0].outcome == "pass"
-    # the model saw the tool menu and a discovery trail accumulated
+    # turn 1 carried the tool menu; tool results were fed back as observations
     assert any("list_tables" in p for p in backend.prompts)
-    assert any("DISCOVERY SO FAR:\n[0] list_tables" in p for p in backend.prompts)
+    assert any("RESULT of list_tables" in p for p in backend.prompts)
+    assert any("RESULT of describe_table things" in p for p in backend.prompts)
 
 
 # --------------------------------------------------------------------------

@@ -450,6 +450,13 @@ def review_cmd(
     help="Tasks to judge in parallel (each on its own cursor).",
 )
 @click.option(
+    "--session/--no-session",
+    "session",
+    default=True,
+    help="Use a claude session (resume) so each turn sends only the delta, not the whole "
+    "transcript. --no-session re-sends the full transcript each turn (stateless).",
+)
+@click.option(
     "--min-pass-rate",
     type=float,
     default=1.0,
@@ -494,6 +501,7 @@ def simulate_cmd(
     query_timeout: float,
     row_limit: int,
     concurrency: int,
+    session: bool,
     min_pass_rate: float,
     advisory: bool,
     verify_references: bool,
@@ -518,6 +526,7 @@ def simulate_cmd(
         timeout=query_timeout,
         row_limit=row_limit,
         concurrency=concurrency,
+        sessions=session,
     )
 
     def runner(catalog: Any, con: Any) -> Any:

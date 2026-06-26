@@ -128,9 +128,15 @@ declared in the catalog tag `vgi.agent_test_tasks` (decoded to `AgentTask`).
   `reference_sql` N×3 and flags error / non-deterministic / empty references — an
   authoring/CI gate (exit 2) that productizes the manual probe step and catches the
   unsound-reference class (random/unseeded, typos) before a flaky graded run. It does not
-  judge agent reproducibility (that's the simulation). Note the `claude -p` backend is
-  stateless per call (`review.py`, no `--resume`); the ReAct loop preserves context by
-  re-sending the full transcript each turn.
+  judge agent reproducibility (that's the simulation).
+- **Sessions.** The ReAct loop runs over a `review.Conversation` (`make_conversation`).
+  The claude backend's `_ClaudeSession` sets `--session-id <uuid>` on turn 1 and
+  `--resume <uuid>` after, so only the delta (the latest tool result) is sent each turn
+  rather than re-transmitting the whole transcript (`SimLimits.sessions`, `--session/
+  --no-session`, default on; ~24% faster on a small suite, more as turns grow). The API
+  backend accumulates the message list; any `complete()`-only backend (e.g. the test
+  fake) falls back to `_ResendConversation`, which reproduces the original re-send
+  behavior. Each task gets its own session id, so parallel tasks don't collide.
 
 ## Conventions & gotchas
 

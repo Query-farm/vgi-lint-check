@@ -16,6 +16,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -49,6 +50,38 @@ class ReviewBackend(Protocol):
         ...  # pragma: no cover
 
 
+class Conversation(Protocol):
+    """A multi-turn exchange. ``send`` returns the model's reply for one message.
+
+    The first ``send`` establishes context; later ``send``s may carry only the
+    new turn (a delta) when the backend keeps the conversation server-side.
+    """
+
+    def send(self, message: str) -> str:
+        """Send one message and return the model's reply."""
+        ...  # pragma: no cover
+
+
+class _ResendConversation:
+    """Fallback conversation for any ``complete()``-only backend.
+
+    Keeps no server-side state — it accumulates the transcript and re-sends the
+    whole thing each turn, reproducing the original stateless behavior.
+    """
+
+    def __init__(self, backend: ReviewBackend) -> None:
+        """Wrap ``backend`` and start an empty transcript."""
+        self._backend = backend
+        self._log: list[str] = []
+
+    def send(self, message: str) -> str:
+        """Append ``message``, re-send the whole transcript, record the reply."""
+        self._log.append(message)
+        reply = self._backend.complete("\n\n".join(self._log))
+        self._log.append(f"(your previous reply)\n{reply}")
+        return reply
+
+
 @dataclass
 class ClaudeCliBackend:
     """Runs the local ``claude`` CLI in headless mode (uses your subscription)."""
@@ -56,20 +89,49 @@ class ClaudeCliBackend:
     model: str | None = None
     timeout: float = 180.0
 
-    def complete(self, prompt: str) -> str:
-        """Run ``claude -p`` and return its stdout."""
+    def _run(self, args: list[str]) -> str:
+        """Run ``claude -p`` with ``args`` and return stdout (raise on failure)."""
         if shutil.which("claude") is None:
             raise RuntimeError(
                 "the 'claude' CLI is not on PATH — install Claude Code and sign in "
                 "with your subscription, or use --review-backend api with an API key"
             )
-        cmd = ["claude", "-p", prompt]
+        cmd = ["claude", "-p", *args]
         if self.model:
             cmd += ["--model", self.model]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
         if proc.returncode != 0:
             raise RuntimeError(f"claude CLI failed: {proc.stderr.strip() or proc.stdout.strip()}")
         return proc.stdout
+
+    def complete(self, prompt: str) -> str:
+        """Run a single ``claude -p`` call and return its stdout."""
+        return self._run([prompt])
+
+    def conversation(self) -> Conversation:
+        """A real ``claude`` session: turn 1 sets a session id, later turns resume it."""
+        return _ClaudeSession(self)
+
+
+class _ClaudeSession:
+    """A ``claude`` CLI session: ``--session-id`` on the first turn, ``--resume`` after.
+
+    Subsequent turns send only the new message; the CLI restores prior context
+    server-side, so the growing transcript isn't re-transmitted each turn.
+    """
+
+    def __init__(self, backend: ClaudeCliBackend) -> None:
+        """Bind to ``backend`` and allocate a fresh session id."""
+        self._backend = backend
+        self._session_id = str(uuid.uuid4())
+        self._resume = False
+
+    def send(self, message: str) -> str:
+        """Send ``message`` on this session (starting or resuming it)."""
+        flag = "--resume" if self._resume else "--session-id"
+        out = self._backend._run([flag, self._session_id, message])
+        self._resume = True
+        return out
 
 
 @dataclass
@@ -79,8 +141,8 @@ class AnthropicApiBackend:
     model: str = "claude-sonnet-4-6"
     max_tokens: int = 4096
 
-    def complete(self, prompt: str) -> str:
-        """Call the Anthropic API and return the text response."""
+    def _complete_messages(self, messages: list[dict[str, str]]) -> str:
+        """Send a full message list to the API and return the text response."""
         try:
             import anthropic  # type: ignore[import-not-found]
         except ImportError as e:  # pragma: no cover - optional dep
@@ -89,11 +151,44 @@ class AnthropicApiBackend:
             ) from e
         client = anthropic.Anthropic()
         msg = client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            messages=[{"role": "user", "content": prompt}],
+            model=self.model, max_tokens=self.max_tokens, messages=messages
         )
         return "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+
+    def complete(self, prompt: str) -> str:
+        """Call the Anthropic API with a single user turn and return the text."""
+        return self._complete_messages([{"role": "user", "content": prompt}])
+
+    def conversation(self) -> Conversation:
+        """The API is stateless, so accumulate the message list and resend it."""
+        return _ApiConversation(self)
+
+
+class _ApiConversation:
+    """Accumulates the message list (the API has no server-side session)."""
+
+    def __init__(self, backend: AnthropicApiBackend) -> None:
+        """Bind to ``backend`` and start an empty message list."""
+        self._backend = backend
+        self._messages: list[dict[str, str]] = []
+
+    def send(self, message: str) -> str:
+        """Append the user turn, call the API, record and return the reply."""
+        self._messages.append({"role": "user", "content": message})
+        reply = self._backend._complete_messages(self._messages)
+        self._messages.append({"role": "assistant", "content": reply})
+        return reply
+
+
+def make_conversation(backend: ReviewBackend, sessions: bool = True) -> Conversation:
+    """A Conversation for ``backend`` — a native session when available, else re-send.
+
+    ``sessions=False`` forces the stateless re-send fallback (the original behavior).
+    """
+    factory = getattr(backend, "conversation", None)
+    if sessions and callable(factory):
+        return factory()  # type: ignore[no-any-return]
+    return _ResendConversation(backend)
 
 
 def make_backend(name: str, model: str | None = None) -> ReviewBackend:

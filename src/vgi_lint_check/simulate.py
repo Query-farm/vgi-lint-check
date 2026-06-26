@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .model import TAG_DOC_LLM, AgentTask, Catalog, ObjectKind
-from .review import ReviewBackend, ReviewCache  # backends + JSON verdict cache
+from .review import ReviewBackend, ReviewCache, make_conversation  # backends + cache + sessions
 from .rules._util import (
     is_bind_error,
     is_filter_policy_error,
@@ -68,6 +68,7 @@ class SimLimits:
     timeout: float = 30.0
     row_limit: int = 50
     concurrency: int = 4  # tasks judged in parallel (each on its own cursor)
+    sessions: bool = True  # use a claude session (resume) so only deltas are re-sent
 
 
 @dataclass
@@ -522,24 +523,29 @@ def run_task(
     listing: str,
     limits: SimLimits,
 ) -> TaskRun:
-    """Drive the bounded tool-mediated ReAct loop on its own cursor (state accrues)."""
+    """Drive the bounded tool-mediated ReAct loop on its own cursor (state accrues).
+
+    Runs over a :class:`Conversation`: the first message carries the full preamble,
+    listing, and task; each later message carries only the latest tool result (a
+    delta), so with a session backend the growing transcript isn't re-transmitted.
+    """
     cur = con.cursor()
+    convo = make_conversation(backend, sessions=limits.sessions)
     steps: list[TaskStep] = []
     discovery: list[TraceEvent] = []
     described: set[str] = set()  # objects already described (to spot re-inspection)
-    trail: list[str] = []  # discovery trail text re-sent to the actor each turn
     answer_sql: list[str] = []
     summary = ""
     friction: list[str] = []
     finished = False
     queries = 0
+    message = (
+        f"{_ACTOR}\n\nORIENTATION (names only — use the tools for detail):\n{listing}\n\n"
+        f"TASK: {task.prompt}\n\nBegin: reply with your first JSON action."
+    )
     for _ in range(max(1, limits.max_steps)):
-        prompt = (
-            f"{_ACTOR}\n\nORIENTATION (names only — use the tools for detail):\n{listing}\n\n"
-            f"TASK: {task.prompt}\n\nDISCOVERY SO FAR:\n{_transcript(trail)}"
-        )
         try:
-            action = _extract_json(backend.complete(prompt))
+            action = _extract_json(convo.send(message))
         except (ValueError, json.JSONDecodeError):
             break
         if not isinstance(action, dict):
@@ -570,7 +576,7 @@ def run_task(
                     TaskStep(sql=sql, ok=False, blocked=blocked, error=err, error_kind=ekind)
                 )
             queries += 1
-            trail.append(f"run_sql {sql}\n  -> {_clip(json.dumps(result, default=str))}")
+            message = _observation("run_sql", result)
             if queries >= limits.max_queries:
                 break
             continue
@@ -580,14 +586,11 @@ def run_task(
             key = f"{kind}:{action.get('schema') or ''}.{label}"
             discovery.append(
                 TraceEvent(
-                    kind=kind,
-                    target=label,
-                    found="error" not in result,
-                    redundant=key in described,
+                    kind=kind, target=label, found="error" not in result, redundant=key in described
                 )
             )
             described.add(key)
-            trail.append(f"{kind} {label}\n  -> {_clip(json.dumps(result, default=str))}")
+            message = _observation(f"{kind} {label}".strip(), result)
             continue
         break  # unknown / malformed action
     # keep the agent cursor alive on the run for tier-2 grading
@@ -603,14 +606,16 @@ def run_task(
     return run
 
 
+def _observation(label: str, result: dict[str, Any]) -> str:
+    """The delta message fed back to the analyst after a tool call."""
+    return (
+        f"RESULT of {label}:\n{_clip(json.dumps(result, default=str))}\n\n"
+        "Reply with your next JSON action (or a final answer)."
+    )
+
+
 def _clip(text: str, limit: int = 1200) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
-
-
-def _transcript(trail: list[str]) -> str:
-    if not trail:
-        return "(nothing yet — start with list_tables to orient)"
-    return "\n".join(f"[{i}] {entry}" for i, entry in enumerate(trail))
 
 
 def _render_actual(cols: list[str], rows: list[Any], limit: int = 400) -> str:
