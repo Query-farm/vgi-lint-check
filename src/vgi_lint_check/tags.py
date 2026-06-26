@@ -279,6 +279,7 @@ def decode_agent_test_tasks(tags: TagSet) -> tuple[list[AgentTask], str | None]:
                 reference_statements=ref,
                 check_sql=None if check is None else str(check),
                 unordered=bool(item.get("unordered", False)),
+                ignore_column_names=bool(item.get("ignore_column_names", False)),
                 raw=item,
             )
         )

@@ -210,6 +210,7 @@ class AgentTask:
     reference_statements: list[ExampleStatement] = field(default_factory=list)
     check_sql: str | None = None
     unordered: bool = False
+    ignore_column_names: bool = False
     raw: object = None
 
 

@@ -109,11 +109,88 @@ def test_overview_excludes_solution_fields():
         check_sql="SELECT check_pass",
     )
     cat = _catalog_with_tasks([task])
-    overview = sim.build_overview(cat)
-    assert "classify the band" not in overview  # not even the prompt is in the overview
-    assert "SECRET_CRITERIA" not in overview
-    assert "SELECT 'strong'" not in overview
-    assert "check_pass" not in overview
+    listing = sim.build_listing(cat)
+    assert "classify the band" not in listing  # not even the prompt is in the listing
+    assert "SECRET_CRITERIA" not in listing
+    assert "SELECT 'strong'" not in listing
+    assert "check_pass" not in listing
+
+
+# --------------------------------------------------------------------------
+# Discovery tools — local mirror of the ask-AI contract
+# --------------------------------------------------------------------------
+def test_tool_list_tables_and_describe():
+    cat = F.catalog(
+        F.schema(
+            "main",
+            comment="c",
+            tags=_TAGS,
+            tables=[
+                F.table(
+                    "main",
+                    "things",
+                    comment="all the things",
+                    columns=[F.col("main", "things", "id", comment="the id", dtype="INTEGER")],
+                )
+            ],
+            functions=[
+                F.func(
+                    "main",
+                    "convert",
+                    description="convert a value",
+                    parameters=["v", "unit"],
+                    arguments=[F.arg("v", "DOUBLE", "the value")],
+                )
+            ],
+        )
+    )
+    listed = sim.tool_list_tables(cat)
+    assert listed["catalog"] == cat.qualifier
+    schema = listed["schemas"][0]
+    assert schema["tables"][0] == {
+        "name": "things",
+        "type": str(cat.iter_tables().__next__().kind),
+        "comment": "all the things",
+        "column_count": 1,
+    }
+    assert schema["functions"][0]["name"] == "convert"
+
+    desc = sim.tool_describe_table(cat, "main", "things")
+    assert desc["columns"] == [{"name": "id", "type": "INTEGER", "comment": "the id"}]
+    assert "error" in sim.tool_describe_table(cat, "main", "nope")
+
+    fn = sim.tool_describe_function(cat, "main", "convert")
+    assert fn["parameters"] == ["v", "unit"]
+    assert fn["arguments"][0] == {"name": "v", "type": "DOUBLE", "description": "the value"}
+    assert "error" in sim.tool_describe_function(cat, "main", "nope")
+
+
+def test_tool_run_sql_guard_and_result():
+    blocked = sim.tool_run_sql(_Con(), "INSERT INTO t VALUES (1)", sim.SimLimits())
+    assert not blocked["ok"] and blocked["error"].startswith("blocked")
+    ok = sim.tool_run_sql(_Con(), "SELECT 1", sim.SimLimits())
+    assert ok["ok"] and ok["row_count"] == 1 and ok["columns"] == ["n"]
+
+
+def test_actor_uses_discovery_tools():
+    task = AgentTask(
+        name="classify",
+        prompt="classify",
+        reference_statements=[ExampleStatement(None, "SELECT 'strong' AS band")],
+    )
+    backend = _Backend(
+        [
+            json.dumps({"action": "list_tables"}),
+            json.dumps({"action": "describe_table", "schema": "main", "table": "things"}),
+            json.dumps({"action": "run_sql", "sql": "SELECT band FROM things"}),
+            json.dumps({"action": "final", "answer_sql": "SELECT 'strong' AS band"}),
+        ]
+    )
+    rep = sim.simulate_tasks(_catalog_with_tasks([task]), _Con(), backend)
+    assert rep.verdicts[0].outcome == "pass"
+    # the model saw the tool menu and a discovery trail accumulated
+    assert any("list_tables" in p for p in backend.prompts)
+    assert any("DISCOVERY SO FAR:\n[0] list_tables" in p for p in backend.prompts)
 
 
 # --------------------------------------------------------------------------
@@ -130,7 +207,7 @@ def test_tier1_reference_pass_and_fail():
     # actor explores then returns an answer query that yields 'strong' -> pass
     backend = _Backend(
         [
-            json.dumps({"action": "query", "sql": "SELECT band FROM things"}),
+            json.dumps({"action": "run_sql", "sql": "SELECT band FROM things"}),
             json.dumps(
                 {
                     "action": "final",
@@ -146,7 +223,7 @@ def test_tier1_reference_pass_and_fail():
     assert v.outcome == "pass" and v.grader == "reference"
     assert v.friction == ["no example for classify"]
     # the reference SQL never appears in any actor prompt
-    assert all("SELECT 'strong'" not in p for p in backend.prompts[:-0] if "Grade whether" not in p)
+    assert all("SELECT 'strong'" not in p for p in backend.prompts if "Grade whether" not in p)
 
     # answer yields 'weak' -> fail
     backend2 = _Backend([json.dumps({"action": "final", "answer_sql": "SELECT 'weak' AS band"})])
@@ -157,22 +234,33 @@ def test_tier1_reference_pass_and_fail():
 # --------------------------------------------------------------------------
 # Tier 2 — check_sql assertion
 # --------------------------------------------------------------------------
-def test_resultsets_equal_ignores_column_names():
-    # same values, different column aliases -> equal (names are cosmetic)
+def test_resultsets_equal_strict_and_opt_out():
+    same_vals_diff_names_a = (["dimension", "n"], [("length", 46)])
+    same_vals_diff_names_b = (["dim", "count"], [("length", 46)])
+    # strict default: different column names -> NOT equal (reference is the contract)
+    assert not sim._resultsets_equal(
+        same_vals_diff_names_a, same_vals_diff_names_b, unordered=False, ignore_column_names=False
+    )
+    # opt-out: ignore_column_names -> equal by values
     assert sim._resultsets_equal(
+        same_vals_diff_names_a, same_vals_diff_names_b, unordered=False, ignore_column_names=True
+    )
+    # same names + values -> equal
+    assert sim._resultsets_equal(
+        same_vals_diff_names_a,
         (["dimension", "n"], [("length", 46)]),
-        (["dim", "count"], [("length", 46)]),
         unordered=False,
+        ignore_column_names=False,
     )
     # different values -> not equal
     assert not sim._resultsets_equal(
-        (["a"], [("length", 46)]), (["a"], [("mass", 46)]), unordered=False
+        (["a"], [("length",)]), (["a"], [("mass",)]), unordered=False, ignore_column_names=False
     )
     # row order matters unless unordered
     a = (["x"], [(1,), (2,)])
     b = (["x"], [(2,), (1,)])
-    assert not sim._resultsets_equal(a, b, unordered=False)
-    assert sim._resultsets_equal(a, b, unordered=True)
+    assert not sim._resultsets_equal(a, b, unordered=False, ignore_column_names=False)
+    assert sim._resultsets_equal(a, b, unordered=True, ignore_column_names=False)
 
 
 def test_tier2_check_sql():

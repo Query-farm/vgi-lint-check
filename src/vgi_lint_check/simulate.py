@@ -41,8 +41,8 @@ _WRAPPABLE = frozenset({"select", "with", "values", "table", "from"})
 class SimLimits:
     """Per-task bounds for the analyst loop."""
 
-    max_steps: int = 6
-    max_queries: int = 8
+    max_steps: int = 12
+    max_queries: int = 10
     attempts: int = 1
     timeout: float = 30.0
     row_limit: int = 50
@@ -117,33 +117,27 @@ class SimReport:
 
 
 # --------------------------------------------------------------------------
-# Catalog overview (what the analyst sees — never the solution)
+# Bounded orientation listing (the preamble — names + one-liners, never columns
+# or the solution). The analyst drills in via the discovery tools below.
 # --------------------------------------------------------------------------
-def build_overview(catalog: Catalog) -> str:
-    """Compact text of exactly what an analyst sees post-attach.
+def build_listing(catalog: Catalog) -> str:
+    """List schemas, tables/views, and functions with their one-line descriptions.
 
-    Includes schemas/tables/columns/functions and *illustrative* example queries.
-    Excludes ``vgi.agent_test_tasks`` solutions entirely — the analyst must
-    rediscover the path from metadata.
+    A bounded orientation map — no columns (use describe_table) and no task
+    solution. The analyst drills into detail through the discovery tools.
     """
     out: list[str] = [f"Catalog: {catalog.qualifier}"]
     if catalog.description_llm or catalog.comment:
-        out.append(f"  {(catalog.description_llm or catalog.comment or '').strip()[:400]}")
+        out.append(f"  {(catalog.description_llm or catalog.comment or '').strip()[:300]}")
     for s in catalog.iter_schemas():
         sd = (s.tags.get(TAG_DOC_LLM) or s.comment or "").strip()
-        out.append(f"\nSchema {catalog.qualifier}.{s.name}" + (f" — {sd[:200]}" if sd else ""))
+        out.append(f"\nschema {catalog.qualifier}.{s.name}" + (f" — {sd[:160]}" if sd else ""))
         for t in (*s.tables, *s.views):
             td = (t.description_llm or t.comment or "").strip()
             out.append(
                 f"  {t.kind} {catalog.qualifier}.{s.name}.{t.name}"
-                + (f" — {td[:200]}" if td else "")
+                + (f" — {td[:160]}" if td else "")
             )
-            for c in t.columns:
-                cc = f" — {c.comment.strip()[:120]}" if c.comment else ""
-                out.append(f"      {c.name} {c.data_type or ''}{cc}")
-            for ex in t.examples[:2]:
-                if ex.sql:
-                    out.append(f"      e.g. {ex.sql.strip()[:160]}")
         for f in s.functions:
             if f.kind is ObjectKind.TABLE_FUNCTION and catalog.find_table_like(f.name, f.schema):
                 continue  # documented via its backing table
@@ -151,9 +145,125 @@ def build_overview(catalog: Catalog) -> str:
             fd = (f.description or f.comment or "").strip()
             out.append(
                 f"  {f.function_type} {catalog.qualifier}.{s.name}.{f.name}({sig})"
-                + (f" — {fd[:200]}" if fd else "")
+                + (f" — {fd[:160]}" if fd else "")
             )
     return "\n".join(out)
+
+
+# --------------------------------------------------------------------------
+# Discovery tools — a local mirror of the vgi-web-frontend "ask AI" contract,
+# answered from the Catalog model + the live connection (no MCP server needed).
+# Each returns a JSON-serializable dict. None ever exposes a task's solution.
+# --------------------------------------------------------------------------
+def tool_list_tables(catalog: Catalog) -> dict[str, Any]:
+    """Schemas, tables/views (name + comment + column count), and functions."""
+    schemas = []
+    for s in catalog.iter_schemas():
+        schemas.append(
+            {
+                "name": s.name,
+                "comment": s.tags.get(TAG_DOC_LLM) or s.comment,
+                "tables": [
+                    {
+                        "name": t.name,
+                        "type": str(t.kind),
+                        "comment": t.description_llm or t.comment,
+                        "column_count": len(t.columns),
+                    }
+                    for t in s.tables
+                ],
+                "views": [
+                    {"name": v.name, "type": "view", "comment": v.description_llm or v.comment}
+                    for v in s.views
+                ],
+                "functions": [
+                    {
+                        "name": f.name,
+                        "type": f.function_type,
+                        "parameters": list(f.parameters),
+                        "comment": f.description or f.comment,
+                    }
+                    for f in s.functions
+                    if not (
+                        f.kind is ObjectKind.TABLE_FUNCTION
+                        and catalog.find_table_like(f.name, f.schema)
+                    )
+                ],
+            }
+        )
+    return {
+        "catalog": catalog.qualifier,
+        "default_schema": catalog.default_schema,
+        "schemas": schemas,
+    }
+
+
+def tool_describe_table(catalog: Catalog, schema: str, table: str) -> dict[str, Any]:
+    """Columns (name/type/nullable/comment), constraints, and examples for a table."""
+    for t in catalog.iter_table_like():
+        if t.schema == schema and t.name == table:
+            pk = [
+                c.columns
+                for _t, c in catalog.iter_constraints()
+                if _t is t and c.constraint_type == "PRIMARY KEY"
+            ]
+            fks = [
+                {
+                    "columns": c.columns,
+                    "references": f"{c.referenced_table}({','.join(c.referenced_columns)})",
+                }
+                for _t, c in catalog.iter_constraints()
+                if _t is t and c.constraint_type == "FOREIGN KEY"
+            ]
+            return {
+                "schema": schema,
+                "name": table,
+                "type": str(t.kind),
+                "comment": t.description_llm or t.comment,
+                "doc_md": t.description_md,
+                "primary_key": pk[0] if pk else None,
+                "foreign_keys": fks or None,
+                "columns": [
+                    {"name": c.name, "type": c.data_type, "comment": c.comment} for c in t.columns
+                ],
+                "examples": [e.sql for e in t.examples if e.sql],
+            }
+    return {"error": f"no table {schema}.{table!r} — call list_tables to see what exists"}
+
+
+def tool_describe_function(catalog: Catalog, schema: str, name: str) -> dict[str, Any]:
+    """Signature, description, and per-argument docs for a function."""
+    for f in catalog.iter_all_functions():
+        if f.schema == schema and f.name == name:
+            return {
+                "schema": schema,
+                "name": name,
+                "function_type": f.function_type,
+                "description": f.description or f.comment,
+                "doc_llm": f.tags.get(TAG_DOC_LLM),
+                "parameters": list(f.parameters),
+                "arguments": [
+                    {"name": a.name, "type": a.type, "description": a.description}
+                    for a in f.arguments
+                ],
+                "examples": [e.sql for e in f.examples if e.sql],
+            }
+    return {"error": f"no function {schema}.{name!r} — call list_tables to see what exists"}
+
+
+def tool_run_sql(cur: Any, sql: str, limits: SimLimits) -> dict[str, Any]:
+    """Run a read-only / session-local query; return columns + the first rows."""
+    if not safe_session_sql(sql):
+        return {
+            "ok": False,
+            "error": "blocked: only read-only / session-local SQL is allowed "
+            "(SELECT/WITH/EXPLAIN/SET/temp objects)",
+        }
+    try:
+        cols, rows = _run(cur, _wrap_limit(sql, limits.row_limit), limits.timeout)
+    except Exception as e:  # noqa: BLE001 - relayed to the analyst as an observation
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    return {"ok": True, "columns": cols, "rows": _render_result(cols, rows), "row_count": len(rows)}
 
 
 # --------------------------------------------------------------------------
@@ -211,16 +321,23 @@ def _run(cur: Any, sql: str, timeout: float) -> tuple[list[str], list[Any]]:
 
 
 def _resultsets_equal(
-    a: tuple[list[str], list[Any]], b: tuple[list[str], list[Any]], unordered: bool
+    a: tuple[list[str], list[Any]],
+    b: tuple[list[str], list[Any]],
+    *,
+    unordered: bool,
+    ignore_column_names: bool,
 ) -> bool:
-    """Compare two live result sets by VALUES, ignoring column names.
+    """Compare two live result sets, the reference being the contract.
 
-    The analyst's column aliases are cosmetic; what's graded is the data.
-    Position- and (unless ``unordered``) row-order-sensitive, since most analyst
-    tasks are ranked/top-N. Passing empty cols to ``_render_result`` yields plain
-    value lists rather than column-keyed dicts.
+    Strict by default: column names + values must match (the task prompt should
+    pin output column names, so name them in the reference). With
+    ``ignore_column_names`` the comparison is by VALUES only. Row order matters
+    unless ``unordered`` (most analyst tasks are ranked/top-N).
     """
-    ra, rb = _render_result([], a[1]), _render_result([], b[1])
+    if ignore_column_names:
+        ra, rb = _render_result([], a[1]), _render_result([], b[1])
+    else:
+        ra, rb = _render_result(*a), _render_result(*b)
     if unordered:
         return sorted(map(_canon, ra)) == sorted(map(_canon, rb))
     return ra == rb
@@ -234,15 +351,48 @@ def _canon(row: Any) -> str:
 # The analyst loop + grading
 # --------------------------------------------------------------------------
 _ACTOR = (
-    "You are a SQL analyst working in DuckDB with a data catalog attached. Accomplish the "
-    "TASK using ONLY what the catalog exposes. You may run read-only / session-local SQL "
-    "(SELECT, WITH, temp views, SET) — one statement per step. Explore as needed, then finish.\n\n"
-    "Respond with ONE JSON object and nothing else:\n"
-    '  run a query: {"thought":"...","action":"query","sql":"<one SQL statement>"}\n'
-    '  when done:   {"thought":"...","action":"final",'
-    '"answer_sql":"<SELECT whose result IS the answer>","answer_summary":"...",'
-    '"friction":["anything missing/confusing in the metadata, else omit"]}'
+    "You are a SQL analyst assistant connected to a DuckDB database with a data catalog "
+    "attached. Accomplish the TASK using ONLY what the catalog exposes — you discover the "
+    "schema through tools, exactly like a real agent would.\n\n"
+    "TOOLS — respond with ONE JSON object per turn and nothing else:\n"
+    '  {"thought":"...","action":"list_tables"}'
+    "  — list schemas, tables/views, and functions with their one-line descriptions\n"
+    '  {"thought":"...","action":"describe_table","schema":"...","table":"..."}'
+    "  — columns, types, constraints, and examples for one table/view\n"
+    '  {"thought":"...","action":"describe_function","schema":"...","name":"..."}'
+    "  — signature, description, and per-argument docs for one function\n"
+    '  {"thought":"...","action":"run_sql","sql":"<one SQL statement>"}'
+    "  — run one read-only / session-local statement (SELECT, WITH, temp view)\n"
+    '  {"thought":"...","action":"final","answer_sql":"<SELECT whose result IS the answer>",'
+    '"answer_summary":"...","friction":["missing/confusing metadata, else omit"]}\n\n'
+    "RULES (mirror real-agent best practice):\n"
+    "- Call describe_table / describe_function to learn columns and signatures before "
+    "querying — never guess column or argument names.\n"
+    "- Reference objects by their three-part name catalog.schema.object.\n"
+    "- Do ALL arithmetic in SQL; combine data with JOINs in SQL.\n"
+    "- Avoid SELECT * in your final answer; select only the columns the task needs.\n"
+    "- The orientation listing below is just a starting map — drill in with the tools."
 )
+
+
+def _dispatch(
+    catalog: Catalog, cur: Any, action: dict[str, Any], limits: SimLimits
+) -> dict[str, Any]:
+    """Answer one discovery/run_sql tool call from the Catalog model + live cursor."""
+    kind = action.get("action")
+    if kind == "list_tables":
+        return tool_list_tables(catalog)
+    if kind == "describe_table":
+        return tool_describe_table(
+            catalog, str(action.get("schema") or ""), str(action.get("table") or "")
+        )
+    if kind == "describe_function":
+        return tool_describe_function(
+            catalog, str(action.get("schema") or ""), str(action.get("name") or "")
+        )
+    if kind == "run_sql":
+        return tool_run_sql(cur, str(action.get("sql") or "").strip(), limits)
+    return {"error": f"unknown action {kind!r}"}
 
 
 def run_task(
@@ -250,20 +400,21 @@ def run_task(
     con: Any,
     backend: ReviewBackend,
     task: AgentTask,
-    overview: str,
+    listing: str,
     limits: SimLimits,
 ) -> TaskRun:
-    """Drive the bounded ReAct loop for one task on its own cursor (state accrues)."""
+    """Drive the bounded tool-mediated ReAct loop on its own cursor (state accrues)."""
     cur = con.cursor()
     steps: list[TaskStep] = []
+    trail: list[str] = []  # discovery trail: tool calls + their results
     answer_sql: list[str] = []
     summary = ""
     friction: list[str] = []
     queries = 0
     for _ in range(max(1, limits.max_steps)):
         prompt = (
-            f"{_ACTOR}\n\nCATALOG OVERVIEW:\n{overview}\n\nTASK: {task.prompt}\n\n"
-            f"TRANSCRIPT SO FAR:\n{_transcript(steps)}"
+            f"{_ACTOR}\n\nORIENTATION (names only — use the tools for detail):\n{listing}\n\n"
+            f"TASK: {task.prompt}\n\nDISCOVERY SO FAR:\n{_transcript(trail)}"
         )
         try:
             action = _extract_json(backend.complete(prompt))
@@ -277,44 +428,47 @@ def run_task(
             summary = str(action.get("answer_summary") or "")
             friction = [str(x) for x in (action.get("friction") or [])]
             break
-        if kind != "query":
-            break
-        sql = str(action.get("sql") or "").strip()
-        if not sql:
-            break
-        if not safe_session_sql(sql):
-            steps.append(
-                TaskStep(sql=sql, ok=False, blocked=True, error="blocked by read-only guard")
-            )
-            friction.append(f"attempted a non-read-only statement: {sql[:80]}")
+        if kind == "run_sql":
+            sql = str(action.get("sql") or "").strip()
+            if not sql:
+                break
+            result = tool_run_sql(cur, sql, limits)
+            if not result.get("ok"):
+                blocked = result.get("error", "").startswith("blocked")
+                if blocked:
+                    friction.append(f"attempted a non-read-only statement: {sql[:80]}")
+                steps.append(
+                    TaskStep(sql=sql, ok=False, blocked=blocked, error=result.get("error"))
+                )
+            else:
+                steps.append(
+                    TaskStep(sql=sql, ok=True, cols=result["columns"], rows=result["rows"])
+                )
+            queries += 1
+            trail.append(f"run_sql {sql}\n  -> {_clip(json.dumps(result, default=str))}")
+            if queries >= limits.max_queries:
+                break
             continue
-        queries += 1
-        try:
-            cols, rows = _run(cur, _wrap_limit(sql, limits.row_limit), limits.timeout)
-            steps.append(TaskStep(sql=sql, ok=True, cols=cols, rows=rows))
-        except Exception as e:  # noqa: BLE001 - relayed to the analyst as an observation
-            steps.append(TaskStep(sql=sql, ok=False, error=f"{type(e).__name__}: {e}"))
-        if queries >= limits.max_queries:
-            break
+        if kind in ("list_tables", "describe_table", "describe_function"):
+            result = _dispatch(catalog, cur, action, limits)
+            label = action.get("table") or action.get("name") or ""
+            trail.append(f"{kind} {label}\n  -> {_clip(json.dumps(result, default=str))}")
+            continue
+        break  # unknown / malformed action
     # keep the agent cursor alive on the run for tier-2 grading
     run = TaskRun(steps=steps, answer_sql=answer_sql, answer_summary=summary, friction=friction)
     run._cur = cur  # type: ignore[attr-defined]
     return run
 
 
-def _transcript(steps: list[TaskStep]) -> str:
-    if not steps:
-        return "(nothing yet — start exploring)"
-    out: list[str] = []
-    for i, s in enumerate(steps):
-        out.append(f"[{i}] SQL: {s.sql}")
-        if s.blocked:
-            out.append("    -> blocked (read-only / session-local statements only)")
-        elif s.ok:
-            out.append(f"    -> {len(s.rows)} row(s); {_render_actual(s.cols, s.rows)}")
-        else:
-            out.append(f"    -> error: {s.error}")
-    return "\n".join(out)
+def _clip(text: str, limit: int = 1200) -> str:
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _transcript(trail: list[str]) -> str:
+    if not trail:
+        return "(nothing yet — start with list_tables to orient)"
+    return "\n".join(f"[{i}] {entry}" for i, entry in enumerate(trail))
 
 
 def _render_actual(cols: list[str], rows: list[Any], limit: int = 400) -> str:
@@ -362,7 +516,12 @@ def grade_task(
             actual = _run(cur, _wrap_limit(run.answer_sql[0], _ANSWER_LIMIT), limits.timeout)
         except Exception as e:  # noqa: BLE001
             return mk("fail", f"answer query failed: {e}", "reference")
-        ok = _resultsets_equal(expected, actual, task.unordered)
+        ok = _resultsets_equal(
+            expected,
+            actual,
+            unordered=task.unordered,
+            ignore_column_names=task.ignore_column_names,
+        )
         reason = "result matches reference" if ok else "result differs from the reference solution"
         return mk("pass" if ok else "fail", reason, "reference")
 
@@ -447,11 +606,11 @@ def simulate_tasks(
 ) -> SimReport:
     """Run every declared task (with retries) and aggregate a suitability report."""
     limits = limits or SimLimits()
-    overview = build_overview(catalog)
+    listing = build_listing(catalog)
     verdicts: list[TaskVerdict] = []
     judged = cached = 0
     for task in catalog.agent_test_tasks:
-        key = _task_key(overview, task, catalog.data_version)
+        key = _task_key(listing, task, catalog.data_version)
         hit = _cache_get(cache, key)
         if hit is not None:
             verdicts.append(hit)
@@ -459,7 +618,7 @@ def simulate_tasks(
             continue
         best: TaskVerdict | None = None
         for _ in range(max(1, limits.attempts)):
-            run = run_task(catalog, con, backend, task, overview, limits)
+            run = run_task(catalog, con, backend, task, listing, limits)
             v = grade_task(con, backend, task, run, limits)
             if best is None or (v.passed and not best.passed):
                 best = v
@@ -499,7 +658,7 @@ _SUGGEST = (
 
 def suggest_tasks(catalog: Catalog, backend: ReviewBackend, n: int = 5) -> str:
     """Ask the LLM to propose candidate tasks as ready-to-paste tag JSON."""
-    raw = backend.complete(_SUGGEST.format(n=n, overview=build_overview(catalog)))
+    raw = backend.complete(_SUGGEST.format(n=n, overview=build_listing(catalog)))
     try:
         data = _extract_json(raw)
     except (ValueError, json.JSONDecodeError):

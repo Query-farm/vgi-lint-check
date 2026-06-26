@@ -203,10 +203,11 @@ vgi-lint review <worker> --format json   # machine-readable verdicts
 Documentation review grades *prose*. `simulate` answers the harder question: **can
 an agent/SQL-analyst actually accomplish real work here using only what's exposed?**
 A worker declares a **fixed** task suite in `vgi.agent_test_tasks`; `simulate` runs
-an LLM analyst through each one — it sees only the catalog overview and the task
-*prompt* (never the solution), writes read-only / session-local SQL, vgi-lint runs
-it against the live worker, and it iterates until it answers. It's a real test, not
-a vibe check: grading is **execution-based**.
+an LLM analyst through each one — it sees only a bounded orientation listing and the
+task *prompt* (never the solution) and **discovers the schema through tools**, just
+like a real agent: `list_tables`, `describe_table`, `describe_function`, and a guarded
+`run_sql` (a local mirror of the production "ask AI" tool contract). It iterates until
+it answers. It's a real test, not a vibe check: grading is **execution-based**.
 
 ```jsonc
 // vgi.agent_test_tasks (catalog tag) — a fixed, version-controlled acceptance suite
@@ -229,9 +230,15 @@ vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as 
   survives data drift), (2) a `check_sql` assertion over the analyst's post-session
   state, (3) an LLM judge against `success_criteria`. Friction (what metadata was
   missing/confusing) is always surfaced.
+- **Tool-mediated discovery** — the analyst is handed only a names-and-one-liners
+  listing, then pulls columns/signatures/constraints on demand through the discovery
+  tools (no full catalog dump). This scales and mirrors how real agents work, so the
+  friction it surfaces reflects real metadata gaps.
 - **The solution is hidden from the analyst** — only `prompt` reaches it, so the
   test measures whether the path is *discoverable* from metadata, not whether the
-  agent can copy an answer.
+  agent can copy an answer. Strict result grading is the contract: column names,
+  values, and row order must match the reference (per-task `unordered` /
+  `ignore_column_names` opt-outs), so prompts should name their output columns.
 - **Stateful tasks are supported:** the analyst may build session-local state
   (temp views, `SET`); a guard blocks anything that escapes the disposable session
   (worker writes, `ATTACH`/`INSTALL`/`COPY … TO`).

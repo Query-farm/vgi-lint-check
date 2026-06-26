@@ -432,9 +432,11 @@ def review_cmd(
     help="Verdict cache (content-hashed); reused unless the overview/task/version changed.",
 )
 @click.option("--no-cache", is_flag=True, help="Always re-run (no verdict cache).")
-@click.option("--max-steps", type=int, default=6, help="Max analyst turns per task.")
 @click.option(
-    "--max-queries", type=int, default=8, help="Max queries the analyst may run per task."
+    "--max-steps", type=int, default=12, help="Max analyst turns per task (discovery + queries)."
+)
+@click.option(
+    "--max-queries", type=int, default=10, help="Max queries the analyst may run per task."
 )
 @click.option(
     "--attempts", type=int, default=1, help="Retry a task up to N times; pass if any passes."
