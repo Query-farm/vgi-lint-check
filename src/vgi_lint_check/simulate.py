@@ -308,11 +308,40 @@ def tool_describe_table(catalog: Catalog, schema: str, table: str) -> dict[str, 
     return {"error": f"no table {schema}.{table!r} — call list_tables to see what exists"}
 
 
+def _arg_calling(a: Any) -> str:
+    """How an argument is passed: ``table`` input, ``named`` (name := …), or positional."""
+    if a.is_table_input:
+        return "table"
+    if a.is_named:
+        return "named"
+    return "positional"
+
+
+def _usage_hint(catalog: Catalog, schema: str, name: str, arguments: list[Any]) -> str | None:
+    """A copy-pasteable call template that makes the calling convention explicit.
+
+    Named args show ``name := <type>``, table inputs show a subquery placeholder, and
+    positional args show their name — so the analyst doesn't guess argument syntax
+    (the common source of bind errors on functions that mix the two, like fit()).
+    """
+    if not arguments:
+        return None
+    parts: list[str] = []
+    for a in arguments:
+        if a.is_table_input:
+            parts.append("<table-or-subquery>")
+        elif a.is_named:
+            parts.append(f"{a.name} := <{a.type or 'value'}>")
+        else:
+            parts.append(a.name)
+    return f"{catalog.qualifier}.{schema}.{name}({', '.join(parts)})"
+
+
 def tool_describe_function(catalog: Catalog, schema: str, name: str) -> dict[str, Any]:
-    """Signature, description, and per-argument docs for a function."""
+    """Signature, description, per-argument docs, and the calling convention."""
     for f in catalog.iter_all_functions():
         if f.schema == schema and f.name == name:
-            return {
+            out = {
                 "schema": schema,
                 "name": name,
                 "function_type": f.function_type,
@@ -320,11 +349,21 @@ def tool_describe_function(catalog: Catalog, schema: str, name: str) -> dict[str
                 "doc_llm": f.tags.get(TAG_DOC_LLM),
                 "parameters": list(f.parameters),
                 "arguments": [
-                    {"name": a.name, "type": a.type, "description": a.description}
+                    {
+                        "name": a.name,
+                        "type": a.type,
+                        "description": a.description,
+                        "calling": _arg_calling(a),
+                        **({"varargs": True} if a.is_varargs else {}),
+                    }
                     for a in f.arguments
                 ],
                 "examples": [e.sql for e in f.examples if e.sql],
             }
+            usage = _usage_hint(catalog, schema, name, f.arguments)
+            if usage:
+                out["usage"] = usage
+            return out
     return {"error": f"no function {schema}.{name!r} — call list_tables to see what exists"}
 
 

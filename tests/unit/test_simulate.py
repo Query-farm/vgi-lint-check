@@ -138,11 +138,25 @@ def test_tool_list_tables_and_describe():
             functions=[
                 F.func(
                     "main",
+                    "fit",
+                    description="fit a model",
+                    parameters=["data", "estimator", "target"],
+                    arguments=[
+                        F.arg("data", "TABLE", "the training data", is_table_input=True),
+                        F.arg("estimator", "VARCHAR", "the estimator name", is_named=True),
+                        F.arg("target", "VARCHAR", "the label column", is_named=True),
+                    ],
+                ),
+                F.func(
+                    "main",
                     "convert",
                     description="convert a value",
                     parameters=["v", "unit"],
-                    arguments=[F.arg("v", "DOUBLE", "the value")],
-                )
+                    arguments=[
+                        F.arg("v", "DOUBLE", "the value", is_positional=True),
+                        F.arg("unit", "VARCHAR", "the unit", is_positional=True),
+                    ],
+                ),
             ],
         )
     )
@@ -155,15 +169,25 @@ def test_tool_list_tables_and_describe():
         "comment": "all the things",
         "column_count": 1,
     }
-    assert schema["functions"][0]["name"] == "convert"
+    assert {f["name"] for f in schema["functions"]} == {"fit", "convert"}
 
     desc = sim.tool_describe_table(cat, "main", "things")
     assert desc["columns"] == [{"name": "id", "type": "INTEGER", "comment": "the id"}]
     assert "error" in sim.tool_describe_table(cat, "main", "nope")
 
-    fn = sim.tool_describe_function(cat, "main", "convert")
-    assert fn["parameters"] == ["v", "unit"]
-    assert fn["arguments"][0] == {"name": "v", "type": "DOUBLE", "description": "the value"}
+    # positional function: usage names the args in order
+    conv = sim.tool_describe_function(cat, "main", "convert")
+    assert conv["arguments"][0]["calling"] == "positional"
+    assert conv["usage"] == f"{cat.qualifier}.main.convert(v, unit)"
+
+    # mixed table-input + named function: usage makes the := convention explicit
+    fit = sim.tool_describe_function(cat, "main", "fit")
+    callings = [a["calling"] for a in fit["arguments"]]
+    assert callings == ["table", "named", "named"]
+    assert fit["usage"] == (
+        f"{cat.qualifier}.main.fit(<table-or-subquery>, estimator := <VARCHAR>, "
+        "target := <VARCHAR>)"
+    )
     assert "error" in sim.tool_describe_function(cat, "main", "nope")
 
 
