@@ -14,8 +14,8 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..findings import Category, Finding, Severity
-from ..model import Catalog, ObjectKind
-from ._util import is_filter_policy_error, run_with_timeout
+from ..model import Catalog, ObjectKind, Table, View
+from ._util import is_filter_policy_error, map_queries, run_with_timeout
 from .base import Rule, RuleContext
 from .registry import register
 
@@ -358,3 +358,247 @@ class SharedColumnSuggestsRelationship(Rule):
                     "if these tables relate on this column, declare a FOREIGN KEY so "
                     "the join is discoverable to agents; otherwise this is fine to ignore",
                 )
+
+
+def _ident(name: str) -> str:
+    """Quote an identifier as a DuckDB double-quoted name (injection-safe)."""
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _relation(qualifier: str, schema: str, name: str) -> str:
+    return f"{_ident(qualifier)}.{_ident(schema)}.{_ident(name)}"
+
+
+def _values(rows: Any) -> list[Any]:
+    """Flatten single-column rows to non-NULL scalar values."""
+    return [r[0] for r in rows if r[0] is not None]
+
+
+def _run_sample_ladder(
+    cur: Any, sample_sql: str, limit_sql: str, timeout: float
+) -> tuple[Any, bool] | None:
+    """Run a random ``USING SAMPLE`` query, falling back to deterministic ``LIMIT``.
+
+    Returns ``(rows, used_limit)``. ``None`` means skip — either a mandatory-filter
+    scan policy (both rungs would hit it) or a probe failure/timeout we won't
+    false-positive on. The fallback fires on any non-policy rung-1 error, so a
+    worker that doesn't support ``USING SAMPLE`` still gets a deterministic sample.
+    """
+    try:
+        rows = run_with_timeout(cur, lambda q=sample_sql: cur.execute(q).fetchall(), timeout)
+        return rows, False
+    except Exception as e:  # noqa: BLE001 - degrade to the deterministic rung
+        if is_filter_policy_error(e):
+            return None
+    try:
+        rows = run_with_timeout(cur, lambda q=limit_sql: cur.execute(q).fetchall(), timeout)
+        return rows, True
+    except Exception:  # noqa: BLE001 - give up rather than emit a false finding
+        return None
+
+
+# One single-column FK to probe: (child table, local col, parent, referenced col).
+_FkProbe = tuple[Table, str, "Table | View", str]
+
+
+@register
+class ForeignKeyReferencesResolve(Rule):
+    code = "VGI810"
+    name = "foreign-key-references-resolve"
+    category = CON
+    # Sampling can only *find* a broken reference, never *prove* integrity — so an
+    # orphan is a warning (investigate), not a hard error, and finding nothing is
+    # not a guarantee. VGI801 still validates the FK metadata as an error.
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE,)
+    requires_connection = True
+    summary = "Sampled foreign-key values should resolve to a row in the referenced table."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        con = ctx.connection
+        if con is None:
+            return
+        items = list(self._probes(ctx.catalog))
+        if not items:
+            return
+        n = max(1, ctx.config.sample_size)
+        timeout = ctx.config.sample_timeout
+
+        def work(item: _FkProbe, cur: Any) -> Finding | None:
+            return self._probe_one(ctx, cur, item, n, timeout)
+
+        results = map_queries(con, items, work, ctx.config.execute_concurrency)
+        yield from (f for f in results if f is not None)
+
+    def _probes(self, cat: Catalog) -> Iterator[_FkProbe]:
+        """Single-column FKs whose parent is unambiguously resolvable.
+
+        Composite FKs and any metadata defect (missing local/ref column, unknown
+        or ambiguous parent) are left to VGI801 — this rule only probes *data* for
+        FKs it can target without guessing.
+        """
+        for table, c in cat.iter_constraints():
+            if c.constraint_type != "FOREIGN KEY":
+                continue
+            if len(c.columns) != 1 or len(c.referenced_columns) != 1 or not c.referenced_table:
+                continue
+            local, ref_col = c.columns[0], c.referenced_columns[0]
+            if local not in table.column_names():
+                continue
+            targets = [
+                t for t in cat.find_table_like(c.referenced_table) if ref_col in t.column_names()
+            ]
+            if len(targets) != 1:
+                continue
+            yield table, local, targets[0], ref_col
+
+    def _probe_one(
+        self, ctx: RuleContext, cur: Any, item: _FkProbe, n: int, timeout: float
+    ) -> Finding | None:
+        table, local, parent, ref_col = item
+        qual = ctx.catalog.qualifier
+        child_rel = _relation(qual, table.schema, table.name)
+        parent_rel = _relation(qual, parent.schema, parent.name)
+
+        sampled = self._sample_child(cur, child_rel, _ident(local), n, timeout)
+        if sampled is None:
+            return None  # worker scan policy / timeout / unsupported — can't probe
+        values, method = sampled
+        if not values:
+            return None  # column is all-NULL or empty — nothing to resolve
+
+        present = self._probe_parent(cur, parent_rel, _ident(ref_col), values, timeout)
+        if present is None:
+            return None  # parent probe failed — never false-positive on no evidence
+        orphans = [v for v in values if v not in present]
+        if not orphans:
+            return None
+        examples = ", ".join(repr(v) for v in orphans[:5])
+        return self.finding(
+            ctx,
+            table.id,
+            f"{len(orphans)} of {len(values)} foreign-key value(s) in "
+            f'"{table.name}".{local} have no matching "{parent.name}".{ref_col} row '
+            f"({method}): {examples}",
+            "every foreign-key value should resolve to a parent row — investigate the "
+            "orphaned references or correct the data/constraint",
+        )
+
+    def _sample_child(
+        self, cur: Any, child_rel: str, lcol: str, n: int, timeout: float
+    ) -> tuple[list[Any], str] | None:
+        """Sample distinct non-NULL child values, with a graceful probe ladder.
+
+        Rung 1 is a true random ``USING SAMPLE``; on any non-policy failure
+        (unsupported clause, timeout) it falls back to a deterministic ``LIMIT``
+        (non-random, but exact when it under-fills the limit). A mandatory-filter
+        scan policy short-circuits to ``None`` — both rungs would hit it.
+        """
+        base = f"SELECT DISTINCT {lcol} AS v FROM {child_rel} WHERE {lcol} IS NOT NULL"
+        res = _run_sample_ladder(
+            cur, f"{base} USING SAMPLE {int(n)} ROWS", f"{base} LIMIT {int(n)}", timeout
+        )
+        if res is None:
+            return None
+        rows, used_limit = res
+        values = _values(rows)
+        if not used_limit:
+            return values, "random sample"
+        # Under-filling the LIMIT means the distinct values were exhausted — exact.
+        method = (
+            f"all {len(values)} distinct values" if len(values) < n else f"first {n}, unsampled"
+        )
+        return values, method
+
+    def _probe_parent(
+        self, cur: Any, parent_rel: str, rcol: str, values: list[Any], timeout: float
+    ) -> set[Any] | None:
+        """Which sampled values exist in the parent — a pushable ``IN`` lookup."""
+        placeholders = ", ".join("?" for _ in values)
+        sql = f"SELECT DISTINCT {rcol} AS v FROM {parent_rel} WHERE {rcol} IN ({placeholders})"
+        try:
+            rows = run_with_timeout(
+                cur, lambda q=sql, p=list(values): cur.execute(q, p).fetchall(), timeout
+            )
+        except Exception:  # noqa: BLE001 - no evidence -> skip, never false-positive
+            return None
+        return set(_values(rows))
+
+
+# One CHECK constraint to probe: (owning table, bound predicate expression).
+_CheckProbe = tuple[Table, str]
+
+
+@register
+class CheckConstraintHolds(Rule):
+    code = "VGI811"
+    name = "check-constraint-holds"
+    category = CON
+    # The data-level complement to VGI803 (which only checks the expression
+    # *binds*). Sampling finds counterexamples but can't prove the invariant
+    # holds, so a violation is a warning, not an error.
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE,)
+    requires_connection = True
+    summary = "Sampled rows should satisfy the table's declared CHECK constraints."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        con = ctx.connection
+        if con is None:
+            return
+        items = list(self._probes(ctx.catalog))
+        if not items:
+            return
+        n = max(1, ctx.config.sample_size)
+        timeout = ctx.config.sample_timeout
+
+        def work(item: _CheckProbe, cur: Any) -> Finding | None:
+            return self._probe_one(ctx, cur, item, n, timeout)
+
+        results = map_queries(con, items, work, ctx.config.execute_concurrency)
+        yield from (f for f in results if f is not None)
+
+    def _probes(self, cat: Catalog) -> Iterator[_CheckProbe]:
+        """Every CHECK constraint that carries a non-empty predicate."""
+        for table, c in cat.iter_constraints():
+            if c.constraint_type != "CHECK" or not c.expression:
+                continue
+            expr = _check_expression(c.expression)
+            if expr:
+                yield table, expr
+
+    def _probe_one(
+        self, ctx: RuleContext, cur: Any, item: _CheckProbe, n: int, timeout: float
+    ) -> Finding | None:
+        table, expr = item
+        rel = _relation(ctx.catalog.qualifier, table.schema, table.name)
+        # A CHECK passes unless the predicate is FALSE — NULL/UNKNOWN satisfies it
+        # (SQL CHECK semantics), so a true violation is exactly ``(expr) IS FALSE``.
+        inner = f"SELECT (({expr}) IS FALSE) AS bad FROM {rel}"
+        agg = "SELECT count(*) AS n, count(*) FILTER (WHERE bad) AS bad"
+        res = _run_sample_ladder(
+            cur,
+            f"{agg} FROM ({inner} USING SAMPLE {int(n)} ROWS) t",
+            f"{agg} FROM ({inner} LIMIT {int(n)}) t",
+            timeout,
+        )
+        if res is None:
+            return None  # scan policy / runtime failure — can't probe
+        rows, used_limit = res
+        if not rows:
+            return None
+        total, bad = int(rows[0][0]), int(rows[0][1])
+        if total == 0 or bad == 0:
+            return None
+        if not used_limit:
+            method = f"random sample of {total} rows"
+        else:
+            method = f"all {total} rows" if total < n else f"first {n} rows"
+        return self.finding(
+            ctx,
+            table.id,
+            f'{bad} of {total} sampled rows in "{table.name}" violate CHECK '
+            f"({expr[:80]}) ({method})",
+            "rows in the worker break this declared CHECK invariant — fix the data, "
+            "or correct/remove the constraint so the metadata matches reality",
+        )

@@ -87,6 +87,8 @@ class Config:
     execute_timeout: float = 30.0  # per-query wall-clock cap (seconds; 0 = off)
     execute_concurrency: int = 1  # run example queries across N cursors (worker pool)
     slow_example_seconds: float = 5.0  # warn on executable examples slower than this (0 = off)
+    sample_size: int = 100  # VGI810/VGI811: rows/values sampled per constraint probe
+    sample_timeout: float = 10.0  # VGI810/VGI811: per-query cap (shorter than execute_timeout)
     check_links: bool = False  # enable network rules (validate description URLs)
     link_timeout: float = 10.0
     fail_on: Severity = Severity.ERROR
@@ -197,6 +199,8 @@ def from_table(raw: dict[str, Any]) -> Config:
         cfg.execute_timeout = float(ex.get("timeout", cfg.execute_timeout))
         cfg.execute_concurrency = int(ex.get("concurrency", cfg.execute_concurrency))
         cfg.slow_example_seconds = float(ex.get("slow_seconds", cfg.slow_example_seconds))
+        cfg.sample_size = int(ex.get("sample_size", cfg.sample_size))
+        cfg.sample_timeout = float(ex.get("sample_timeout", cfg.sample_timeout))
     return cfg
 
 

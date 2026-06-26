@@ -164,6 +164,8 @@ skipped unless `--execute` is passed.
 | `VGI807` | info | table-has-primary-key | Each table should declare a primary key so agents know each row's identity. |  |
 | `VGI808` | info | foreign-key-suggested | A column named like a key (<table>_id) with no FK likely needs one declared. |  |
 | `VGI809` | info | shared-column-suggests-relationship | A key-shaped column shared by several tables with no FK may be a missing relationship. |  |
+| `VGI810` | warning | foreign-key-references-resolve | Sampled foreign-key values should resolve to a row in the referenced table. | requires `--execute` |
+| `VGI811` | warning | check-constraint-holds | Sampled rows should satisfy the table's declared CHECK constraints. | requires `--execute` |
 
 ## Structure & size limits (VGI11x/13x)
 
@@ -196,4 +198,4 @@ skipped unless `--execute` is passed.
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 
-_111 rules._
+_113 rules._
