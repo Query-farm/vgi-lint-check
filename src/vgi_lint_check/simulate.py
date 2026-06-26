@@ -954,98 +954,207 @@ def _suite_sql(catalog: Catalog) -> str:
     return " ".join(parts).lower()
 
 
+def _referenced(text: str, objects: list[tuple[str, str]]) -> set[str]:
+    """Qualified names from ``objects`` whose bare name appears in ``text`` (a call)."""
+    low = text.lower()
+    return {q for q, name in objects if re.search(rf"\b{re.escape(name.lower())}\b", low)}
+
+
 def compute_coverage(catalog: Catalog) -> Coverage:
     """Which objects (functions + tables) the suite's reference/check SQL touches."""
-    text = _suite_sql(catalog)
-    covered: list[str] = []
-    uncovered: list[str] = []
-    for qualified, name in _unique_objects(catalog):
-        if re.search(rf"\b{re.escape(name.lower())}\b", text):
-            covered.append(qualified)
-        else:
-            uncovered.append(qualified)
+    objects = _unique_objects(catalog)
+    hit = _referenced(_suite_sql(catalog), objects)
+    covered = [q for q, _ in objects if q in hit]
+    uncovered = [q for q, _ in objects if q not in hit]
     return Coverage(covered=covered, uncovered=uncovered)
 
 
 # --------------------------------------------------------------------------
-# Suggest mode (authoring helper) — coverage-driven
+# Reference verification — an authoring/CI gate that the declared references are
+# sound (they run, and they're deterministic) BEFORE trusting a graded run.
 # --------------------------------------------------------------------------
+@dataclass
+class RefCheck:
+    """The verification outcome for one task's reference SQL."""
+
+    name: str
+    status: str  # ok | error | nondeterministic | empty | no-reference
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """True when the reference is sound (or there's nothing to verify)."""
+        return self.status in ("ok", "no-reference")
+
+
+@dataclass
+class VerifyReport:
+    """Result of verifying every declared task's reference SQL."""
+
+    location: str
+    checks: list[RefCheck]
+
+    @property
+    def ok(self) -> bool:
+        """True when every reference is sound."""
+        return all(c.ok for c in self.checks)
+
+
+def verify_references(
+    catalog: Catalog, con: Any, limits: SimLimits | None = None, runs: int = 3
+) -> VerifyReport:
+    """Run each task's ``reference_sql`` ``runs`` times and check it's sound.
+
+    Flags references that error, return different results across runs (a random or
+    unseeded reference), or return no rows. This catches authoring bugs the graded
+    simulation would otherwise surface only as a flaky failure; it does NOT judge
+    whether an agent can *reproduce* the answer (that's what the simulation does).
+    """
+    limits = limits or SimLimits()
+    runs = max(2, runs)
+    checks: list[RefCheck] = []
+    for task in catalog.agent_test_tasks:
+        if not task.reference_statements:
+            checks.append(RefCheck(task.name, "no-reference", "no reference_sql to verify"))
+            continue
+        results: list[tuple[list[str], list[Any]]] = []
+        err: str | None = None
+        for _ in range(runs):
+            try:
+                results.append(
+                    _terminal_result(con.cursor(), task.reference_statements, limits.timeout)
+                )
+            except Exception as e:  # noqa: BLE001 - reported as the check's failure
+                err = f"{type(e).__name__}: {e}"
+                break
+        if err is not None:
+            checks.append(RefCheck(task.name, "error", err[:200]))
+            continue
+        first = results[0]
+        stable = all(
+            _resultsets_equal(
+                first, r, unordered=task.unordered, ignore_column_names=task.ignore_column_names
+            )
+            for r in results[1:]
+        )
+        if not stable:
+            checks.append(
+                RefCheck(task.name, "nondeterministic", f"differs across {runs} runs (seed it?)")
+            )
+        elif not first[1]:
+            checks.append(RefCheck(task.name, "empty", "returns no rows"))
+        else:
+            checks.append(RefCheck(task.name, "ok", f"{len(first[1])} row(s), stable ×{runs}"))
+    return VerifyReport(catalog.location, checks)
+
+
+def render_verify(report: VerifyReport) -> str:
+    """Human-readable reference-verification report."""
+    mark = {"ok": "✓", "no-reference": "·"}
+    out = [f"reference verification  {report.location}", ""]
+    for c in report.checks:
+        out.append(
+            f"{mark.get(c.status, '✗')} {c.name}  [{c.status}]"
+            + (f" — {c.detail}" if c.detail else "")
+        )
+    bad = [c for c in report.checks if not c.ok]
+    out.append("")
+    out.append(f"{len(report.checks) - len(bad)}/{len(report.checks)} references sound")
+    return "\n".join(out).rstrip() + "\n"
+
+
+# --------------------------------------------------------------------------
+# Suggest mode (authoring helper) — coverage-driven, batched for large catalogs
+# --------------------------------------------------------------------------
+# One small LLM call per batch of uncovered objects keeps every prompt fast and
+# well under the backend timeout, so suggestion scales to any catalog size.
+_SUGGEST_BATCH_SIZE = 6
+_SUGGEST_MAX_ROUNDS = 12
+
 _SUGGEST = (
     "You are designing a FIXED acceptance suite of analyst tasks for a data worker, run by an "
-    "automated agent-suitability test. The suite must COVER THE MAJORITY of the worker's "
-    "functions: across the whole suite, every important function below should be exercised by at "
-    "least one task. Prefer a mix of difficulty (single-call smoke tests and multi-step tasks), "
-    "and where a function has distinct modes (e.g. encodings, framings, formats) lean toward "
-    "covering the important ones. Each task must be a realistic thing an end user would ask, "
-    "solvable with SQL using ONLY what's exposed, with a correct canonical reference_sql, and it "
-    "should name its output columns (grading is strict on column names, values, and row order). "
-    "{size}\n\nReturn ONLY a JSON array of "
+    "automated agent-suitability test. Propose realistic analyst tasks — things an end user would "
+    "actually ask — that together EXERCISE the specific worker objects listed under TARGET below "
+    "(each target object should be used by at least one task). Mix single-call smoke tests and "
+    "multi-step tasks. Each task must be solvable with SQL using ONLY what's exposed, with a "
+    "correct canonical reference_sql, and must name its output columns (grading is strict on "
+    "column names, values, and row order). Avoid non-deterministic results: pass a fixed "
+    "random_state/seed where a function samples, and don't depend on shared mutable state.\n\n"
+    "Return ONLY a JSON array of "
     '{{"name": "...", "prompt": "...", "reference_sql": "<a correct canonical solution>"}} '
-    "objects suitable for the vgi.agent_test_tasks tag.\n\n"
-    "WORKER OBJECTS (functions + tables — aim to cover these):\n{inventory}\n\n{coverage_note}"
-    "CATALOG OVERVIEW:\n{overview}"
+    "objects.\n\n"
+    "TARGET objects to cover in this batch:\n{targets}\n\n"
+    "Other objects already covered (do not write tasks for these):\n{covered}\n\n"
+    "CATALOG OVERVIEW (for reference):\n{overview}"
 )
 
 
-def _object_inventory(catalog: Catalog) -> str:
-    """One line per function + table: signature/name and a short description.
+def _object_lines(catalog: Catalog) -> dict[str, str]:
+    """Map qualified object name -> a one-line signature + short description.
 
-    Long arg signatures are truncated so a worker with huge UNION/STRUCT parameter
-    types can't blow the suggest prompt past the backend's limits.
+    Long arg signatures are reduced to argument names so a worker with huge
+    UNION/STRUCT parameter types can't blow the suggest prompt past the backend.
     """
-    lines: list[str] = []
+    lines: dict[str, str] = {}
     for f in catalog.iter_all_functions():
+        q = f"{catalog.qualifier}.{f.schema}.{f.name}"
         usage = _usage_hint(catalog, f.schema, f.name, f.arguments)
-        sig = usage or f"{catalog.qualifier}.{f.schema}.{f.name}({', '.join(f.parameters)})"
-        if len(sig) > 160:
-            sig = sig[:157] + "…)"
+        sig = usage or f"{q}({', '.join(f.parameters)})"
+        if len(sig) > 140:  # collapse mega-types to bare arg names
+            args = ", ".join(a.name for a in f.arguments) or ", ".join(f.parameters)
+            sig = f"{q}({args})"
         desc = (
             (f.description or f.comment or f.tags.get(TAG_DOC_LLM) or "").strip().replace("\n", " ")
         )
-        lines.append(f"- {sig}" + (f" — {desc[:140]}" if desc else ""))
+        lines.setdefault(q, f"{sig}" + (f" — {desc[:120]}" if desc else ""))
     for t in catalog.iter_table_like():
+        q = f"{catalog.qualifier}.{t.schema}.{t.name}"
         desc = (t.description_llm or t.comment or "").strip().replace("\n", " ")
-        lines.append(
-            f"- {catalog.qualifier}.{t.schema}.{t.name} (table)"
-            + (f" — {desc[:140]}" if desc else "")
-        )
-    return "\n".join(dict.fromkeys(lines))
+        lines.setdefault(q, f"{q} (table)" + (f" — {desc[:120]}" if desc else ""))
+    return lines
 
 
 def suggest_tasks(catalog: Catalog, backend: ReviewBackend, cap: int = 0) -> str:
     """Propose a coverage-driven suite as ready-to-paste tag JSON.
 
-    ``cap`` 0 means "size the suite to cover the worker"; a positive ``cap`` is an
-    upper bound on the number of tasks proposed.
+    Iterates over small batches of uncovered objects — recomputing coverage from
+    the proposals each round — so each LLM call stays fast and the suite grows
+    until the worker is covered (or ``cap`` tasks, when ``cap`` > 0). Already
+    covered objects (from any existing suite) are skipped.
     """
-    cov = compute_coverage(catalog)
-    if cov.covered:
-        note = (
-            f"Already covered by the existing suite: {', '.join(cov.covered)}.\n"
-            f"Focus on the UNCOVERED functions: {', '.join(cov.uncovered) or '(none)'}.\n\n"
+    objects = _unique_objects(catalog)
+    lines = _object_lines(catalog)
+    overview = build_listing(catalog)
+    covered: set[str] = _referenced(_suite_sql(catalog), objects)
+    proposed: list[dict[str, Any]] = []
+
+    for _ in range(_SUGGEST_MAX_ROUNDS):
+        uncovered = [q for q, _ in objects if q not in covered]
+        if not uncovered or (cap and len(proposed) >= cap):
+            break
+        targets = uncovered[:_SUGGEST_BATCH_SIZE]
+        prompt = _SUGGEST.format(
+            targets="\n".join(f"- {lines[q]}" for q in targets),
+            covered=", ".join(sorted(covered)) or "(none yet)",
+            overview=overview,
         )
-    else:
-        note = ""
+        try:
+            batch = _extract_json(backend.complete(prompt))
+        except (ValueError, json.JSONDecodeError):
+            break
+        new = [t for t in batch if isinstance(t, dict) and t.get("reference_sql")]
+        if not new:
+            break
+        before = len(covered)
+        for t in new:
+            proposed.append(t)
+            covered |= _referenced(str(t.get("reference_sql", "")), objects)
+        if len(covered) == before:  # no forward progress — stop rather than loop
+            break
+
     if cap and cap > 0:
-        size = f"Propose at most {cap} tasks, prioritizing the broadest coverage."
-    else:
-        size = (
-            "Use as many tasks as it takes to cover the majority of the functions above "
-            "(roughly one per function, combined where natural) — but do not pad with trivial "
-            "variants of the same call."
-        )
-    prompt = _SUGGEST.format(
-        size=size,
-        inventory=_object_inventory(catalog),
-        coverage_note=note,
-        overview=build_listing(catalog),
-    )
-    raw = backend.complete(prompt)
-    try:
-        data = _extract_json(raw)
-    except (ValueError, json.JSONDecodeError):
-        return raw.strip()
-    return json.dumps(data, indent=2)
+        proposed = proposed[:cap]
+    return json.dumps(proposed, indent=2)
 
 
 # --------------------------------------------------------------------------

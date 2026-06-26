@@ -257,14 +257,23 @@ vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as 
   (default 1.0); `--advisory` never gates; `--attempts N` retries to tame
   actor non-determinism. Same `claude`-CLI-by-default backend and verdict cache as
   `review`.
+- **Verify references first:** `vgi-lint simulate <worker> --verify-references` runs each
+  task's `reference_sql` a few times and flags any that error, are non-deterministic (a
+  random/unseeded reference), or return no rows — an authoring/CI gate (exit 2 on
+  failure) that catches unsound references *before* a graded run turns them into flaky
+  failures. It checks reference soundness, not whether an agent can reproduce the answer
+  (that's the simulation).
 - **Object coverage:** the report shows how many of the worker's objects — functions
   **and tables/views** — the suite's `reference_sql` actually exercises
   (`object coverage 16/16 (100%)`) and names the untested ones — so a suite can't
   quietly leave half the API unchecked while scoring 100% pass-rate. (Counting tables
   matters for table-centric workers: a geodata worker whose surface is all tables would
   otherwise read 0/1.) `vgi-lint simulate <worker> --suggest` is
-  **coverage-driven**: it proposes a suite sized to cover the worker's functions
-  (bare `--suggest` auto-sizes; `--suggest N` caps at N) rather than a fixed count.
+  **coverage-driven and batched**: it iterates over small batches of *uncovered* objects
+  (recomputing coverage each round) until the worker is covered, so each LLM call stays
+  fast and it scales to large catalogs without hitting the backend timeout (bare
+  `--suggest` auto-sizes; `--suggest N` caps at N). Pair it with `--verify-references` to
+  drop any unsound proposals.
 - **Tasks run in parallel** (`--concurrency`, default 4): each task is judged on its
   own cursor against the VGI worker pool, so a multi-task suite finishes in roughly
   the time of its slowest task, not the sum (~3.4× on a 4-task suite).

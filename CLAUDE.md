@@ -120,8 +120,17 @@ declared in the catalog tag `vgi.agent_test_tasks` (decoded to `AgentTask`).
   (SELECT/WITH/EXPLAIN/SET/PRAGMA/TEMP DDL) and blocks anything escaping the
   disposable session (INSERT/UPDATE/DELETE/ATTACH/INSTALL/LOAD/COPY-TO/multi-statement).
   Blocked statements surface as friction, never execute.
-- `--suggest N` is an authoring helper (propose tasks); generation is authoring-time,
-  the suite is fixed for testing.
+- `--suggest` is an authoring helper (propose tasks) — coverage-driven and **batched**:
+  `suggest_tasks` loops over small batches of uncovered objects, recomputing coverage from
+  the proposals each round, so each LLM call stays small and it never hits the backend's
+  180s timeout on large catalogs (the failure mode of a single mega-prompt).
+- `--verify-references` (`verify_references` / `render_verify`) runs each task's
+  `reference_sql` N×3 and flags error / non-deterministic / empty references — an
+  authoring/CI gate (exit 2) that productizes the manual probe step and catches the
+  unsound-reference class (random/unseeded, typos) before a flaky graded run. It does not
+  judge agent reproducibility (that's the simulation). Note the `claude -p` backend is
+  stateless per call (`review.py`, no `--resume`); the ReAct loop preserves context by
+  re-sending the full transcript each turn.
 
 ## Conventions & gotchas
 

@@ -349,6 +349,73 @@ def test_report_renders_coverage():
     assert {u.rsplit(".", 1)[1] for u in doc["coverage"]["uncovered"]} == {"skipped", "things"}
 
 
+def test_verify_references_flags_error_and_nondeterminism():
+    good = AgentTask(
+        name="good",
+        prompt="p",
+        reference_statements=[ExampleStatement(None, "SELECT 'strong' AS band")],
+    )
+    broken = AgentTask(
+        name="broken",
+        prompt="p",
+        reference_statements=[ExampleStatement(None, "SELECT boom")],  # raises -> error
+    )
+    noderef = AgentTask(name="nodef", prompt="p", check_sql="SELECT check_pass")  # no reference
+    rep = sim.verify_references(_catalog_with_tasks([good, broken, noderef]), _Con(), runs=3)
+    by = {c.name: c.status for c in rep.checks}
+    assert by == {"good": "ok", "broken": "error", "nodef": "no-reference"}
+    assert rep.ok is False  # the broken one fails the gate
+    txt = sim.render_verify(rep)
+    assert "references sound" in txt and "broken" in txt
+
+
+def test_verify_references_detects_nondeterministic():
+    # a backend-less reference whose result flips every call -> nondeterministic
+    class _Flip:
+        def __init__(self):
+            self.n = 0
+
+        def cursor(self):
+            return self
+
+        def execute(self, sql):
+            self.n += 1
+            return _Result([(self.n,)], ["x"])  # different value each run
+
+    task = AgentTask(
+        name="flip",
+        prompt="p",
+        reference_statements=[ExampleStatement(None, "SELECT x")],
+    )
+    rep = sim.verify_references(_catalog_with_tasks([task]), _Flip(), runs=3)
+    assert rep.checks[0].status == "nondeterministic" and not rep.ok
+
+
+def test_suggest_is_batched_and_covers_targets():
+    cat = F.catalog(
+        F.schema(
+            "main",
+            comment="c",
+            tags=_TAGS,
+            functions=[
+                F.func("main", "fa", description="d"),
+                F.func("main", "fb", description="d"),
+            ],
+        )
+    )
+    cat.agent_test_tasks = []
+    # one task per call, each covering one target function
+    backend = _Backend(
+        [
+            json.dumps([{"name": "t_fa", "prompt": "p", "reference_sql": "SELECT v.main.fa()"}]),
+            json.dumps([{"name": "t_fb", "prompt": "p", "reference_sql": "SELECT v.main.fb()"}]),
+        ]
+    )
+    out = json.loads(sim.suggest_tasks(cat, backend))
+    assert {t["name"] for t in out} == {"t_fa", "t_fb"}  # both rounds accumulated
+    assert any("TARGET objects" in p for p in backend.prompts)
+
+
 def test_tasks_run_in_parallel_preserving_order():
     # 3 distinct tasks, all solvable by the same fixed final answer; concurrency>1.
     tasks = [
@@ -367,14 +434,26 @@ def test_tasks_run_in_parallel_preserving_order():
     assert all(v.outcome == "pass" for v in rep.verdicts) and rep.judged == 3
 
 
-def test_suggest_is_coverage_driven():
-    cat = _catalog_with_tasks([])
-    backend = _Backend([json.dumps([{"name": "t1", "prompt": "p1", "reference_sql": "SELECT 1"}])])
-    out = sim.suggest_tasks(cat, backend, cap=0)
-    assert json.loads(out) == [{"name": "t1", "prompt": "p1", "reference_sql": "SELECT 1"}]
-    # the prompt told the model to cover the worker's functions
-    assert any("COVER THE MAJORITY" in p for p in backend.prompts)
-    assert any("WORKER OBJECTS" in p for p in backend.prompts)
+def test_suggest_respects_cap():
+    cat = F.catalog(
+        F.schema(
+            "main",
+            comment="c",
+            tags=_TAGS,
+            functions=[F.func("main", f"f{i}", description="d") for i in range(4)],
+        )
+    )
+    cat.agent_test_tasks = []
+    # each call proposes a task covering one more function; cap stops accumulation at 2
+    backend = _Backend(
+        [
+            json.dumps([{"name": f"t{i}", "prompt": "p", "reference_sql": f"SELECT v.main.f{i}()"}])
+            for i in range(4)
+        ]
+    )
+    out = json.loads(sim.suggest_tasks(cat, backend, cap=2))
+    assert len(out) == 2
+    assert any("TARGET objects" in p for p in backend.prompts)
 
 
 # --------------------------------------------------------------------------

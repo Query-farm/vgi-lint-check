@@ -457,6 +457,13 @@ def review_cmd(
 )
 @click.option("--advisory", is_flag=True, help="Never gate — always exit 0.")
 @click.option(
+    "--verify-references",
+    "verify_references",
+    is_flag=True,
+    help="Authoring check: run each task's reference_sql a few times and flag any that error, "
+    "are non-deterministic, or return no rows. No actor, no grading; exits 2 on any failure.",
+)
+@click.option(
     "--suggest",
     type=int,
     is_flag=False,
@@ -489,6 +496,7 @@ def simulate_cmd(
     concurrency: int,
     min_pass_rate: float,
     advisory: bool,
+    verify_references: bool,
     suggest: int | None,
     fmt: str,
     output: str | None,
@@ -515,6 +523,8 @@ def simulate_cmd(
     def runner(catalog: Any, con: Any) -> Any:
         if suggest is not None:
             return ("suggest", sm.suggest_tasks(catalog, backend, cap=max(0, suggest)))
+        if verify_references:
+            return ("verify", sm.verify_references(catalog, con, limits))
         cache = None if no_cache else ReviewCache(Path(cache_path)).load()
         return (
             "report",
@@ -546,6 +556,12 @@ def simulate_cmd(
         click.echo(result if not output else "")
         if output:
             Path(output).write_text(result + "\n")
+        return
+
+    if mode == "verify":
+        click.echo(sm.render_verify(result))
+        if not result.ok:
+            ctx.exit(EXIT_FINDINGS)
         return
 
     text = sm.render_json(result) if fmt == "json" else sm.render_terminal(result)
