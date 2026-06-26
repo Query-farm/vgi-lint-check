@@ -91,6 +91,22 @@ declared in the catalog tag `vgi.agent_test_tasks` (decoded to `AgentTask`).
   default** on column names + values + order, with per-task `unordered` /
   `ignore_column_names` opt-outs); Tier 2 `check_sql` over post-session state; Tier 3
   LLM judge against `success_criteria`. Friction is always extracted.
+- **Path scoring (the discoverability signal).** `run_task` records the full
+  trajectory (`TaskRun.discovery` trace + `TaskStep.error_kind` + `hit_ceiling`);
+  `compute_path_metrics` turns it into a `PathMetrics` score that penalizes *wasted*
+  effort (bind errors, mandatory-filter trial-and-error via `is_filter_policy_error`,
+  redundant `describe_table`, not-found lookups, non-convergence) — **not** raw step
+  count, so complexity isn't punished. `build_suggestions` maps each fault to a
+  concrete metadata fix. `SimReport.discoverability` (mean path score) is reported
+  alongside pass-rate; `.suggestions` is the deduped fix list. Design intent: a task
+  that *passes but scores low* means the worker's metadata, not the task, is the
+  problem — fix the worker (add an example / tighten docs) rather than raise
+  `--attempts`, which only masks it.
+- **Strict-grading caveat for complex tasks:** open-ended "which X has the most"
+  questions can have defensible-but-divergent correct answers (e.g. spatial bbox
+  overlap-vs-containment) and are unsuitable for strict reference grading — scope such
+  tasks to a single unambiguous answer (e.g. a *named* entity). A hard task that needs
+  `--attempts 2` usually means a missing worked example in the worker.
 - **Safety:** `rules/_util.safe_session_sql` allows read-only / session-local SQL
   (SELECT/WITH/EXPLAIN/SET/PRAGMA/TEMP DDL) and blocks anything escaping the
   disposable session (INSERT/UPDATE/DELETE/ATTACH/INSTALL/LOAD/COPY-TO/multi-statement).

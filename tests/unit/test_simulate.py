@@ -65,6 +65,8 @@ class _Con:
         return _Con()
 
     def execute(self, sql):
+        if "boom" in sql:
+            raise RuntimeError('Binder Error: referenced column "x" does not exist')
         if "strong" in sql:
             return _Result([("strong",)], ["band"])
         if "weak" in sql:
@@ -191,6 +193,69 @@ def test_actor_uses_discovery_tools():
     # the model saw the tool menu and a discovery trail accumulated
     assert any("list_tables" in p for p in backend.prompts)
     assert any("DISCOVERY SO FAR:\n[0] list_tables" in p for p in backend.prompts)
+
+
+# --------------------------------------------------------------------------
+# Path scoring + suggestions (the discoverability signal)
+# --------------------------------------------------------------------------
+def test_clean_path_scores_100():
+    task = AgentTask(
+        name="t",
+        prompt="p",
+        reference_statements=[ExampleStatement(None, "SELECT 'strong' AS band")],
+    )
+    backend = _Backend([json.dumps({"action": "final", "answer_sql": "SELECT 'strong' AS band"})])
+    rep = sim.simulate_tasks(_catalog_with_tasks([task]), _Con(), backend)
+    v = rep.verdicts[0]
+    assert v.outcome == "pass" and v.path.score == 100 and v.suggestions == []
+    assert rep.discoverability == 100
+
+
+def test_path_penalizes_bind_error_and_reinspection():
+    task = AgentTask(
+        name="t",
+        prompt="p",
+        reference_statements=[ExampleStatement(None, "SELECT 'strong' AS band")],
+    )
+    backend = _Backend(
+        [
+            json.dumps({"action": "describe_table", "schema": "main", "table": "things"}),
+            json.dumps(
+                {"action": "describe_table", "schema": "main", "table": "things"}
+            ),  # redundant
+            json.dumps({"action": "run_sql", "sql": "SELECT boom"}),  # bind error
+            json.dumps({"action": "final", "answer_sql": "SELECT 'strong' AS band"}),
+        ]
+    )
+    rep = sim.simulate_tasks(_catalog_with_tasks([task]), _Con(), backend)
+    v = rep.verdicts[0]
+    assert v.outcome == "pass"  # still solved...
+    assert v.path.bind_errors == 1 and v.path.redundant_describes == 1
+    assert v.path.score == 100 - 15 - 10  # bind + re-inspection penalties
+    joined = " ".join(v.suggestions)
+    assert "failed to bind" in joined and "re-inspected" in joined
+    assert any("re-inspected" in s for s in rep.suggestions)
+
+
+def test_compute_path_metrics_ceiling_and_requirement():
+    run = sim.TaskRun(
+        steps=[
+            sim.TaskStep(
+                sql="SELECT 1", ok=False, error="WHERE clause is required", error_kind="requirement"
+            )
+        ],
+        answer_sql=[],
+        answer_summary="",
+        friction=[],
+        discovery=[sim.TraceEvent(kind="describe_table", target="nope", found=False)],
+        hit_ceiling=True,
+    )
+    m = sim.compute_path_metrics(run)
+    assert m.requirement_errors == 1 and m.not_found == 1 and m.hit_ceiling
+    assert m.score == max(0, 100 - 15 - 8 - 40)
+    sugg = sim.build_suggestions(run, m)
+    assert any("never converged" in s for s in sugg)
+    assert any("usage requirement" in s for s in sugg)
 
 
 # --------------------------------------------------------------------------
@@ -330,6 +395,8 @@ def test_render_terminal_and_json():
     backend = _Backend([json.dumps({"action": "final", "answer_sql": "SELECT 'strong' AS band"})])
     rep = sim.simulate_tasks(_catalog_with_tasks([task]), _Con(), backend)
     txt = sim.render_terminal(rep)
-    assert "suitability" in txt and "classify" in txt
+    assert "suitability" in txt and "classify" in txt and "discoverability" in txt
+    assert "path 100/100" in txt
     doc = json.loads(sim.render_json(rep))
     assert doc["tool"] == "vgi-lint simulate" and doc["verdicts"][0]["outcome"] == "pass"
+    assert doc["discoverability"] == 100 and doc["verdicts"][0]["path"]["score"] == 100

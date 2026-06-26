@@ -234,6 +234,17 @@ vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as 
   listing, then pulls columns/signatures/constraints on demand through the discovery
   tools (no full catalog dump). This scales and mirrors how real agents work, so the
   friction it surfaces reflects real metadata gaps.
+- **The path is scored, not just the outcome.** Each task gets a **discoverability
+  score** (0–100) from *how* the agent got there — penalizing wasted effort the
+  metadata should have spared it (queries that failed to bind, hitting a mandatory
+  filter by trial-and-error, re-inspecting an object whose description was too thin,
+  looking up something that doesn't exist, or never converging). A task can **pass
+  yet score low** — that's the signal the docs need work. Each fault becomes a
+  concrete **suggestion** (e.g. "add a `vgi.executable_examples` entry showing this",
+  "tighten the column docs — VGI2xx"), deduped across the suite. Raw step count is
+  *not* penalized, so an inherently complex task isn't marked down for being complex —
+  only for friction. Prefer fixing the worker's metadata over raising `--attempts`:
+  needing retries is itself a discoverability finding.
 - **The solution is hidden from the analyst** — only `prompt` reaches it, so the
   test measures whether the path is *discoverable* from metadata, not whether the
   agent can copy an answer. Strict result grading is the contract: column names,

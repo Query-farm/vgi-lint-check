@@ -26,8 +26,28 @@ from typing import Any
 
 from .model import TAG_DOC_LLM, AgentTask, Catalog, ObjectKind
 from .review import ReviewBackend, ReviewCache  # backends + JSON verdict cache
-from .rules._util import run_with_timeout, safe_session_sql
+from .rules._util import (
+    is_bind_error,
+    is_filter_policy_error,
+    run_with_timeout,
+    safe_session_sql,
+)
 from .rules.execution import _render_result  # canonical result rendering (VGI907)
+
+
+def _classify_error(error: str) -> str:
+    """Bucket a failed action's error into a metadata-actionable kind.
+
+    ``bind`` = unknown table/column/function or type mismatch (a discoverability
+    gap); ``requirement`` = a mandatory-filter / usage policy the agent hit by
+    trial and error (an unsurfaced requirement); ``runtime`` = everything else.
+    """
+    if is_filter_policy_error(error):
+        return "requirement"
+    if is_bind_error(error):
+        return "bind"
+    return "runtime"
+
 
 _ANSWER_LIMIT = 1000  # row cap when materializing the answer / reference for grading
 _VERB = re.compile(r"\s*([A-Za-z_]+)")
@@ -50,14 +70,46 @@ class SimLimits:
 
 @dataclass
 class TaskStep:
-    """One analyst action and what came back."""
+    """One analyst SQL action and what came back."""
 
     sql: str
     ok: bool
     error: str | None = None
+    error_kind: str | None = None  # bind | requirement | runtime | blocked
     cols: list[str] = field(default_factory=list)
     rows: list[Any] = field(default_factory=list)
     blocked: bool = False  # rejected by the safe-SQL guard
+
+
+@dataclass
+class TraceEvent:
+    """One discovery tool call on the analyst's path (for path scoring)."""
+
+    kind: str  # list_tables | describe_table | describe_function
+    target: str  # object name (or "")
+    found: bool = True  # describe of a real object vs a miss
+    redundant: bool = False  # the same object was already described
+
+
+@dataclass
+class PathMetrics:
+    """How efficiently the analyst reached an answer — the discoverability signal.
+
+    The score penalizes *wasted* effort (errors, re-inspection, non-convergence),
+    not raw step count, so an inherently complex task isn't punished for being
+    complex — only for the worker's metadata making it harder than it needs to be.
+    """
+
+    discovery_calls: int = 0
+    queries: int = 0
+    bind_errors: int = 0
+    requirement_errors: int = 0
+    runtime_errors: int = 0
+    blocked: int = 0
+    redundant_describes: int = 0
+    not_found: int = 0
+    hit_ceiling: bool = False
+    score: int = 100  # 0-100 discoverability (100 = went straight to the answer)
 
 
 @dataclass
@@ -68,11 +120,13 @@ class TaskRun:
     answer_sql: list[str]
     answer_summary: str
     friction: list[str]
+    discovery: list[TraceEvent] = field(default_factory=list)
+    hit_ceiling: bool = False  # exhausted the step budget without a final answer
 
 
 @dataclass
 class TaskVerdict:
-    """The graded outcome of a task."""
+    """The graded outcome of a task plus its discovery-path assessment."""
 
     name: str
     outcome: str  # pass | partial | fail
@@ -80,6 +134,9 @@ class TaskVerdict:
     friction: list[str] = field(default_factory=list)
     queries: int = 0
     grader: str = ""  # reference | check_sql | judge | answered
+    path: PathMetrics = field(default_factory=PathMetrics)
+    suggestions: list[str] = field(default_factory=list)
+    attempts_used: int = 1
 
     @property
     def passed(self) -> bool:
@@ -103,6 +160,26 @@ class SimReport:
         if not self.verdicts:
             return 0.0
         return round(sum(v.passed for v in self.verdicts) / len(self.verdicts), 2)
+
+    @property
+    def discoverability(self) -> int:
+        """Mean per-task discovery-path score 0-100 (how easily an agent solves).
+
+        Distinct from pass-rate: a task can pass yet score low here because the
+        agent reached the answer only through errors and re-inspection.
+        """
+        if not self.verdicts:
+            return 0
+        return round(sum(v.path.score for v in self.verdicts) / len(self.verdicts))
+
+    @property
+    def suggestions(self) -> list[str]:
+        """De-duplicated metadata-improvement suggestions across all tasks."""
+        seen: dict[str, None] = {}
+        for v in self.verdicts:
+            for s in v.suggestions:
+                seen.setdefault(s, None)
+        return list(seen)
 
     @property
     def score(self) -> int:
@@ -406,10 +483,13 @@ def run_task(
     """Drive the bounded tool-mediated ReAct loop on its own cursor (state accrues)."""
     cur = con.cursor()
     steps: list[TaskStep] = []
-    trail: list[str] = []  # discovery trail: tool calls + their results
+    discovery: list[TraceEvent] = []
+    described: set[str] = set()  # objects already described (to spot re-inspection)
+    trail: list[str] = []  # discovery trail text re-sent to the actor each turn
     answer_sql: list[str] = []
     summary = ""
     friction: list[str] = []
+    finished = False
     queries = 0
     for _ in range(max(1, limits.max_steps)):
         prompt = (
@@ -427,22 +507,25 @@ def run_task(
             answer_sql = _as_sql_list(action.get("answer_sql"))
             summary = str(action.get("answer_summary") or "")
             friction = [str(x) for x in (action.get("friction") or [])]
+            finished = True
             break
         if kind == "run_sql":
             sql = str(action.get("sql") or "").strip()
             if not sql:
                 break
             result = tool_run_sql(cur, sql, limits)
-            if not result.get("ok"):
-                blocked = result.get("error", "").startswith("blocked")
+            if result.get("ok"):
+                steps.append(
+                    TaskStep(sql=sql, ok=True, cols=result["columns"], rows=result["rows"])
+                )
+            else:
+                err = result.get("error", "")
+                blocked = err.startswith("blocked")
+                ekind = "blocked" if blocked else _classify_error(err)
                 if blocked:
                     friction.append(f"attempted a non-read-only statement: {sql[:80]}")
                 steps.append(
-                    TaskStep(sql=sql, ok=False, blocked=blocked, error=result.get("error"))
-                )
-            else:
-                steps.append(
-                    TaskStep(sql=sql, ok=True, cols=result["columns"], rows=result["rows"])
+                    TaskStep(sql=sql, ok=False, blocked=blocked, error=err, error_kind=ekind)
                 )
             queries += 1
             trail.append(f"run_sql {sql}\n  -> {_clip(json.dumps(result, default=str))}")
@@ -451,12 +534,29 @@ def run_task(
             continue
         if kind in ("list_tables", "describe_table", "describe_function"):
             result = _dispatch(catalog, cur, action, limits)
-            label = action.get("table") or action.get("name") or ""
+            label = str(action.get("table") or action.get("name") or "")
+            key = f"{kind}:{action.get('schema') or ''}.{label}"
+            discovery.append(
+                TraceEvent(
+                    kind=kind,
+                    target=label,
+                    found="error" not in result,
+                    redundant=key in described,
+                )
+            )
+            described.add(key)
             trail.append(f"{kind} {label}\n  -> {_clip(json.dumps(result, default=str))}")
             continue
         break  # unknown / malformed action
     # keep the agent cursor alive on the run for tier-2 grading
-    run = TaskRun(steps=steps, answer_sql=answer_sql, answer_summary=summary, friction=friction)
+    run = TaskRun(
+        steps=steps,
+        answer_sql=answer_sql,
+        answer_summary=summary,
+        friction=friction,
+        discovery=discovery,
+        hit_ceiling=not finished,
+    )
     run._cur = cur  # type: ignore[attr-defined]
     return run
 
@@ -588,6 +688,88 @@ def _terminal_result(
 
 
 # --------------------------------------------------------------------------
+# Path scoring + suggestions (the discoverability signal)
+# --------------------------------------------------------------------------
+# Per-event discoverability penalties. Each names a *wasted* action — effort the
+# worker's metadata should have spared the agent — so the score is independent of
+# a task's intrinsic complexity (legitimate steps cost nothing).
+_PENALTY = {
+    "bind": 15,  # guessed a wrong column/function name → not discoverable
+    "requirement": 15,  # hit an unsurfaced usage requirement (mandatory filter)
+    "runtime": 8,  # a query failed at runtime
+    "blocked": 5,  # tried to escape the read-only session
+    "redundant": 10,  # re-inspected an object → its description was too thin
+    "not_found": 8,  # looked up an object that doesn't exist → wrong mental model
+    "ceiling": 40,  # never converged within the step budget
+}
+
+
+def compute_path_metrics(run: TaskRun) -> PathMetrics:
+    """Score how cleanly the analyst reached an answer (penalize wasted effort)."""
+    bind = sum(1 for s in run.steps if s.error_kind == "bind")
+    req = sum(1 for s in run.steps if s.error_kind == "requirement")
+    runtime = sum(1 for s in run.steps if s.error_kind == "runtime")
+    blocked = sum(1 for s in run.steps if s.blocked)
+    redundant = sum(1 for e in run.discovery if e.redundant)
+    not_found = sum(1 for e in run.discovery if not e.found)
+    queries = sum(1 for s in run.steps if not s.blocked)
+    penalty = (
+        _PENALTY["bind"] * bind
+        + _PENALTY["requirement"] * req
+        + _PENALTY["runtime"] * runtime
+        + _PENALTY["blocked"] * blocked
+        + _PENALTY["redundant"] * redundant
+        + _PENALTY["not_found"] * not_found
+        + (_PENALTY["ceiling"] if run.hit_ceiling else 0)
+    )
+    return PathMetrics(
+        discovery_calls=len(run.discovery),
+        queries=queries,
+        bind_errors=bind,
+        requirement_errors=req,
+        runtime_errors=runtime,
+        blocked=blocked,
+        redundant_describes=redundant,
+        not_found=not_found,
+        hit_ceiling=run.hit_ceiling,
+        score=max(0, 100 - penalty),
+    )
+
+
+def build_suggestions(run: TaskRun, m: PathMetrics) -> list[str]:
+    """Turn a scored path into concrete worker-metadata improvement suggestions."""
+    out: list[str] = []
+    if m.hit_ceiling:
+        out.append(
+            "Agent never converged within the step budget — no example demonstrates this; "
+            "add a vgi.executable_examples entry showing the canonical solution."
+        )
+    if m.bind_errors:
+        out.append(
+            f"Agent ran {m.bind_errors} quer{'y' if m.bind_errors == 1 else 'ies'} that failed "
+            "to bind (unknown column/function/table) before solving — names or struct paths "
+            "aren't discoverable; tighten per-object docs (VGI2xx/VGI3xx) or add a worked example."
+        )
+    if m.requirement_errors:
+        out.append(
+            f"Agent hit a usage requirement (e.g. a mandatory filter) {m.requirement_errors} "
+            "time(s) by trial and error — state it in the catalog/table doc_llm."
+        )
+    if m.redundant_describes:
+        out.append(
+            "Agent re-inspected an object it had already described — that description may be "
+            "too thin to act on (VGI112/VGI113)."
+        )
+    if m.not_found:
+        out.append(
+            "Agent looked up an object that doesn't exist — the metadata implies a name that "
+            "isn't there; align docs/examples with the real schema."
+        )
+    out.extend(f"Analyst noted: {f}" for f in run.friction)
+    return out
+
+
+# --------------------------------------------------------------------------
 # Suite runner + cache
 # --------------------------------------------------------------------------
 def _task_key(overview: str, task: AgentTask, data_version: str | None) -> str:
@@ -617,14 +799,20 @@ def simulate_tasks(
             cached += 1
             continue
         best: TaskVerdict | None = None
+        best_run: TaskRun | None = None
+        attempts = 0
         for _ in range(max(1, limits.attempts)):
+            attempts += 1
             run = run_task(catalog, con, backend, task, listing, limits)
             v = grade_task(con, backend, task, run, limits)
             if best is None or (v.passed and not best.passed):
-                best = v
+                best, best_run = v, run
             if v.passed:
                 break
-        assert best is not None
+        assert best is not None and best_run is not None
+        best.path = compute_path_metrics(best_run)
+        best.suggestions = build_suggestions(best_run, best.path)
+        best.attempts_used = attempts
         verdicts.append(best)
         judged += 1
         _cache_put(cache, key, best)
@@ -637,7 +825,12 @@ def _cache_get(cache: ReviewCache | None, key: str) -> TaskVerdict | None:
     if cache is None:
         return None
     d = cache._data.get(key)  # noqa: SLF001 - shared JSON cache
-    return TaskVerdict(**d) if d else None
+    if not d:
+        return None
+    d = dict(d)
+    if isinstance(d.get("path"), dict):
+        d["path"] = PathMetrics(**d["path"])
+    return TaskVerdict(**d)
 
 
 def _cache_put(cache: ReviewCache | None, key: str, v: TaskVerdict) -> None:
@@ -675,20 +868,51 @@ def render_terminal(report: SimReport) -> str:
         f"agent simulation  {report.location}  ·  backend={report.backend}  ·  "
         f"judged {report.judged} · cached {report.cached}",
         f"suitability {report.score}/100  ·  pass rate {int(report.pass_rate * 100)}% "
-        f"({sum(v.passed for v in report.verdicts)}/{len(report.verdicts)} tasks)",
+        f"({sum(v.passed for v in report.verdicts)}/{len(report.verdicts)} tasks)  ·  "
+        f"discoverability {report.discoverability}/100",
         "",
     ]
     mark = {"pass": "✓", "partial": "~", "fail": "✗"}
     for v in report.verdicts:
+        p = v.path
+        extra = f", {v.attempts_used} attempts" if v.attempts_used > 1 else ""
         out.append(
-            f"{mark.get(v.outcome, '?')} {v.name}  [{v.outcome}, {v.grader}, {v.queries} queries]"
+            f"{mark.get(v.outcome, '?')} {v.name}  [{v.outcome}, {v.grader}, "
+            f"path {p.score}/100{extra}]"
         )
         if v.reason:
             out.append(f"    ↳ {v.reason}")
-        for fr in v.friction:
-            out.append(f"    · friction: {fr}")
+        out.append(
+            f"    · path: {p.discovery_calls} lookups, {p.queries} queries" + _path_faults(p)
+        )
+        for s in v.suggestions:
+            out.append(f"    · suggest: {s}")
+        out.append("")
+    if report.suggestions:
+        out.append("metadata improvements (deduped across tasks):")
+        out.extend(f"  - {s}" for s in report.suggestions)
         out.append("")
     return "\n".join(out).rstrip() + "\n"
+
+
+def _path_faults(p: PathMetrics) -> str:
+    """Compact ' · N bind errors, hit step ceiling' tail for the path line."""
+    bits = []
+    if p.bind_errors:
+        bits.append(f"{p.bind_errors} bind error{'s' if p.bind_errors > 1 else ''}")
+    if p.requirement_errors:
+        bits.append(f"{p.requirement_errors} requirement miss")
+    if p.runtime_errors:
+        bits.append(f"{p.runtime_errors} runtime error{'s' if p.runtime_errors > 1 else ''}")
+    if p.blocked:
+        bits.append(f"{p.blocked} blocked")
+    if p.redundant_describes:
+        bits.append(f"{p.redundant_describes} re-inspection")
+    if p.not_found:
+        bits.append(f"{p.not_found} not-found lookup")
+    if p.hit_ceiling:
+        bits.append("hit step ceiling")
+    return (" — " + ", ".join(bits)) if bits else ""
 
 
 def render_json(report: SimReport) -> str:
@@ -700,8 +924,10 @@ def render_json(report: SimReport) -> str:
             "backend": report.backend,
             "score": report.score,
             "pass_rate": report.pass_rate,
+            "discoverability": report.discoverability,
             "judged": report.judged,
             "cached": report.cached,
+            "suggestions": report.suggestions,
             "verdicts": [asdict(v) for v in report.verdicts],
         },
         indent=2,
