@@ -193,10 +193,27 @@ vgi-lint review <worker> --format json   # machine-readable verdicts
   package). Pick a model with `--review-model`.
 - **Verdicts are cached by content hash** (`.vgi-review-cache.json`), so unchanged
   docs aren't re-judged — a re-run is free. `--no-review-cache` disables it.
-- It's **separate from the lint and never gates** — per-object sub-scores (1–5)
-  and concrete suggestions, advisory only. The deterministic lint stays the gate.
+- Run it **standalone** (`vgi-lint review`) for advisory-only per-object sub-scores
+  (1–5) + suggestions, **or fold it into a lint** with `vgi-lint lint --doc-review`:
+  objects scoring below `options.doc_quality_min` (default 3) become **VGI180**
+  findings and the mean doc-quality blends into the headline score.
 - Objects are batched per model call (`--review-batch`, default 8) to stay within
   subscription rate limits.
+
+### Folding the LLM passes into a lint
+
+`lint` accepts `--doc-review` (VGI180, above) and `--agent-check` (run the
+`simulate` suite, below). With `--agent-check`, **VGI920 fails the run** when the
+agent pass-rate is under `options.agent_pass_threshold` (default 0.8), and the
+agent-suitability score blends into the headline. `--ai` enables both. All use the
+`claude` subscription backend by default (`--ai-backend api` / `--ai-model` to
+override).
+
+The **Catalog Quality Score** is static metadata coverage (descriptions, columns,
+function-docs, examples, **categories**) minus finding penalties. When the LLM
+passes run, the headline becomes a blend — **~55% static · 25% agent · 20%
+doc-quality**, renormalized over whichever ran — and `static_score`, `agent_score`,
+and `doc_quality` are reported alongside it.
 
 ## Agent-suitability testing (`vgi-lint simulate`)
 
@@ -304,7 +321,10 @@ from the absence of a default. With `--execute`, two live checks also run:
 ## Reserved tags
 
 VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
-(set them on the catalog, a schema, a table/view, or — where noted — a function):
+(set them on the catalog, a schema, a table/view, or — where noted — a function).
+**[`TAGS.md`](TAGS.md) is the complete, normative reference** — every tag's
+meaning, where it may occur, its value shape, and the rules that govern it. The
+table below is a quick index:
 
 | Tag | Purpose |
 | --- | --- |
@@ -316,7 +336,9 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | `vgi.agent_test_tasks` | JSON list of fixed analyst tasks `{name, prompt, reference_sql?, success_criteria?, check_sql?}` — the suite `vgi-lint simulate` runs (see below) |
 | `vgi.title` | Human/marketing display name (vs. the machine name) |
 | `vgi.keywords` | JSON array of search keywords / synonyms — `["a","b"]` (comma-separated string is now a **VGI138 error**) |
-| `vgi.category_tags` | JSON array of category labels for faceting — on any object **except the catalog** |
+| `vgi.category` | The object's single **primary category** — a `name` defined in its schema's `vgi.categories` registry (on tables/views/functions; **VGI409**) |
+| `vgi.categories` | Schema-level **ordered registry** of `{"name","description"?,"title"?}` category objects — the navigation sections a schema groups its objects into (**VGI408**) |
+| `vgi.classification_tags` | JSON array of cross-cutting facet labels for search — on any object **except the catalog** (was `vgi.category_tags`) |
 | `vgi.result_columns_md` | Markdown doc of a table function's returned columns (for dynamic schemas DuckDB can't expose) |
 | `vgi.source_url` | Link to where the object is implemented (repo/file) |
 | `vgi.author` | Author / maintainer attribution (catalog) |
@@ -325,10 +347,20 @@ VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 | `vgi.support_contact` | Where to report issues/bugs — email or URL (catalog) |
 | `vgi.support_policy_url` | Link to the support / SLA policy (catalog) |
 
-> **Renamed:** `vgi.doc_llm`/`vgi.doc_md` (was `vgi.description_llm`/`_md`) and
-> `vgi.result_columns_md` (was `vgi.columns_md`). The old keys still work (dual
-> recognition) but **VGI405** nudges you to migrate; they'll stop being
-> recognized in a future version.
+> **Renamed:** `vgi.doc_llm`/`vgi.doc_md` (was `vgi.description_llm`/`_md`),
+> `vgi.result_columns_md` (was `vgi.columns_md`), and `vgi.classification_tags`
+> (was `vgi.category_tags`). The old keys still work (dual recognition) but
+> **VGI405** nudges you to migrate; they'll stop being recognized in **v1.0**.
+
+> **Categories** (`vgi.category` + `vgi.categories`) are **required** — they
+> drive navigation, listing sections, and SEO descriptions. Every schema with
+> objects must declare an ordered `vgi.categories` registry (**VGI413**) and tag
+> every table/view/function with a `vgi.category` naming one of them (**VGI411**).
+> **VGI408–412** enforce a valid registry, that every object's category is defined
+> in it (an orphan is an error, with a *did-you-mean* hint), that each category is
+> described, and that **no category is left empty** (a dead section is an error).
+> Categories render as ordered, described sections in the worker listing (and
+> `simulate`'s `list_categories` discovery tool).
 
 `vgi.doc_llm`/`vgi.doc_md` are **required on the catalog, every schema, and
 (under the strict default) every table, view, and function** — and validated

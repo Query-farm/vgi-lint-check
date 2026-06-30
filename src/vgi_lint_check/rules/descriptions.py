@@ -177,7 +177,10 @@ class SchemaLLMDescription(Rule):
                     ctx,
                     s.id,
                     f"schema missing '{TAG_DOC_LLM}' tag",
-                    "add a 'vgi.doc_llm' tag: concise prose aimed at LLMs",
+                    "add a 'vgi.doc_llm' tag: LLM-oriented prose covering what this "
+                    "schema/domain contains, its key concepts, and when an agent should "
+                    "reach for it — the schema is part of the worker's listing, so don't "
+                    "just restate the schema name or enumerate its objects",
                 )
 
 
@@ -197,7 +200,9 @@ class SchemaMarkdownDescription(Rule):
                     ctx,
                     s.id,
                     f"schema missing '{TAG_DOC_MD}' tag",
-                    "add a 'vgi.doc_md' tag with a Markdown description",
+                    "add a 'vgi.doc_md' tag: a richer Markdown description of the "
+                    "schema/domain — what it contains, key concepts, when to use it, and "
+                    "worked examples — fuller than the one-line comment, not a copy of it",
                 )
 
 

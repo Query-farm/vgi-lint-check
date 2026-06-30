@@ -21,6 +21,7 @@ from vgi_lint_check.model import (
     TagSet,
     View,
 )
+from vgi_lint_check.tags import decode_categories
 
 
 def exec_example(index, description, statements, *, name=None):
@@ -156,15 +157,20 @@ def pragma(name, description=None):
 
 
 def schema(name, *, comment=None, tags=None, tables=(), views=(), functions=()):
+    tagset = TagSet(dict(tags or {}))
+    # Mirror the loader: decode the vgi.categories registry from the schema tags.
+    cats, cats_err = decode_categories(tagset)
     return Schema(
         id=ObjectId("v", ObjectKind.SCHEMA, schema=name),
         database="v",
         name=name,
         comment=comment,
-        tags=TagSet(dict(tags or {})),
+        tags=tagset,
         tables=list(tables),
         views=list(views),
         functions=list(functions),
+        categories=cats,
+        categories_parse_error=cats_err,
     )
 
 

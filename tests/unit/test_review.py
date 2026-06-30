@@ -58,6 +58,28 @@ def test_parse_reviews_extracts_json_amid_prose():
     assert r.overall == 3.5 and r.suggestions == ["add units"]
 
 
+def test_parse_reviews_tolerates_brackets_in_strings():
+    # A suggestion containing [ ] must not break the array bracket-matcher.
+    items = [{"object": "v.main.t", "kind": "table"}]
+    raw = (
+        '[{"object":"v.main.t","scores":{"accuracy":2,"clarity":2,"completeness":2,'
+        '"audience_fit":2},"suggestions":["use cal.main.f(x) [see docs]"],'
+        '"summary":"mentions a[0] index"}]'
+    )
+    reviews = rv.parse_reviews(raw, items)
+    assert len(reviews) == 1 and reviews[0].suggestions == ["use cal.main.f(x) [see docs]"]
+
+
+def test_extract_json_array_salvages_truncated_output():
+    # A response cut off mid-array still yields the complete leading entries.
+    truncated = (
+        '[{"object":"a","scores":{"accuracy":3}},'
+        '{"object":"b","scores":{"accuracy":4}},{"object":"c","sc'
+    )
+    data = rv._extract_json_array(truncated)
+    assert [d["object"] for d in data] == ["a", "b"]
+
+
 class FakeBackend:
     def __init__(self):
         self.calls = 0

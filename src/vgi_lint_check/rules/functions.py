@@ -300,21 +300,33 @@ class ArgumentDescriptionStatesType(Rule):
     summary = "An argument description should not restate the data type (it's a separate field)."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        # Collapse the common case where one templated argument (same name, type,
+        # and description text) is reused across many functions: report it once
+        # with a recurrence count instead of N near-identical findings.
+        seen: dict[tuple[str, str, str], list[Any]] = {}
         for f in ctx.catalog.iter_all_functions():
-            seen: set[str] = set()
+            local: set[str] = set()
             for a in f.arguments:
-                if blank(a.description) or a.name in seen:
+                if blank(a.description) or a.name in local:
                     continue
-                seen.add(a.name)
+                local.add(a.name)
                 tok = _mentions_type(a.description or "", a.type)
-                if tok:
-                    yield self.finding(
-                        ctx,
-                        f.id,
-                        f"argument {a.name!r} description mentions the data type ({tok})",
-                        "describe what the argument means, not its type — the type is "
-                        "exposed separately, so restating it adds noise and can drift",
-                    )
+                if not tok:
+                    continue
+                key = (a.name, tok, " ".join((a.description or "").split()).lower())
+                if key in seen:
+                    seen[key][1] += 1
+                else:
+                    seen[key] = [f.id, 1]
+        for (name, tok, _desc), (oid, count) in seen.items():
+            extra = f" — the same description is reused on {count} functions" if count > 1 else ""
+            yield self.finding(
+                ctx,
+                oid,
+                f"argument {name!r} description mentions the data type ({tok}){extra}",
+                "describe what the argument means, not its type — the type is "
+                "exposed separately, so restating it adds noise and can drift",
+            )
 
 
 @register

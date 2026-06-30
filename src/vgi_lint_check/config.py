@@ -35,6 +35,11 @@ class Options:
     # detailed, well above the object-level floor.
     min_catalog_description_chars: int = 300
     min_schema_description_chars: int = 160
+    # VGI173: a catalog/schema description that names this many of the worker's
+    # own objects (as code tokens) and covers at least this fraction of them is
+    # treated as a redundant "manifest" — info an agent gets by listing the schema.
+    enumeration_min_objects: int = 4
+    enumeration_object_fraction: float = 0.5
     # Warn on a schema with more than this many objects (0 = disabled).
     max_schema_objects: int = 50
     # Flag a worker advertising more than this many catalogs (0 = disabled).
@@ -57,12 +62,19 @@ class Options:
     # Warn when one object declares more than this many executable examples
     # (each runs against the worker under --execute). 0 = disabled.
     max_executable_examples: int = 10
-    classifying_tag_keys: list[str] = field(
-        default_factory=lambda: ["domain", "category", "provider", "topic"]
-    )
+    # Free-form faceting keys for VGI123/132. "category" is intentionally absent:
+    # the structured vgi.category + vgi.categories registry (VGI408-412) is the
+    # controlled-vocabulary successor, so leaving it here would double-report.
+    classifying_tag_keys: list[str] = field(default_factory=lambda: ["domain", "provider", "topic"])
     # A classifying tag should be a small, reused vocabulary. VGI132 warns when a
     # key has more than this many distinct values, or when none are reused.
     max_distinct_categories: int = 12
+    # LLM doc-review (VGI180): an object whose mean doc-quality score (1-5) is
+    # below this is flagged. Only fires under --doc-review.
+    doc_quality_min: int = 3
+    # Agent-suitability gate (VGI920): a simulate pass-rate below this fails the
+    # run. Only fires under --agent-check.
+    agent_pass_threshold: float = 0.8
 
 
 @dataclass
@@ -91,6 +103,14 @@ class Config:
     sample_timeout: float = 10.0  # VGI810/VGI811: per-query cap (shorter than execute_timeout)
     check_links: bool = False  # enable network rules (validate description URLs)
     link_timeout: float = 10.0
+    # LLM passes (use the local `claude -p` subscription backend by default).
+    doc_review: bool = False  # VGI180: LLM doc-quality review (requires_review rules)
+    agent_check: bool = False  # VGI920: run `simulate` + gate (requires_agent rules)
+    ai_backend: str = "claude"  # claude (subscription CLI) | api
+    ai_model: str | None = None
+    # Content-hash verdict cache for the LLM passes (shared with `review`/`simulate`),
+    # so unchanged docs/tasks aren't re-judged on a re-run. --no-ai-cache disables it.
+    ai_cache: bool = True
     fail_on: Severity = Severity.ERROR
     location: str | None = None
     baseline: str | None = None
@@ -109,10 +129,15 @@ class Config:
 
     def effective_severity(self, rule: Rule | type[Rule]) -> Severity:
         """Resolve a rule's severity per the documented order. OFF = disabled."""
-        # 1. execution rules need --execute; network rules need --check-links
+        # 1. execution rules need --execute; network rules need --check-links;
+        #    LLM rules need --doc-review / --agent-check.
         if getattr(rule, "requires_connection", False) and not self.execute:
             return Severity.OFF
         if getattr(rule, "requires_network", False) and not self.check_links:
+            return Severity.OFF
+        if getattr(rule, "requires_review", False) and not self.doc_review:
+            return Severity.OFF
+        if getattr(rule, "requires_agent", False) and not self.agent_check:
             return Severity.OFF
         # 2. category gate
         if self.categories is not None and str(rule.category) not in self.categories:

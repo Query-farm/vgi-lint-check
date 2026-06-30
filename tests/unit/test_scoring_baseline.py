@@ -39,6 +39,27 @@ def test_coverage_none_when_no_columns():
     assert qs.coverage.families["columns"] is None
 
 
+def test_categories_coverage_only_for_adopters():
+    import json
+
+    # No registry -> the categories family is absent (None), not 0.
+    plain = F.schema("main", comment="c", functions=[F.func("main", "f", description="d")])
+    assert scoring.compute(F.catalog(plain), []).coverage.families["categories"] is None
+
+    # Registry present: one of two functions is filed -> 0.5.
+    reg = json.dumps([{"name": "a", "description": "d"}])
+    s = F.schema(
+        "main",
+        comment="c",
+        tags={"vgi.categories": reg},
+        functions=[
+            F.func("main", "f1", description="d", tags={"vgi.category": "a"}),
+            F.func("main", "f2", description="d"),
+        ],
+    )
+    assert scoring.compute(F.catalog(s), []).coverage.families["categories"] == 0.5
+
+
 def test_baseline_roundtrip_and_classify(tmp_path):
     prefix = str(tmp_path / "bl")
     findings = [_finding("VGI112", name="a"), _finding("VGI113", name="b")]

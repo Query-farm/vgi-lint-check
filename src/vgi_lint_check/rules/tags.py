@@ -6,10 +6,29 @@ import difflib
 from collections.abc import Iterable, Iterator
 
 from ..findings import Category, Finding, Severity
-from ..model import RESERVED_TAG_KEYS, TAG_CATEGORY_TAGS, Catalog, ObjectId, ObjectKind, TagSet
+from ..model import (
+    RESERVED_TAG_KEYS,
+    TAG_CATEGORIES,
+    TAG_CATEGORY,
+    TAG_CLASSIFICATION_TAGS,
+    Catalog,
+    ObjectId,
+    ObjectKind,
+    TagSet,
+)
 from ..tags import decode_string_list
 from .base import Rule, RuleContext
 from .registry import register
+
+# Object kinds that may carry a primary vgi.category (everything but schema/catalog).
+_CATEGORIZABLE_KINDS = (
+    ObjectKind.TABLE,
+    ObjectKind.VIEW,
+    ObjectKind.SCALAR_FUNCTION,
+    ObjectKind.AGGREGATE,
+    ObjectKind.MACRO,
+    ObjectKind.TABLE_FUNCTION,
+)
 
 TAGS = Category.TAGS
 # The framework owns the ``vgi.`` namespace; an unknown key in it is a mistake.
@@ -176,14 +195,16 @@ class AgentTestTasksValid(Rule):
                 ctx.catalog.id,
                 f"vgi.agent_test_tasks is not valid: {err}",
                 'use a JSON array of {"name","prompt", "reference_sql"?, '
-                '"success_criteria"?, "check_sql"?} task objects',
+                '"success_criteria"?, "check_sql"?} task objects. Only "prompt" is '
+                "shown to the analyst — reference_sql/success_criteria/check_sql are "
+                "grader-only and must never leak into the prompt or any description",
             )
 
 
 @register
-class CategoryTagsValid(Rule):
+class ClassificationTagsValid(Rule):
     code = "VGI406"
-    name = "category-tags-valid"
+    name = "classification-tags-valid"
     category = TAGS
     default_severity = Severity.ERROR
     targets = (
@@ -196,19 +217,23 @@ class CategoryTagsValid(Rule):
         ObjectKind.MACRO,
         ObjectKind.TABLE_FUNCTION,
     )
-    summary = "vgi.category_tags must be a JSON array of strings, on any object except the catalog."
+    summary = (
+        "vgi.classification_tags must be a JSON array of strings, on any object except the catalog."
+    )
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        # Reads through the canonical key, so a worker still emitting the deprecated
+        # vgi.category_tags is validated here (and separately nudged by VGI405).
         for oid, tags in _all_objects(ctx.catalog):
-            value = tags.get(TAG_CATEGORY_TAGS)
+            value = tags.get(TAG_CLASSIFICATION_TAGS)
             if value is None or not str(value).strip():
                 continue
             if oid.kind is ObjectKind.CATALOG:
                 yield self.finding(
                     ctx,
                     oid,
-                    "vgi.category_tags is not allowed on the catalog",
-                    "categorize the catalog's objects (schemas/tables/functions), "
+                    "vgi.classification_tags is not allowed on the catalog",
+                    "classify the catalog's objects (schemas/tables/functions), "
                     "not the catalog itself — remove it here",
                 )
                 continue
@@ -217,7 +242,7 @@ class CategoryTagsValid(Rule):
                 yield self.finding(
                     ctx,
                     oid,
-                    f"vgi.category_tags is not valid: {err}",
+                    f"vgi.classification_tags is not valid: {err}",
                     'use a JSON array of strings, e.g. ["geospatial", "timeseries"]',
                 )
 
@@ -258,5 +283,204 @@ class DeprecatedTagKey(Rule):
                     oid,
                     f"tag {old!r} is deprecated",
                     f"rename the tag to {new!r} — the old key still works for now but "
-                    "will stop being recognized in a future version",
+                    "will stop being recognized in v1.0",
                 )
+
+
+# --- VGI408-412: the vgi.category / vgi.categories navigation layer ---------
+#
+# These are opt-in: a schema that neither declares a vgi.categories registry nor
+# carries any object-level vgi.category produces no findings at all.
+
+
+@register
+class CategoriesRegistryValid(Rule):
+    code = "VGI408"
+    name = "categories-registry-valid"
+    category = TAGS
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA)
+    summary = (
+        "vgi.categories must be a well-formed JSON registry on a schema (not the catalog), "
+        "and vgi.category belongs on objects."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        # The registry and primary-category tags are misplaced on the catalog.
+        if cat.tags.has(TAG_CATEGORIES):
+            yield self.finding(
+                ctx,
+                cat.id,
+                "vgi.categories is not allowed on the catalog",
+                "declare the category registry on a schema, not the catalog",
+            )
+        if cat.tags.has(TAG_CATEGORY):
+            yield self.finding(
+                ctx,
+                cat.id,
+                "vgi.category is not allowed on the catalog",
+                "vgi.category goes on tables/views/functions, not the catalog",
+            )
+        for s in cat.iter_schemas():
+            if s.categories_parse_error:
+                yield self.finding(
+                    ctx,
+                    s.id,
+                    f"vgi.categories is not valid: {s.categories_parse_error}",
+                    'use a JSON array of {"name", "description"?, "title"?} objects in '
+                    "display order, each with a unique name",
+                )
+            if s.tags.has(TAG_CATEGORY):
+                yield self.finding(
+                    ctx,
+                    s.id,
+                    "vgi.category is not allowed on a schema",
+                    "vgi.category goes on tables/views/functions; a schema declares its "
+                    "categories via the vgi.categories registry",
+                )
+
+
+@register
+class CategoryDefinedInRegistry(Rule):
+    code = "VGI409"
+    name = "category-defined-in-registry"
+    category = TAGS
+    default_severity = Severity.ERROR
+    targets = _CATEGORIZABLE_KINDS
+    summary = "An object's vgi.category must be a name defined in its schema's vgi.categories."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for s in ctx.catalog.iter_schemas():
+            names = [c.name for c in s.categories]
+            nameset = set(names)
+            for obj in s.iter_categorizable():
+                raw = (obj.tags.get(TAG_CATEGORY) or "").strip()
+                if not raw:
+                    continue
+                if raw.startswith("["):
+                    yield self.finding(
+                        ctx,
+                        obj.id,
+                        "vgi.category must be a single category name, not a list",
+                        "use one primary category here; put cross-cutting facets in "
+                        "vgi.classification_tags",
+                    )
+                    continue
+                if raw in nameset:
+                    continue
+                if not s.categories:
+                    yield self.finding(
+                        ctx,
+                        obj.id,
+                        f"vgi.category {raw!r} but schema {s.name!r} declares no "
+                        "vgi.categories registry",
+                        f"add a vgi.categories registry to schema {s.name!r} that defines {raw!r}",
+                    )
+                    continue
+                hint = difflib.get_close_matches(raw, names, n=1, cutoff=0.6)
+                did = f"; did you mean {hint[0]!r}?" if hint else ""
+                yield self.finding(
+                    ctx,
+                    obj.id,
+                    f"vgi.category {raw!r} is not defined in schema {s.name!r}'s "
+                    f"vgi.categories{did}",
+                    f"use one of the schema's categories ({', '.join(names)}) or add "
+                    f"{raw!r} to the registry",
+                )
+
+
+@register
+class CategoryDescribed(Rule):
+    code = "VGI410"
+    name = "category-described"
+    category = TAGS
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.SCHEMA,)
+    summary = "Every category in a vgi.categories registry should carry a description."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for s in ctx.catalog.iter_schemas():
+            for c in s.categories:
+                if not (c.description or "").strip():
+                    yield self.finding(
+                        ctx,
+                        s.id,
+                        f"category {c.name!r} has no description",
+                        "add a one-line description so the category is a real, navigable "
+                        "section — not an opaque label",
+                    )
+
+
+@register
+class CategoryCoverage(Rule):
+    code = "VGI411"
+    name = "category-coverage"
+    category = TAGS
+    default_severity = Severity.WARNING
+    targets = _CATEGORIZABLE_KINDS
+    summary = "Objects in a schema that declares categories should each carry a vgi.category."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for s in ctx.catalog.iter_schemas():
+            if not s.categories:  # only registry-bearing schemas expect full coverage
+                continue
+            names = ", ".join(c.name for c in s.categories)
+            for obj in s.iter_categorizable():
+                if not obj.category:
+                    yield self.finding(
+                        ctx,
+                        obj.id,
+                        "object is not assigned to a category",
+                        f"add a vgi.category from schema {s.name!r}'s registry ({names})",
+                    )
+
+
+@register
+class CategoryUnused(Rule):
+    code = "VGI412"
+    name = "category-empty"
+    category = TAGS
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.SCHEMA,)
+    summary = "A category declared in vgi.categories must contain at least one member object."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for s in ctx.catalog.iter_schemas():
+            if not s.categories:
+                continue
+            for c, objs in s.iter_by_category():
+                if c is not None and not objs:
+                    yield self.finding(
+                        ctx,
+                        s.id,
+                        f"category {c.name!r} has no objects",
+                        "an empty category is a dead navigation section (bad for listing/SEO) — "
+                        "remove it, or assign objects to it via vgi.category",
+                    )
+
+
+@register
+class SchemaCategoriesRequired(Rule):
+    code = "VGI413"
+    name = "schema-categories-required"
+    category = TAGS
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.SCHEMA,)
+    summary = "Every schema with objects must declare a 'vgi.categories' registry (navigation/SEO)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for s in ctx.catalog.iter_schemas():
+            if s.categories or s.categories_parse_error:
+                continue  # present (validated by VGI408/410/412) or malformed (VGI408)
+            if not s.iter_categorizable():
+                continue  # nothing to categorize
+            yield self.finding(
+                ctx,
+                s.id,
+                "schema declares no 'vgi.categories' registry",
+                "add a 'vgi.categories' tag — an ordered JSON array of "
+                '{"name","description"} category objects — then tag each table/view/'
+                "function with a 'vgi.category' naming one of them. Categories drive the "
+                "worker's navigation, listing sections, and SEO descriptions",
+            )

@@ -276,17 +276,45 @@ def build_prompt(items: list[dict[str, Any]]) -> str:
 # Parsing model output
 # --------------------------------------------------------------------------
 def _extract_json_array(text: str) -> Any:
+    """Extract the first JSON array from model output, tolerant of real LLM output.
+
+    Brackets inside string values are skipped (so a suggestion containing ``[`` /
+    ``]`` doesn't break matching), and a truncated response is salvaged by closing
+    the array after its last complete object — so partial output still yields the
+    entries that did arrive rather than the whole pass failing.
+    """
     start = text.find("[")
     if start < 0:
         raise ValueError("no JSON array in model output")
     depth = 0
+    in_str = False
+    esc = False
     for i in range(start, len(text)):
-        if text[i] == "[":
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "[":
             depth += 1
-        elif text[i] == "]":
+        elif ch == "]":
             depth -= 1
             if depth == 0:
                 return json.loads(text[start : i + 1])
+    # Unterminated (typically a truncated response): salvage the complete leading
+    # entries by closing the array after the last finished object.
+    cut = text.rfind("}")
+    if cut > start:
+        try:
+            return json.loads(text[start : cut + 1] + "]")
+        except ValueError:
+            pass
     raise ValueError("unterminated JSON array in model output")
 
 

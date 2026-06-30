@@ -67,7 +67,9 @@ def test_clean_table_no_findings():
     # The strict "richness" rules (marketing tags, example coverage) need extra
     # content and are exercised by their own tests; this baseline asserts the core
     # correctness rules don't false-fire on a well-formed object.
-    richness = ["VGI124", "VGI126", "VGI128", "VGI151", "VGI506", "VGI509"]
+    # VGI152 (agent_test_tasks) and VGI413 (categories registry) need extra
+    # catalog/schema content and are exercised by their own tests.
+    richness = ["VGI124", "VGI126", "VGI128", "VGI151", "VGI152", "VGI413", "VGI506", "VGI509"]
     found = codes(F.catalog(s), ignore=richness)
     assert found == [] or set(found) <= set()  # nothing flagged
 

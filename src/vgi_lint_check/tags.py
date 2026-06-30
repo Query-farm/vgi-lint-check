@@ -14,10 +14,12 @@ from typing import Any
 
 from .model import (
     TAG_AGENT_TEST_TASKS,
+    TAG_CATEGORIES,
     TAG_DOC_LINKS,
     TAG_EXAMPLE_QUERIES,
     TAG_EXECUTABLE_EXAMPLES,
     AgentTask,
+    Category,
     DocLink,
     ExampleQuery,
     ExampleStatement,
@@ -234,6 +236,60 @@ def decode_doc_links(tags: TagSet) -> tuple[list[DocLink], str | None]:
         else:
             return [], f"entry #{i} must be a URL string or object ({type(item).__name__})"
     return links, None
+
+
+def decode_categories(tags: TagSet) -> tuple[list[Category], str | None]:
+    """Decode a schema's ``vgi.categories`` registry into (categories, parse_error).
+
+    Each entry is an object ``{name, title?, description?, keywords?, doc_md?}``;
+    registry order is the display order. ``name`` is required and unique. Returns
+    ([], None) when the tag is absent; ([], "<reason>") on a malformed value so a
+    rule (VGI408) can flag it rather than crash.
+    """
+    raw = tags.get(TAG_CATEGORIES)
+    if raw is None or not str(raw).strip():
+        return [], None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        return [], f"invalid JSON: {e}"
+    if not isinstance(data, list):
+        return [], f"expected a JSON array of category objects, got {type(data).__name__}"
+    cats: list[Category] = []
+    seen: set[str] = set()
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            return [], f"entry #{i} is not an object ({type(item).__name__})"
+        name = item.get("name")
+        if not (name and str(name).strip()):
+            return [], f"entry #{i} has no 'name'"
+        name = str(name).strip()
+        if name in seen:
+            return [], f"duplicate category name {name!r}"
+        seen.add(name)
+        keywords, kerr = decode_string_list(
+            None if item.get("keywords") is None else json.dumps(item.get("keywords"))
+        )
+        if kerr is not None:
+            return [], f"entry #{name!r} keywords: {kerr}"
+        cats.append(
+            Category(
+                name=name,
+                title=_opt_str(item.get("title")),
+                description=_opt_str(item.get("description")),
+                keywords=keywords,
+                doc_md=_opt_str(item.get("doc_md")),
+            )
+        )
+    return cats, None
+
+
+def _opt_str(value: Any) -> str | None:
+    """Coerce an optional JSON scalar to a stripped string, or None when absent/blank."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def decode_agent_test_tasks(tags: TagSet) -> tuple[list[AgentTask], str | None]:

@@ -122,6 +122,63 @@ def test_overview_excludes_solution_fields():
 
 
 # --------------------------------------------------------------------------
+# Category navigation layer (vgi.categories registry)
+# --------------------------------------------------------------------------
+def _categorized_schema():
+    reg = json.dumps(
+        [
+            {"name": "holidays", "description": "Public-holiday helpers."},
+            {"name": "weeks", "description": "ISO week math."},
+        ]
+    )
+    return F.schema(
+        "main",
+        comment="c",
+        tags={**_TAGS, "vgi.categories": reg},
+        functions=[
+            F.func(
+                "main", "is_holiday", description="holiday test", tags={"vgi.category": "holidays"}
+            ),
+            F.func("main", "iso_week", description="iso week", tags={"vgi.category": "weeks"}),
+        ],
+    )
+
+
+def test_build_listing_sections_by_category():
+    listing = sim.build_listing(F.catalog(_categorized_schema()))
+    # Category headers (registry order) appear, each above its member object.
+    assert "[holidays] Holidays — Public-holiday helpers." in listing
+    assert listing.index("[holidays]") < listing.index("is_holiday")
+    assert listing.index("[holidays]") < listing.index("[weeks]")  # registry order
+
+
+def test_tool_list_categories():
+    out = sim.tool_list_categories(F.catalog(_categorized_schema()), "main")
+    assert [c["name"] for c in out["categories"]] == ["holidays", "weeks"]
+    assert out["categories"][0]["objects"] == ["is_holiday"]
+    assert out["uncategorized"] == []
+
+
+def test_tool_list_tables_echoes_category():
+    out = sim.tool_list_tables(F.catalog(_categorized_schema()))
+    fns = {f["name"]: f for f in out["schemas"][0]["functions"]}
+    assert fns["is_holiday"]["category"] == "holidays"
+
+
+def test_category_doc_md_does_not_leak_grader_fields():
+    # A category's doc_md is listing-surface; the no-leak invariant still holds.
+    task = AgentTask(
+        name="t",
+        prompt="p",
+        success_criteria="SECRET_CRITERIA",
+        reference_statements=[ExampleStatement(None, "SELECT 'strong' AS band")],
+    )
+    cat = _catalog_with_tasks([task])
+    listing = sim.build_listing(cat)
+    assert "SECRET_CRITERIA" not in listing and "SELECT 'strong'" not in listing
+
+
+# --------------------------------------------------------------------------
 # Discovery tools — local mirror of the ask-AI contract
 # --------------------------------------------------------------------------
 def test_tool_list_tables_and_describe():

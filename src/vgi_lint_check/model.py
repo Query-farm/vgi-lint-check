@@ -21,7 +21,9 @@ TAG_EXECUTABLE_EXAMPLES = "vgi.executable_examples"  # self-contained, must-run 
 TAG_AGENT_TEST_TASKS = "vgi.agent_test_tasks"  # fixed analyst-task suite for `simulate`
 TAG_TITLE = "vgi.title"  # human/marketing display name (vs the machine name)
 TAG_KEYWORDS = "vgi.keywords"  # JSON array of search keywords / synonyms
-TAG_CATEGORY_TAGS = "vgi.category_tags"  # JSON array of category labels (not on catalog)
+TAG_CATEGORY = "vgi.category"  # single primary category an object belongs to (a registry name)
+TAG_CATEGORIES = "vgi.categories"  # schema-level registry: ordered array of category objects
+TAG_CLASSIFICATION_TAGS = "vgi.classification_tags"  # JSON array of cross-cutting facet labels
 TAG_RESULT_COLUMNS_MD = "vgi.result_columns_md"  # Markdown doc of a table fn's result columns
 TAG_SOURCE_URL = "vgi.source_url"  # link to where this object is implemented (repo/file)
 TAG_AUTHOR = "vgi.author"  # author / maintainer attribution
@@ -34,10 +36,12 @@ TAG_SUPPORT_POLICY_URL = "vgi.support_policy_url"  # link to the support/SLA pol
 TAG_DESCRIPTION_LLM = "vgi.description_llm"  # deprecated: use vgi.doc_llm
 TAG_DESCRIPTION_MD = "vgi.description_md"  # deprecated: use vgi.doc_md
 TAG_COLUMNS_MD = "vgi.columns_md"  # deprecated: use vgi.result_columns_md
+TAG_CATEGORY_TAGS = "vgi.category_tags"  # deprecated: use vgi.classification_tags
 DEPRECATED_TAG_ALIASES = {
     TAG_DESCRIPTION_LLM: TAG_DOC_LLM,
     TAG_DESCRIPTION_MD: TAG_DOC_MD,
     TAG_COLUMNS_MD: TAG_RESULT_COLUMNS_MD,
+    TAG_CATEGORY_TAGS: TAG_CLASSIFICATION_TAGS,
 }
 # canonical key -> tuple of deprecated keys that resolve to it
 _ALIASES_OF: dict[str, tuple[str, ...]] = {}
@@ -54,7 +58,9 @@ RESERVED_TAG_KEYS = frozenset(
         TAG_AGENT_TEST_TASKS,
         TAG_TITLE,
         TAG_KEYWORDS,
-        TAG_CATEGORY_TAGS,
+        TAG_CATEGORY,
+        TAG_CATEGORIES,
+        TAG_CLASSIFICATION_TAGS,
         TAG_RESULT_COLUMNS_MD,
         TAG_SOURCE_URL,
         TAG_AUTHOR,
@@ -165,6 +171,26 @@ class DocLink:
 
 
 @dataclass(frozen=True)
+class Category:
+    """One entry of a schema's ``vgi.categories`` registry.
+
+    ``name`` is the stable slug an object's ``vgi.category`` references; ``title``
+    is the (optional) human display label. Registry order is the display order.
+    """
+
+    name: str
+    title: str | None = None
+    description: str | None = None
+    keywords: list[str] = field(default_factory=list)
+    doc_md: str | None = None
+
+    @property
+    def display_title(self) -> str:
+        """The human label, falling back to a title-cased ``name``."""
+        return self.title or self.name.replace("_", " ").replace("-", " ").title()
+
+
+@dataclass(frozen=True)
 class ExampleStatement:
     """One SQL step of an executable example (run in order).
 
@@ -264,6 +290,11 @@ class Table:
         """The ``vgi.doc_md`` tag value, if any."""
         return self.tags.get(TAG_DOC_MD)
 
+    @property
+    def category(self) -> str | None:
+        """The object's primary ``vgi.category`` (a schema-registry name), if set."""
+        return (self.tags.get(TAG_CATEGORY) or "").strip() or None
+
 
 @dataclass
 class View(Table):
@@ -317,6 +348,11 @@ class Function:
     def is_volatile(self) -> bool:
         """True when the function is declared VOLATILE (non-deterministic)."""
         return (self.stability or "").upper() == "VOLATILE"
+
+    @property
+    def category(self) -> str | None:
+        """The function's primary ``vgi.category`` (a schema-registry name), if set."""
+        return (self.tags.get(TAG_CATEGORY) or "").strip() or None
 
     @property
     def kind(self) -> ObjectKind:
@@ -409,6 +445,45 @@ class Schema:
     functions: list[Function] = field(default_factory=list)
     executable_examples: list[ExecutableExample] = field(default_factory=list)
     executable_examples_parse_error: str | None = None
+    # Decoded vgi.categories registry (ordered) + its parse error, if malformed.
+    categories: list[Category] = field(default_factory=list)
+    categories_parse_error: str | None = None
+
+    def iter_categorizable(self) -> list[Table | View | Function]:
+        """Objects that may carry a ``vgi.category`` (tables, views, non-pragma functions)."""
+        return [
+            *self.tables,
+            *self.views,
+            *[f for f in self.functions if f.kind is not ObjectKind.PRAGMA],
+        ]
+
+    def opts_into_categories(self) -> bool:
+        """True when this schema uses the category system (a registry, or any filed object)."""
+        return bool(self.categories) or any(o.category for o in self.iter_categorizable())
+
+    def iter_by_category(
+        self,
+    ) -> Iterator[tuple[Category | None, list[Table | View | Function]]]:
+        """Yield ``(category, objects)`` in registry order, then ``(None, remainder)``.
+
+        Objects whose ``vgi.category`` is not a defined registry name fall into the
+        trailing uncategorized bucket — the orphan reference is reported separately by
+        VGI409, not rendered here. Categories with no members still yield an empty list
+        (so unused entries are visible to VGI412).
+        """
+        valid = {c.name for c in self.categories}
+        by_name: dict[str, list[Table | View | Function]] = {c.name: [] for c in self.categories}
+        uncategorized: list[Table | View | Function] = []
+        for obj in self.iter_categorizable():
+            cat = obj.category
+            if cat and cat in valid:
+                by_name[cat].append(obj)
+            else:
+                uncategorized.append(obj)
+        for c in self.categories:
+            yield c, by_name[c.name]
+        if uncategorized:
+            yield None, uncategorized
 
 
 @dataclass(frozen=True)

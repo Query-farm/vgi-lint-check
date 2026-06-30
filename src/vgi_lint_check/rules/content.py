@@ -235,6 +235,185 @@ def _described(
         )
 
 
+# --- VGI173 / VGI174 — description content quality ------------------------
+#
+# Match identifiers only where they appear "as code" — backticked, called
+# (`name(`), or as the tail of a dotted path (`cat.main.easter`). A function
+# whose name is also an English word ("holiday") in plain prose is *not* matched,
+# so VGI173 flags genuine manifests, not legitimate prose that names one object.
+_BACKTICK = re.compile(r"`([^`]+)`")
+_CALL = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_QUALIFIED = re.compile(r"(?:[A-Za-z_][A-Za-z0-9_]*\.)+[A-Za-z_][A-Za-z0-9_]*")
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _code_tokens(text: str) -> set[str]:
+    """Identifiers in ``text`` that appear as code (backticked/called/qualified)."""
+    toks: set[str] = set()
+    for span in _BACKTICK.findall(text):
+        toks.update(_IDENT.findall(span))
+    toks.update(_CALL.findall(text))
+    for path in _QUALIFIED.findall(text):
+        toks.update(path.split("."))
+    return toks
+
+
+def _scope_object_names(ctx: RuleContext) -> Iterator[tuple[ObjectId, str, set[str]]]:
+    """(id, label, object-name set) for the catalog and each schema.
+
+    The name set is the worker's own surface — tables, views, and functions —
+    that a description could redundantly enumerate. Schema names are excluded so
+    a single qualified example (``cat.main.f``) doesn't inflate the count.
+    """
+    cat = ctx.catalog
+    cat_names = {t.name for t in cat.iter_table_like()} | {f.name for f in cat.iter_all_functions()}
+    yield cat.id, "catalog", cat_names
+    for s in cat.iter_schemas():
+        names = (
+            {t.name for t in s.tables} | {v.name for v in s.views} | {f.name for f in s.functions}
+        )
+        yield s.id, "schema", names
+
+
+@register
+class DescriptionEnumeratesObjects(Rule):
+    code = "VGI173"
+    name = "description-enumerates-objects"
+    category = CONTENT
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA)
+    summary = (
+        "Catalog/schema descriptions must not just enumerate the worker's own "
+        "objects — that inventory is discoverable by listing the schema."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        opts = ctx.config.options
+        floor = opts.enumeration_min_objects
+        fraction = opts.enumeration_object_fraction
+        cat = ctx.catalog
+        descriptions = {
+            cat.id: (cat.description_llm, cat.description_md),
+        }
+        for s in cat.iter_schemas():
+            descriptions[s.id] = (s.tags.get(TAG_DOC_LLM), s.tags.get(TAG_DOC_MD))
+        for oid, label, names in _scope_object_names(ctx):
+            total = len(names)
+            if total == 0:
+                continue
+            llm, md = descriptions.get(oid, (None, None))
+            for tag, value in (("vgi.doc_llm", llm), ("vgi.doc_md", md)):
+                if blank(value):
+                    continue
+                named = names & _code_tokens(value or "")
+                if len(named) >= floor and len(named) / total >= fraction:
+                    yield self.finding(
+                        ctx,
+                        oid,
+                        f"{label} {tag} enumerates {len(named)} of {total} worker "
+                        f"objects ({', '.join(sorted(named)[:6])}"
+                        f"{', …' if len(named) > 6 else ''})",
+                        f"don't list the worker's objects in the {label} description — "
+                        "an agent discovers them by listing the schema. Describe what "
+                        "the worker is for, its key concepts, and when to reach for it",
+                    )
+
+
+# SQL embedded in a description belongs in a ```sql fence (or, better, an
+# executable example). A SELECT paired with FROM (either order) is a strong
+# signal; a bare "select" in English prose is not.
+_SQL_LEAD = re.compile(
+    r"^\s*(SELECT|WITH|FROM|PRAGMA|EXPLAIN|CREATE|INSERT|UPDATE|DELETE|COPY|VALUES|TABLE)\b",
+    re.IGNORECASE,
+)
+_SQL_IN_PROSE = re.compile(
+    r"\bSELECT\b[\s\S]{0,200}?\bFROM\b"
+    r"|\bFROM\b[\s\S]{0,80}?\bSELECT\b"
+    r"|^\s*(PRAGMA|EXPLAIN)\b"
+    r"|\bWITH\b[\s\S]{0,120}?\bAS\s*\(",
+    re.IGNORECASE | re.MULTILINE,
+)
+_FENCED_BLOCK = re.compile(r"(?ms)^[ \t]*(```+|~~~+)[^\n]*\n.*?^[ \t]*\1[ \t]*$")
+_INLINE_CODE = re.compile(r"`+([^`]+)`+")
+# An inline `code` span that is a *statement* (verb + at least one more token),
+# not a bare keyword reference like `SELECT` or a type name like `DATE`.
+_SQL_INLINE = re.compile(
+    r"^\s*(SELECT|WITH|FROM|PRAGMA|EXPLAIN|CREATE|INSERT|UPDATE|DELETE|COPY|VALUES)\b\s+\S",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_sql(body: str | None) -> bool:
+    """True when a code block's body opens with a SQL statement verb."""
+    return bool(_SQL_LEAD.search(body or ""))
+
+
+def _iter_prose(ctx: RuleContext) -> Iterator[tuple[ObjectId, str, str]]:
+    """(id, label, text) for every doc_llm / doc_md across described objects."""
+    for oid, _comment, llm, md, _src in _described(ctx):
+        for label, text in (("vgi.doc_llm", llm), ("vgi.doc_md", md)):
+            if not blank(text):
+                yield oid, label, text or ""
+
+
+@register
+class DescriptionSqlFenced(Rule):
+    code = "VGI174"
+    name = "description-sql-fenced"
+    category = CONTENT
+    default_severity = Severity.ERROR
+    targets = _DOC_TARGET_KINDS
+    summary = "SQL in a description must live in a ```sql code fence (or an executable example)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, label, text in _iter_prose(ctx):
+            # Mislabeled/unlabeled fences whose body is SQL.
+            for tok in _MD.parse(text):
+                if tok.type == "fence":
+                    lang = (tok.info or "").strip().split(" ")[0].lower() if tok.info else ""
+                    if lang != "sql" and _looks_like_sql(tok.content):
+                        yield self.finding(
+                            ctx,
+                            oid,
+                            f"{label} has a code fence with SQL but no ```sql language tag",
+                            "tag the fence ```sql — or, better, move the query into an "
+                            "executable example (VGI5xx) so it is actually run",
+                        )
+                elif tok.type == "code_block" and _looks_like_sql(tok.content):
+                    yield self.finding(
+                        ctx,
+                        oid,
+                        f"{label} has an indented code block containing SQL",
+                        "use a ```sql fence — or, better, an executable example (VGI5xx)",
+                    )
+            # Raw SQL sitting in prose (outside any code), once code is stripped out.
+            stripped = _FENCED_BLOCK.sub(" ", text)
+            prose = _INLINE_CODE.sub(" ", stripped)
+            if _SQL_IN_PROSE.search(prose):
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"{label} contains a raw SQL statement in prose (not in a ```sql fence)",
+                    "wrap the query in a ```sql code fence — or, better, add it as an "
+                    "executable example (VGI5xx) so it is tested, not just shown",
+                )
+            # SQL statements tucked into inline `code` spans (still not runnable).
+            inline = [span for span in _INLINE_CODE.findall(stripped) if _SQL_INLINE.search(span)]
+            if inline:
+                sample = " ".join(inline[0].split())
+                sample = sample[:47] + "…" if len(sample) > 48 else sample
+                count = (
+                    f"{len(inline)} inline code spans" if len(inline) > 1 else "an inline code span"
+                )
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"{label} has a SQL statement in {count} (e.g. `{sample}`), not a ```sql fence",
+                    "move runnable SQL into a ```sql code fence — or, better, an "
+                    "executable example (VGI5xx) so it is tested, not just shown",
+                )
+
+
 @register
 class DescriptionLinksResolve(Rule):
     code = "VGI171"

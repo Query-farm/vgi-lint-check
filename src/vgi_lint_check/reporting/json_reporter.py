@@ -65,6 +65,9 @@ def to_dict(report: Report) -> dict[str, Any]:
             {
                 "data_version": r.data_version,
                 "score": r.score,
+                "static_score": r.quality.static_score,
+                "agent_score": r.quality.agent_score,
+                "doc_quality": r.quality.doc_quality,
                 "coverage": r.quality.coverage.families,
                 "diff": r.diff_summary,
                 "counts": r.counts(),

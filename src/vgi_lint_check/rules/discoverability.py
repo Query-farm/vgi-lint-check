@@ -578,6 +578,29 @@ class MinimumExamples(Rule):
             )
 
 
+@register
+class AgentTestTasksPresent(Rule):
+    code = "VGI152"
+    name = "agent-test-tasks-present"
+    category = DISC
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.CATALOG,)
+    summary = "A worker must declare vgi.agent_test_tasks so `vgi-lint simulate` can grade it."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        if cat.agent_test_tasks or cat.agent_test_tasks_parse_error:
+            return  # present (validated by VGI407) or malformed (VGI407 reports it)
+        yield self.finding(
+            ctx,
+            cat.id,
+            "no 'vgi.agent_test_tasks' suite",
+            "add a 'vgi.agent_test_tasks' tag (catalog): a JSON array of "
+            "{name, prompt, reference_sql?} analyst tasks. It is required so "
+            "`vgi-lint simulate` can measure how well agents actually use this worker",
+        )
+
+
 # Boilerplate left in metadata — a strong "unfinished" signal.
 _PLACEHOLDER = re.compile(
     r"\b(TODO|TBD|FIXME|XXX|HACK|lorem ipsum|changeme|placeholder|"

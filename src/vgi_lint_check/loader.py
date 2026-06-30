@@ -32,6 +32,7 @@ from .model import (
 )
 from .tags import (
     decode_agent_test_tasks,
+    decode_categories,
     decode_example_queries,
     decode_executable_examples,
     to_tagset,
@@ -158,6 +159,7 @@ def build_catalog(
         s.executable_examples, s.executable_examples_parse_error = decode_executable_examples(
             s.tags
         )
+        s.categories, s.categories_parse_error = decode_categories(s.tags)
 
     # --- tables -----------------------------------------------------------
     tables_by_key: dict[tuple[str, str], Table] = {}

@@ -6,6 +6,7 @@ the connection lifecycle and returns a fully populated :class:`Report`.
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from . import baseline as _baseline
@@ -250,11 +251,14 @@ def _lint_one_version(
         needs_con = any(getattr(r, "requires_connection", False) for r in rules)
         needs_net = any(getattr(r, "requires_network", False) for r in rules)
         resolver = make_link_resolver(config.link_timeout) if needs_net else None
+        review_report, sim_report = _run_ai_passes(catalog, con, config, rules)
         ctx = RuleContext(
             catalog,
             config,
             connection=con if needs_con else None,
             link_resolver=resolver,
+            review_report=review_report,
+            sim_report=sim_report,
         )
         findings = run(rules, ctx)
 
@@ -263,7 +267,79 @@ def _lint_one_version(
             _baseline.write(config.baseline, catalog.data_version, findings)
         findings = _baseline.classify(findings, config.baseline, catalog.data_version)
 
-    quality = scoring.compute(catalog, findings)
+    agent_score = sim_report.score if (sim_report and sim_report.verdicts) else None
+    quality = scoring.compute(
+        catalog, findings, agent_score=agent_score, doc_quality=_doc_quality(review_report)
+    )
     return VersionResult(
         catalog=catalog, findings=findings, quality=quality, diff_summary=diff.summary
+    )
+
+
+def _doc_quality(report: Any) -> int | None:
+    """Normalize a ReviewReport's 1-5 mean into a 0-100 score (None if not run)."""
+    if report is None or not report.reviews:
+        return None
+    return int(round((report.score - 1) / 4 * 100))
+
+
+def _run_ai_passes(catalog: Any, con: Any, config: Config, rules: Any) -> tuple[Any, Any]:
+    """Run the opt-in LLM passes (doc-review / agent-simulation) when enabled.
+
+    Gated by the selected rules: only runs a pass when a ``requires_review`` /
+    ``requires_agent`` rule survived selection (i.e. --doc-review / --agent-check
+    is on). Uses the configured backend (the ``claude`` subscription CLI by default).
+    """
+    needs_review = any(getattr(r, "requires_review", False) for r in rules)
+    needs_agent = any(getattr(r, "requires_agent", False) for r in rules)
+    if not (needs_review or needs_agent):
+        return None, None
+    from pathlib import Path
+
+    from .review import ReviewCache, make_backend, review_catalog
+
+    backend = make_backend(config.ai_backend, config.ai_model)
+
+    def _cache(name: str) -> Any:
+        # Same files as the standalone `review`/`simulate` commands, so their runs
+        # warm the lint's cache and vice versa.
+        return ReviewCache(Path(name)).load() if config.ai_cache else None
+
+    # An LLM pass must never crash the lint: a flaky/unparseable model response
+    # degrades that dimension to "not run" (static-only score) with a warning,
+    # not a hard failure of the whole report.
+    review_report = None
+    if needs_review:
+        try:
+            review_report = review_catalog(
+                catalog,
+                backend,
+                backend_name=config.ai_backend,
+                cache=_cache(".vgi-review-cache.json"),
+            )
+        except Exception as e:  # noqa: BLE001 - any backend/parse failure degrades gracefully
+            _warn_ai_pass("doc-review", e)
+    sim_report = None
+    if needs_agent:
+        from .simulate import simulate_tasks
+
+        try:
+            sim_report = simulate_tasks(
+                catalog,
+                con,
+                backend,
+                backend_name=config.ai_backend,
+                cache=_cache(".vgi-sim-cache.json"),
+            )
+        except Exception as e:  # noqa: BLE001
+            _warn_ai_pass("agent-check", e)
+    return review_report, sim_report
+
+
+def _warn_ai_pass(name: str, err: Exception) -> None:
+    """Emit a stderr notice that an LLM pass failed (the lint continues statically)."""
+    print(
+        f"warning: {name} pass failed ({type(err).__name__}: {err}); "
+        "scoring without it. Re-run to retry the LLM pass.",
+        file=sys.stderr,
     )

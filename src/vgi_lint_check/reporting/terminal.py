@@ -66,8 +66,18 @@ def render_terminal(
         else:
             _print_findings_by_rule(con, r["findings"], summaries, max_per_rule)
         _print_coverage(con, r["coverage"])
+        dims = []
+        if r.get("agent_score") is not None:
+            dims.append(f"agent {r['agent_score']}")
+        if r.get("doc_quality") is not None:
+            dims.append(f"doc-quality {r['doc_quality']}")
+        dim_str = (
+            f"  [dim](static {r.get('static_score', r['score'])} · {' · '.join(dims)})[/dim]"
+            if dims
+            else ""
+        )
         con.print(
-            f"  [bold]Catalog Quality Score[/bold]  {r['score']} / 100"
+            f"  [bold]Catalog Quality Score[/bold]  {r['score']} / 100{dim_str}"
             f"     [dim]{_summary_line(r['counts'])}[/dim]"
         )
 
@@ -82,6 +92,10 @@ def render_terminal(
         con.print(
             f"  [bold red]✗ failed[/bold red] — findings ≥ {s['fail_on']} "
             f"({_summary_line(s['findings'])})"
+        )
+    if sum(s["findings"].values()):
+        con.print(
+            "  [dim]Tag reference: TAGS.md · run `vgi-lint explain <CODE>` for any rule.[/dim]"
         )
     return buf.getvalue()
 

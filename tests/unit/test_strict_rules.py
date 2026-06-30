@@ -316,28 +316,40 @@ def test_vgi138_keywords_comma_is_error():
     assert findings and findings[0].severity is Sev.ERROR
 
 
-def test_vgi406_category_tags():
+def test_vgi406_classification_tags():
     # valid array on a table -> clean
     ok = F.table(
-        "main", "t", comment="c", tags={**_TAGS, "vgi.category_tags": '["geo","timeseries"]'}
+        "main", "t", comment="c", tags={**_TAGS, "vgi.classification_tags": '["geo","timeseries"]'}
     )
     s = F.schema("main", comment="c", tags=_TAGS, tables=[ok])
     assert "VGI406" not in _codes(F.catalog(s))
     # malformed (not a JSON array of strings) -> flagged
-    bad = F.table("main", "t", comment="c", tags={**_TAGS, "vgi.category_tags": "geo, timeseries"})
+    bad = F.table(
+        "main", "t", comment="c", tags={**_TAGS, "vgi.classification_tags": "geo, timeseries"}
+    )
     s2 = F.schema("main", comment="c", tags=_TAGS, tables=[bad])
     assert "VGI406" in _codes(F.catalog(s2))
     # present on the catalog -> not allowed
     cat = F.catalog(
         F.schema("main", comment="c", tags=_TAGS, tables=[F.table("main", "t", comment="c")])
     )
-    cat.tags.raw["vgi.category_tags"] = '["x"]'
+    cat.tags.raw["vgi.classification_tags"] = '["x"]'
     msgs = [
         f.message
         for f in run(select_rules(Config()), RuleContext(cat, Config()))
         if f.code == "VGI406"
     ]
     assert any("not allowed on the catalog" in m for m in msgs)
+
+
+def test_vgi406_accepts_deprecated_category_tags_alias():
+    # The old vgi.category_tags still resolves through the alias: malformed value
+    # is still flagged by VGI406, and the deprecated key is nudged by VGI405.
+    bad = F.table("main", "t", comment="c", tags={**_TAGS, "vgi.category_tags": "geo, timeseries"})
+    s = F.schema("main", comment="c", tags=_TAGS, tables=[bad])
+    codes = _codes(F.catalog(s))
+    assert "VGI406" in codes  # validated through the canonical key
+    assert "VGI405" in codes  # and flagged as deprecated
 
 
 def test_vgi311_parameterless_table_function():
@@ -626,3 +638,15 @@ def test_vgi407_agent_test_tasks_valid():
     bad = F.catalog(s)
     bad.agent_test_tasks_parse_error = "entry #0 has no 'name'"
     assert "VGI407" in _codes(bad)
+
+
+def test_vgi152_agent_test_tasks_present_nudge():
+    from vgi_lint_check.model import AgentTask
+
+    s = F.schema("main", comment="c", tags=_TAGS, tables=[F.table("main", "t", comment="c")])
+    # No agent_test_tasks declared -> INFO nudge to add a suite.
+    assert "VGI152" in _codes(F.catalog(s))
+    # A declared suite satisfies it.
+    cat = F.catalog(s)
+    cat.agent_test_tasks = [AgentTask(name="t", prompt="p")]
+    assert "VGI152" not in _codes(cat)

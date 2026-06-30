@@ -18,9 +18,15 @@ def build_report(cat, fail_on=Severity.ERROR):
 
 
 def sample_catalog():
+    from vgi_lint_check.model import AgentTask
+
     t = F.table("main", "bare")
     s = F.schema("main", tables=[t])
-    return F.catalog(s)
+    cat = F.catalog(s)
+    # Satisfy the error-level requirements (a test suite) so this fixture trips
+    # only warnings/info — the invariant this module asserts.
+    cat.agent_test_tasks = [AgentTask(name="t", prompt="p")]
+    return cat
 
 
 def test_json_validates_against_published_schema():

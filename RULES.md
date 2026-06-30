@@ -57,6 +57,7 @@ skipped unless `--execute` is passed.
 | `VGI141` | info | release-documented | Releases should have a summary or notes_url ('what's new'). |  |
 | `VGI150` | info | examples-not-trivial | Example queries should demonstrate value, not only `SELECT * FROM x`. |  |
 | `VGI151` | info | minimum-examples | A worker should ship a minimum number of example queries overall. |  |
+| `VGI152` | error | agent-test-tasks-present | A worker must declare vgi.agent_test_tasks so `vgi-lint simulate` can grade it. |  |
 | `VGI160` | info | catalog-attribution | The catalog should declare author, copyright, and license tags. |  |
 
 ## Content — Markdown & links (VGI17x)
@@ -66,6 +67,9 @@ skipped unless `--execute` is passed.
 | `VGI170` | info | markdown-well-formed | vgi.doc_md should be valid Markdown (no empty/broken links). |  |
 | `VGI171` | warning | description-links-resolve | Links/images and source URLs in descriptions must resolve (no 404). |  |
 | `VGI172` | error | doc-links-well-formed | vgi.doc_links must be a JSON array of http(s) URLs (or {title?, url} objects). |  |
+| `VGI173` | error | description-enumerates-objects | Catalog/schema descriptions must not just enumerate the worker's own objects — that inventory is discoverable by listing the schema. |  |
+| `VGI174` | error | description-sql-fenced | SQL in a description must live in a ```sql code fence (or an executable example). |  |
+| `VGI180` | warning | doc-quality-review | An object's docs should pass an LLM quality review (accuracy/clarity/completeness). |  |
 
 ## Descriptions (VGI1xx)
 
@@ -119,8 +123,14 @@ skipped unless `--execute` is passed.
 | `VGI403` | info | unknown-tag-key | When an allow-list is configured, flag tag keys outside it. |  |
 | `VGI404` | warning | unknown-vgi-tag-key | A 'vgi.*' tag key that isn't a recognized reserved key is likely a typo. |  |
 | `VGI405` | warning | deprecated-tag-key | Migrate deprecated tag keys (e.g. vgi.description_md -> vgi.doc_md) to the new names. |  |
-| `VGI406` | error | category-tags-valid | vgi.category_tags must be a JSON array of strings, on any object except the catalog. |  |
+| `VGI406` | error | classification-tags-valid | vgi.classification_tags must be a JSON array of strings, on any object except the catalog. |  |
 | `VGI407` | error | agent-test-tasks-valid | vgi.agent_test_tasks must be a JSON array of {name, prompt} task objects (see `vgi-lint simulate`). |  |
+| `VGI408` | error | categories-registry-valid | vgi.categories must be a well-formed JSON registry on a schema (not the catalog), and vgi.category belongs on objects. |  |
+| `VGI409` | error | category-defined-in-registry | An object's vgi.category must be a name defined in its schema's vgi.categories. |  |
+| `VGI410` | warning | category-described | Every category in a vgi.categories registry should carry a description. |  |
+| `VGI411` | warning | category-coverage | Objects in a schema that declares categories should each carry a vgi.category. |  |
+| `VGI412` | error | category-empty | A category declared in vgi.categories must contain at least one member object. |  |
+| `VGI413` | warning | schema-categories-required | Every schema with objects must declare a 'vgi.categories' registry (navigation/SEO). |  |
 
 ## Example queries (VGI5xx)
 
@@ -197,5 +207,6 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
+| `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
-_113 rules._
+_124 rules._

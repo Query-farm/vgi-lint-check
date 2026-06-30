@@ -62,6 +62,9 @@
       "properties": {
         "data_version": {"type": ["string", "null"]},
         "score": {"type": "integer"},
+        "static_score": {"type": "integer"},
+        "agent_score": {"type": ["integer", "null"]},
+        "doc_quality": {"type": ["integer", "null"]},
         "coverage": {
           "type": "object",
           "additionalProperties": {"type": ["number", "null"]}

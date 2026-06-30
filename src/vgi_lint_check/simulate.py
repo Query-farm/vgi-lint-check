@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from .model import TAG_DOC_LLM, AgentTask, Catalog, ObjectKind
+from .model import TAG_DOC_LLM, AgentTask, Catalog, Function, ObjectKind, Table
 from .review import ReviewBackend, ReviewCache, make_conversation  # backends + cache + sessions
 from .rules._util import (
     is_bind_error,
@@ -88,7 +88,7 @@ class TaskStep:
 class TraceEvent:
     """One discovery tool call on the analyst's path (for path scoring)."""
 
-    kind: str  # list_tables | describe_table | describe_function
+    kind: str  # list_tables | list_categories | describe_table | describe_function
     target: str  # object name (or "")
     found: bool = True  # describe of a real object vs a miss
     redundant: bool = False  # the same object was already described
@@ -201,11 +201,28 @@ class SimReport:
 # Bounded orientation listing (the preamble — names + one-liners, never columns
 # or the solution). The analyst drills in via the discovery tools below.
 # --------------------------------------------------------------------------
+def _listing_line(catalog: Catalog, schema: str, obj: Table | Function, indent: str) -> str | None:
+    """One indented orientation line for a table/view/function (None to skip)."""
+    qual = catalog.qualifier
+    if isinstance(obj, Table):  # Table or its View subclass (kind distinguishes)
+        td = (obj.description_llm or obj.comment or "").strip()
+        return f"{indent}{obj.kind} {qual}.{schema}.{obj.name}" + (f" — {td[:160]}" if td else "")
+    if obj.kind is ObjectKind.TABLE_FUNCTION and catalog.find_table_like(obj.name, obj.schema):
+        return None  # documented via its backing table
+    sig = ", ".join(obj.parameters) if obj.parameters else ""
+    fd = (obj.description or obj.comment or "").strip()
+    return f"{indent}{obj.function_type} {qual}.{schema}.{obj.name}({sig})" + (
+        f" — {fd[:160]}" if fd else ""
+    )
+
+
 def build_listing(catalog: Catalog) -> str:
     """List schemas, tables/views, and functions with their one-line descriptions.
 
     A bounded orientation map — no columns (use describe_table) and no task
-    solution. The analyst drills into detail through the discovery tools.
+    solution. The analyst drills into detail through the discovery tools. A schema
+    that declares a ``vgi.categories`` registry is rendered grouped by category, in
+    registry order, so the agent triages sections instead of a flat object list.
     """
     out: list[str] = [f"Catalog: {catalog.qualifier}"]
     if catalog.description_llm or catalog.comment:
@@ -213,21 +230,28 @@ def build_listing(catalog: Catalog) -> str:
     for s in catalog.iter_schemas():
         sd = (s.tags.get(TAG_DOC_LLM) or s.comment or "").strip()
         out.append(f"\nschema {catalog.qualifier}.{s.name}" + (f" — {sd[:160]}" if sd else ""))
-        for t in (*s.tables, *s.views):
-            td = (t.description_llm or t.comment or "").strip()
-            out.append(
-                f"  {t.kind} {catalog.qualifier}.{s.name}.{t.name}"
-                + (f" — {td[:160]}" if td else "")
-            )
-        for f in s.functions:
-            if f.kind is ObjectKind.TABLE_FUNCTION and catalog.find_table_like(f.name, f.schema):
-                continue  # documented via its backing table
-            sig = ", ".join(f.parameters) if f.parameters else ""
-            fd = (f.description or f.comment or "").strip()
-            out.append(
-                f"  {f.function_type} {catalog.qualifier}.{s.name}.{f.name}({sig})"
-                + (f" — {fd[:160]}" if fd else "")
-            )
+        if s.categories:
+            for cat, objs in s.iter_by_category():
+                if cat is None:
+                    out.append("  [uncategorized]")
+                else:
+                    cd = (cat.description or "").strip()
+                    out.append(
+                        f"  [{cat.name}] {cat.display_title}" + (f" — {cd[:160]}" if cd else "")
+                    )
+                for obj in objs:
+                    line = _listing_line(catalog, s.name, obj, "    ")
+                    if line:
+                        out.append(line)
+        else:
+            for t in (*s.tables, *s.views):
+                line = _listing_line(catalog, s.name, t, "  ")
+                if line:
+                    out.append(line)
+            for f in s.functions:
+                line = _listing_line(catalog, s.name, f, "  ")
+                if line:
+                    out.append(line)
     return "\n".join(out)
 
 
@@ -250,11 +274,17 @@ def tool_list_tables(catalog: Catalog) -> dict[str, Any]:
                         "type": str(t.kind),
                         "comment": t.description_llm or t.comment,
                         "column_count": len(t.columns),
+                        **({"category": t.category} if t.category else {}),
                     }
                     for t in s.tables
                 ],
                 "views": [
-                    {"name": v.name, "type": "view", "comment": v.description_llm or v.comment}
+                    {
+                        "name": v.name,
+                        "type": "view",
+                        "comment": v.description_llm or v.comment,
+                        **({"category": v.category} if v.category else {}),
+                    }
                     for v in s.views
                 ],
                 "functions": [
@@ -263,6 +293,7 @@ def tool_list_tables(catalog: Catalog) -> dict[str, Any]:
                         "type": f.function_type,
                         "parameters": list(f.parameters),
                         "comment": f.description or f.comment,
+                        **({"category": f.category} if f.category else {}),
                     }
                     for f in s.functions
                     if not (
@@ -277,6 +308,31 @@ def tool_list_tables(catalog: Catalog) -> dict[str, Any]:
         "default_schema": catalog.default_schema,
         "schemas": schemas,
     }
+
+
+def tool_list_categories(catalog: Catalog, schema: str) -> dict[str, Any]:
+    """Categories of a schema (registry order) with their objects — a navigation map."""
+    for s in catalog.iter_schemas():
+        if s.name != schema:
+            continue
+        categories: list[dict[str, Any]] = []
+        uncategorized: list[str] = []
+        for cat, objs in s.iter_by_category():
+            names = [o.name for o in objs]
+            if cat is None:
+                uncategorized = names
+            else:
+                categories.append(
+                    {
+                        "name": cat.name,
+                        "title": cat.display_title,
+                        "description": cat.description,
+                        "object_count": len(names),
+                        "objects": names,
+                    }
+                )
+        return {"schema": schema, "categories": categories, "uncategorized": uncategorized}
+    return {"error": f"no schema {schema!r} — call list_tables to see what exists"}
 
 
 def tool_describe_table(catalog: Catalog, schema: str, table: str) -> dict[str, Any]:
@@ -302,6 +358,7 @@ def tool_describe_table(catalog: Catalog, schema: str, table: str) -> dict[str, 
                 "type": str(t.kind),
                 "comment": t.description_llm or t.comment,
                 "doc_md": t.description_md,
+                **({"category": t.category} if t.category else {}),
                 "primary_key": pk[0] if pk else None,
                 "foreign_keys": fks or None,
                 "columns": [
@@ -351,6 +408,7 @@ def tool_describe_function(catalog: Catalog, schema: str, name: str) -> dict[str
                 "function_type": f.function_type,
                 "description": f.description or f.comment,
                 "doc_llm": f.tags.get(TAG_DOC_LLM),
+                **({"category": f.category} if f.category else {}),
                 "parameters": list(f.parameters),
                 "arguments": [
                     {
@@ -477,6 +535,8 @@ _ACTOR = (
     "TOOLS — respond with ONE JSON object per turn and nothing else:\n"
     '  {"thought":"...","action":"list_tables"}'
     "  — list schemas, tables/views, and functions with their one-line descriptions\n"
+    '  {"thought":"...","action":"list_categories","schema":"..."}'
+    "  — list a schema's categories (ordered sections) and the objects in each\n"
     '  {"thought":"...","action":"describe_table","schema":"...","table":"..."}'
     "  — columns, types, constraints, and examples for one table/view\n"
     '  {"thought":"...","action":"describe_function","schema":"...","name":"..."}'
@@ -502,6 +562,8 @@ def _dispatch(
     kind = action.get("action")
     if kind == "list_tables":
         return tool_list_tables(catalog)
+    if kind == "list_categories":
+        return tool_list_categories(catalog, str(action.get("schema") or ""))
     if kind == "describe_table":
         return tool_describe_table(
             catalog, str(action.get("schema") or ""), str(action.get("table") or "")
@@ -580,9 +642,9 @@ def run_task(
             if queries >= limits.max_queries:
                 break
             continue
-        if kind in ("list_tables", "describe_table", "describe_function"):
+        if kind in ("list_tables", "list_categories", "describe_table", "describe_function"):
             result = _dispatch(catalog, cur, action, limits)
-            label = str(action.get("table") or action.get("name") or "")
+            label = str(action.get("table") or action.get("name") or action.get("schema") or "")
             key = f"{kind}:{action.get('schema') or ''}.{label}"
             discovery.append(
                 TraceEvent(

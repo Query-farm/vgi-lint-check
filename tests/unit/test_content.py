@@ -92,3 +92,78 @@ def test_markdown_image_url_collected_for_resolution():
     cat = F.catalog(F.schema("main", tables=[t]))
     out = _run_links(cat, lambda url: 404)
     assert any("img.png" in f.message for f in out)
+
+
+# --- VGI173 description-enumerates-objects ---------------------------------
+def _calendar_catalog(catalog_doc):
+    funcs = [F.func("main", n) for n in ("easter", "iso_week", "iso_year_week", "is_holiday")]
+    tables = [F.table("main", n) for n in ("holidays", "business_days")]
+    return F.catalog(
+        F.schema("main", tables=tables, functions=funcs),
+        tags={"vgi.doc_llm": catalog_doc, "vgi.doc_md": catalog_doc},
+    )
+
+
+def test_catalog_description_enumerating_objects_is_error():
+    doc = (
+        "This worker provides `easter`, `iso_week`, `iso_year_week`, and "
+        "`is_holiday`, plus the `holidays` and `business_days` tables."
+    )
+    cat = _calendar_catalog(doc)
+    out = [f for f in run(select_rules(Config()), RuleContext(cat, Config())) if f.code == "VGI173"]
+    assert out and out[0].severity.name == "ERROR"
+
+
+def test_purposeful_catalog_description_with_one_example_passes():
+    # Names a single object in a call form — well under the floor/fraction.
+    doc = (
+        "Date-arithmetic helpers for analytics: resolve public holidays, ISO "
+        "week boundaries, and business-day windows when joining time series. "
+        "For example, `easter(2026)` returns Easter Sunday for a year."
+    )
+    cat = _calendar_catalog(doc)
+    assert "VGI173" not in set(codes(cat))
+
+
+def test_enumeration_ignores_english_word_names_in_prose():
+    # 'holidays'/'business' appear as plain prose, not code tokens -> no match.
+    doc = (
+        "A calendar worker covering public holidays and business days across "
+        "countries, with helpers for ISO week math and Easter computation, so "
+        "analysts can bucket and align event time series without external data."
+    )
+    cat = _calendar_catalog(doc)
+    assert "VGI173" not in set(codes(cat))
+
+
+# --- VGI174 description-sql-fenced ------------------------------------------
+def _sql_codes(doc_md):
+    t = F.table("main", "t", comment="A table row of data here.", tags={"vgi.doc_md": doc_md})
+    cat = F.catalog(F.schema("main", tables=[t]))
+    return set(codes(cat))
+
+
+def test_raw_sql_in_prose_flagged():
+    assert "VGI174" in _sql_codes("Run SELECT date FROM cal.main.business_days to list days.")
+
+
+def test_unlabeled_sql_fence_flagged():
+    assert "VGI174" in _sql_codes("Example:\n\n```\nSELECT easter(2026)\n```\n")
+
+
+def test_labeled_sql_fence_passes():
+    assert "VGI174" not in _sql_codes("Example:\n\n```sql\nSELECT easter(2026)\n```\n")
+
+
+def test_prose_without_sql_passes():
+    assert "VGI174" not in _sql_codes("Select the right country before filtering by date.")
+
+
+def test_inline_sql_span_flagged():
+    # A runnable statement tucked into an inline `code` span (the calendar pattern).
+    assert "VGI174" in _sql_codes("Try `SELECT cal.main.easter(2026)` to compute Easter.")
+
+
+def test_bare_keyword_in_inline_span_passes():
+    # `SELECT` as a keyword reference, not a statement -> not flagged.
+    assert "VGI174" not in _sql_codes("Bring calendar math into DuckDB with just a `SELECT`.")

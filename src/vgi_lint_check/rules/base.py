@@ -31,6 +31,10 @@ class RuleContext:
     # Per-executable-example wall-clock seconds, recorded by VGI906 as it runs so
     # VGI908 (slow-example) can report without a second execution pass.
     exec_timings: dict[str, float] = field(default_factory=dict)
+    # LLM-pass results, populated by the pipeline only under --doc-review /
+    # --agent-check; the requires_review / requires_agent rules read them.
+    review_report: Any | None = None  # review.ReviewReport
+    sim_report: Any | None = None  # simulate.SimReport
 
 
 class Rule(ABC):
@@ -41,6 +45,8 @@ class Rule(ABC):
     targets: tuple[ObjectKind, ...] = ()
     requires_connection: bool = False  # gated by --execute (runs SQL on the worker)
     requires_network: bool = False  # gated by --check-links (makes outbound HTTP)
+    requires_review: bool = False  # gated by --doc-review (LLM doc-quality judge)
+    requires_agent: bool = False  # gated by --agent-check (runs `simulate` + LLM)
     summary: str = ""  # one-liner shown in `rules`/`explain` and agent output
 
     @abstractmethod

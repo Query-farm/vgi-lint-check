@@ -95,6 +95,26 @@ def app() -> None:
     help="Resolve URLs/images in descriptions over HTTP (VGI171). On by default.",
 )
 @click.option(
+    "--doc-review",
+    is_flag=True,
+    help="LLM doc-quality review (VGI180); folds into the score. Uses your claude subscription.",
+)
+@click.option(
+    "--agent-check",
+    is_flag=True,
+    help="Run the agent suite (simulate) + gate on pass-rate (VGI920); folds into the score.",
+)
+@click.option("--ai", is_flag=True, help="Shorthand for --doc-review --agent-check.")
+@click.option(
+    "--ai-backend", type=click.Choice(["claude", "api"]), default=None, help="LLM backend."
+)
+@click.option("--ai-model", default=None, help="LLM model override for the AI passes.")
+@click.option(
+    "--no-ai-cache",
+    is_flag=True,
+    help="Disable the LLM verdict cache (by default re-runs reuse unchanged verdicts).",
+)
+@click.option(
     "--select",
     default=None,
     help="Comma list/globs of rule codes to enable (replaces the default set).",
@@ -146,6 +166,12 @@ def lint(
     execute_limit: int | None,
     execute_concurrency: int | None,
     check_links: bool | None,
+    doc_review: bool,
+    agent_check: bool,
+    ai: bool,
+    ai_backend: str | None,
+    ai_model: str | None,
+    no_ai_cache: bool,
     select: str | None,
     extend_select: str | None,
     ignore: str | None,
@@ -179,6 +205,11 @@ def lint(
         execute_limit=execute_limit,
         execute_concurrency=execute_concurrency,
         check_links=check_links,
+        doc_review=doc_review or ai,
+        agent_check=agent_check or ai,
+        ai_backend=ai_backend,
+        ai_model=ai_model,
+        no_ai_cache=no_ai_cache,
         fail_on=fail_on,
         baseline=baseline,
     )
@@ -631,8 +662,13 @@ def _apply_cli_overrides(
     execute_limit: int | None,
     execute_concurrency: int | None,
     check_links: bool | None,
-    fail_on: str | None,
-    baseline: str | None,
+    doc_review: bool = False,
+    agent_check: bool = False,
+    ai_backend: str | None = None,
+    ai_model: str | None = None,
+    no_ai_cache: bool = False,
+    fail_on: str | None = None,
+    baseline: str | None = None,
 ) -> None:
     if select is not None:
         cfg.select = _split(select)
@@ -659,6 +695,16 @@ def _apply_cli_overrides(
         cfg.execute_concurrency = execute_concurrency
     if check_links is not None:
         cfg.check_links = check_links
+    if doc_review:
+        cfg.doc_review = True
+    if agent_check:
+        cfg.agent_check = True
+    if ai_backend is not None:
+        cfg.ai_backend = ai_backend
+    if ai_model is not None:
+        cfg.ai_model = ai_model
+    if no_ai_cache:
+        cfg.ai_cache = False
     if fail_on is not None:
         cfg.fail_on = Severity.OFF if fail_on == "never" else Severity.parse(fail_on)
     if baseline is not None:

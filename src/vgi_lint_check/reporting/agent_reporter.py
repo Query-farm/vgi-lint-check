@@ -33,10 +33,18 @@ def render_agent(report: Report) -> str:
     out.append("")
 
     for r in doc["results"]:
+        dims = ""
+        if r.get("agent_score") is not None or r.get("doc_quality") is not None:
+            parts = [f"static {r.get('static_score', r['score'])}"]
+            if r.get("agent_score") is not None:
+                parts.append(f"agent {r['agent_score']}")
+            if r.get("doc_quality") is not None:
+                parts.append(f"doc-quality {r['doc_quality']}")
+            dims = f" ({', '.join(parts)})"
         if r["data_version"]:
-            out.append(f"## data version {r['data_version']} — score {r['score']}")
+            out.append(f"## data version {r['data_version']} — score {r['score']}{dims}")
         else:
-            out.append(f"## score {r['score']}")
+            out.append(f"## score {r['score']}{dims}")
         cov = ", ".join(f"{k} {int(v * 100)}%" for k, v in r["coverage"].items() if v is not None)
         if cov:
             out.append(f"coverage: {cov}")
@@ -76,4 +84,11 @@ def render_agent(report: Report) -> str:
                 f"{c['error']} | {c['warning']} | {c['info']} | {d} |"
             )
         out.append("")
+
+    if any(r["findings"] for r in doc["results"]):
+        out.append(
+            "---\n"
+            "Tag reference: see `TAGS.md` for every tag's meaning, placement, and value "
+            "shape. Run `vgi-lint explain <CODE>` for any rule's scope."
+        )
     return "\n".join(out).rstrip() + "\n"
