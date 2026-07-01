@@ -113,6 +113,7 @@ skipped unless `--execute` is passed.
 | `VGI311` | warning | parameterless-table-function | A parameterless table function should usually be exposed as a regular table. |  |
 | `VGI312` | error | function-arguments-undocumented | Every function argument must have a description. Needs a vgi extension new enough to expose vgi_function_arguments(); silent on older ones. |  |
 | `VGI313` | warning | argument-description-states-type | An argument description should not restate the data type (it's a separate field). |  |
+| `VGI314` | warning | function-restates-argument-docs | A function's description shouldn't re-document its arguments (they'd drift). |  |
 
 ## Tags (VGI4xx)
 
@@ -210,4 +211,4 @@ skipped unless `--execute` is passed.
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
-_125 rules._
+_126 rules._

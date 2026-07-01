@@ -577,6 +577,38 @@ def test_vgi313_argument_description_states_type():
     assert codes_for(F.arg("s", "VARCHAR", "number of characters to read")) == []
 
 
+def test_vgi314_function_redocuments_arguments():
+    def codes_for(doc_md, *args):
+        fn = F.func(
+            "main",
+            "candles",
+            description="Historical OHLC bars",
+            arguments=list(args),
+            tags={"vgi.doc_md": doc_md},
+        )
+        s = F.schema("main", comment="c", tags=_TAGS, functions=[fn])
+        return {f.code for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))}
+
+    period = F.arg("period", "VARCHAR", "Candle width, e.g. '5m'. Defaults to '5m'.")
+    start = F.arg("start_time", "TIMESTAMP", "Start of the range, interpreted as UTC.")
+
+    # doc_md re-documents the params as a bullet list -> flagged
+    param_list = (
+        "Historical OHLC bars.\n\n"
+        "- **period** — count + unit, e.g. `'5m'`. Default `'5m'`.\n"
+        "- **start_time** — UTC timestamp; defaults to midnight today.\n"
+    )
+    assert "VGI314" in codes_for(param_list, period, start)
+
+    # a doc that merely mentions one arg in prose (no param list) -> not flagged
+    prose = "Historical OHLC bars for symbols; `period` controls the bar width."
+    assert "VGI314" not in codes_for(prose, period, start)
+
+    # verbatim copy of an argument's whole doc -> flagged
+    verbatim = "Historical OHLC bars. Start of the range, interpreted as UTC."
+    assert "VGI314" in codes_for(verbatim, period, start)
+
+
 def test_vgi404_unknown_vgi_namespace_tag():
     def run404(tags):
         s = F.schema(

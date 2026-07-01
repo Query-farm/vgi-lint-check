@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..findings import Category, Finding, Severity
-from ..model import TAG_RESULT_COLUMNS_MD, ObjectKind
+from ..model import TAG_DOC_LLM, TAG_DOC_MD, TAG_RESULT_COLUMNS_MD, ObjectKind
 from ._util import blank, is_trivial_echo
 from .base import Rule, RuleContext
 from .registry import register
@@ -458,3 +458,74 @@ class ParameterlessTableFunction(Rule):
                 "expose it as a regular table that scans this function, so consumers "
                 "can use SELECT * FROM schema.name (no parentheses)",
             )
+
+
+def _norm_prose(text: str | None) -> str:
+    """Lowercase + whitespace-collapsed text for substring comparison."""
+    return " ".join((text or "").lower().split())
+
+
+# A "documented parameter" line: an argument name at the start of a line (after
+# an optional bullet / bold marker) followed by a description separator — em/en
+# dash or colon. Matches `- **period** — …`, `* start_time / … — …`, `period: …`.
+_ARG_DOC_LINE_SEP = "—–:"
+
+
+def _documents_arg_as_list_item(text: str, name: str) -> bool:
+    """True when ``text`` documents ``name`` as its own parameter-list line."""
+    pat = re.compile(
+        rf"(?im)^\s*[-*+]?\s*\*{{0,2}}\s*{re.escape(name)}\b[^\n]*?[{_ARG_DOC_LINE_SEP}]"
+    )
+    return bool(pat.search(text))
+
+
+@register
+class FunctionRestatesArgumentDocs(Rule):
+    code = "VGI314"
+    name = "function-restates-argument-docs"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "A function's description shouldn't re-document its arguments (they'd drift)."
+
+    # Only a substantive argument doc counts as a verbatim duplicate — a short
+    # gloss like "the year" appearing in prose is coincidence, not restatement.
+    _MIN_ARG_DOC = 20
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for f in ctx.catalog.iter_all_functions():
+            args = [a for a in f.arguments if not blank(a.description)]
+            if not args:
+                continue
+            # Raw multiline docs (for the line-anchored parameter-list detection).
+            doc_text = "\n".join(x for x in (f.tags.get(TAG_DOC_LLM), f.tags.get(TAG_DOC_MD)) if x)
+            prose = _norm_prose(" ".join(x for x in (f.description, f.comment, doc_text) if x))
+            if not prose:
+                continue
+            # (a) an argument's whole doc copied verbatim into the function prose.
+            hits = {
+                a.name
+                for a in args
+                if len(_norm_prose(a.description)) >= self._MIN_ARG_DOC
+                and _norm_prose(a.description) in prose
+            }
+            # (b) a parameter-reference list: >=2 args each written as their own
+            #     "name — …" / "name: …" doc line — a manual re-doc of the args.
+            listed = {a.name for a in args if _documents_arg_as_list_item(doc_text, a.name)}
+            if len(listed) >= 2:
+                hits |= listed
+            if hits:
+                names = ", ".join(repr(n) for n in sorted(hits))
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    f"function description re-documents its argument(s) {names}",
+                    "describe what the function does and returns; each argument is already "
+                    "documented via vgi_function_arguments() — don't repeat a parameter list "
+                    "in the function doc, where it drifts out of sync with the arg docs",
+                )
