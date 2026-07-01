@@ -133,6 +133,11 @@ class RecordingCon:
     def __init__(self, rows=None, cols=None):
         self.rows, self.cols, self.ran = rows or [], cols or [], []
 
+    def cursor(self):
+        # Parallel execution (default concurrency = CPU count) asks for a cursor
+        # per thread; share this recorder so .ran still sees every statement.
+        return self
+
     def execute(self, sql):
         self.ran.append(sql)
         if "BOOM" in sql:

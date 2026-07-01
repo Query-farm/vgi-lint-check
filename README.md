@@ -46,6 +46,31 @@ uv run vgi-lint http://localhost:9009 --format json
 In a worker's own repo, add a `[tool.vgi-lint-check]` block (see `vgi-lint init`)
 with a `location`, then just run `vgi-lint` with no arguments.
 
+### Workers that require attach options / credentials
+
+Some workers demand options at `ATTACH` time (e.g. a mail worker needing
+`PROVIDER`/`SECRET`, or `HOST`/`USERNAME`/`PASSWORD`). Pass them with
+`--attach-option KEY=VALUE` (repeatable), and run any prerequisite SQL (e.g. a
+`CREATE SECRET`) with `--setup-sql` (repeatable). A worker that resolves
+credentials **lazily** (only on the first query) attaches fine with a
+*placeholder* secret name — enough for a static, no-connection metadata lint:
+
+```bash
+# Static metadata lint of a credential-gated worker (no live account needed)
+uv run vgi-lint '/path/to/.venv/bin/vgi-email' \
+  --attach-option provider=imap --attach-option secret=lint --no-execute
+
+# If --execute rules need a real connection, create the secret first:
+uv run vgi-lint '/path/to/.venv/bin/vgi-email' \
+  --setup-sql "CREATE SECRET lint (TYPE imap, HOST 'imap.example.com', USERNAME 'me', PASSWORD 'pw')" \
+  --attach-option provider=imap --attach-option secret=lint
+```
+
+Equivalent config keys: `attach_options = { provider = "imap", secret = "lint" }`
+and `setup_sql = ["CREATE SECRET ..."]` under `[tool.vgi-lint-check]`. The GitHub
+Action exposes these as the `attach-options` and `setup-sql` inputs (one
+`KEY=VALUE` / statement per line).
+
 > v1 supports **local subprocess** and **no-auth HTTP** workers. Authenticated
 > (OAuth) workers are not yet supported.
 
@@ -157,7 +182,7 @@ enabled     = true       # default; --no-execute to disable
 mode        = "explain"  # explain (bind-only, cheapest) | limit | run — for VGI901
 limit       = 1          # row cap for limit/VGI902 modes
 timeout     = 30.0       # per-query seconds; 0 disables the guard
-concurrency = 1          # run example queries across N cursors in parallel
+concurrency = 8          # example-query parallelism; omit to use the CPU count (lower for rate-limited)
 slow_seconds = 5.0       # VGI908 warns on an executable example slower than this (0 = off)
 ```
 
@@ -166,12 +191,22 @@ example and its measured time (`executable example 'heavy-scan' is slow (8.2s >
 5s)`). It reuses the timing VGI906 already measures, so detection adds no extra
 execution pass.
 
-**Parallel execution.** `concurrency > 1` (or `--execute-concurrency N`) runs
-example queries across N cursors that share the attach, so the VGI worker pool
-serves them from distinct workers. On a compute-bound worker this is roughly
-linear (measured ~3.5× at N=4 on `vgi-units`); on a tiny/local worker it's a
-wash, since there's no per-query work to overlap. Multi-statement executable
-examples stay ordered on their own cursor; findings remain deterministic.
+**Parallel execution (on by default).** Execution rules run example queries
+across N cursors that share the attach, so the VGI worker pool serves them from
+distinct workers. **N defaults to the machine's CPU count** — worth the most on an
+I/O-bound worker where each query is a live API round trip (measured ~4× on a
+credential-gated worker: 117 s → 32 s), roughly linear on a compute-bound worker
+(~3.5× at N=4 on `vgi-units`), and a wash on a tiny/local worker. Lower it with
+`--execute-concurrency N` (or the config) for a **rate-limited** worker.
+Multi-statement executable examples stay ordered on their own cursor; findings
+remain deterministic.
+
+**Diagnosing a slow lint.** `--trace [FILE]` (default `vgi-lint-trace.log`)
+writes a per-phase and per-rule timing log: `connect+load`, `ATTACH`, catalog
+build, each rule's wall-clock, and the AI passes — with a "slowest rules"
+summary. On a worker backed by a live API (each `--execute` query is a round
+trip), this pinpoints exactly which execution rules dominate. Pair it with
+`--execute-concurrency N` to parallelize the example-query round trips.
 
 ## Documentation review (LLM-as-judge)
 

@@ -87,7 +87,8 @@ def app() -> None:
     "--execute-concurrency",
     type=int,
     default=None,
-    help="Run example queries across N cursors in parallel (uses the VGI worker pool).",
+    help="Run example queries across N cursors in parallel (default: CPU count; "
+    "lower it for a rate-limited worker).",
 )
 @click.option(
     "--check-links/--no-check-links",
@@ -148,7 +149,34 @@ def app() -> None:
     "--output", type=click.Path(dir_okay=False), default=None, help="Write report to FILE."
 )
 @click.option("--color", type=click.Choice(["auto", "always", "never"]), default="auto")
+@click.option(
+    "--attach-option",
+    "attach_options",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Extra ATTACH option (repeatable) for workers that require options/credentials to "
+    "attach, e.g. --attach-option provider=imap --attach-option secret=lint. A worker that "
+    "resolves credentials lazily attaches fine with a placeholder secret for static linting.",
+)
+@click.option(
+    "--setup-sql",
+    "setup_sql",
+    multiple=True,
+    metavar="SQL",
+    help="SQL to run on the connection before ATTACH (repeatable), e.g. a CREATE SECRET needed "
+    "by --execute rules.",
+)
 @click.option("--config", "config_path", type=click.Path(exists=True, dir_okay=False), default=None)
+@click.option(
+    "--trace",
+    "trace_path",
+    is_flag=False,
+    flag_value="vgi-lint-trace.log",
+    default=None,
+    metavar="FILE",
+    help="Write a per-phase / per-rule timing log to FILE (default vgi-lint-trace.log) to "
+    "diagnose a slow lint.",
+)
 @click.option("--traceback", is_flag=True, help="Show a full traceback on an unexpected error.")
 @click.option("--quiet", "-q", is_flag=True)
 @click.pass_context
@@ -186,12 +214,17 @@ def lint(
     max_per_rule: int,
     output: str | None,
     color: str,
+    attach_options: tuple[str, ...],
+    setup_sql: tuple[str, ...],
     config_path: str | None,
+    trace_path: str | None,
     traceback: bool,
     quiet: bool,
 ) -> None:
     """Lint a worker at LOCATION (URL or subprocess command)."""
     cfg = load_config(config_path)
+    if trace_path is not None:
+        cfg.trace = trace_path
     _apply_cli_overrides(
         cfg,
         select=select,
@@ -212,6 +245,8 @@ def lint(
         no_ai_cache=no_ai_cache,
         fail_on=fail_on,
         baseline=baseline,
+        attach_options=attach_options,
+        setup_sql=setup_sql,
     )
     _warn_unknown_selectors(cfg)
     location = location or cfg.location
@@ -669,7 +704,16 @@ def _apply_cli_overrides(
     no_ai_cache: bool = False,
     fail_on: str | None = None,
     baseline: str | None = None,
+    attach_options: tuple[str, ...] = (),
+    setup_sql: tuple[str, ...] = (),
 ) -> None:
+    for item in attach_options:
+        if "=" not in item:
+            raise click.UsageError(f"--attach-option expects KEY=VALUE, got {item!r}")
+        key, value = item.split("=", 1)
+        cfg.attach_options[key.strip()] = value
+    if setup_sql:
+        cfg.setup_sql = cfg.setup_sql + list(setup_sql)
     if select is not None:
         cfg.select = _split(select)
     if extend_select is not None:

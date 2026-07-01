@@ -35,6 +35,8 @@ class RuleContext:
     # --agent-check; the requires_review / requires_agent rules read them.
     review_report: Any | None = None  # review.ReviewReport
     sim_report: Any | None = None  # simulate.SimReport
+    # Timing tracer, set only under --trace; the engine times each rule with it.
+    tracer: Any | None = None  # trace.Tracer
 
 
 class Rule(ABC):

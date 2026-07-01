@@ -6,7 +6,10 @@ the connection lifecycle and returns a fully populated :class:`Report`.
 
 from __future__ import annotations
 
+import contextlib
 import sys
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from . import baseline as _baseline
@@ -14,6 +17,7 @@ from . import comparison as _comparison
 from . import scoring
 from .config import Config
 from .connection import (
+    apply_setup_sql,
     attached,
     connect_loaded,
     derive_alias,
@@ -28,7 +32,18 @@ from .result import Report, VersionResult
 from .rules import run, select_rules
 from .rules.base import RuleContext
 from .snapshot import fetch_function_arguments, take_snapshot
+from .trace import Tracer
 from .versions import CatalogDiscovery, discover_catalogs, resolve_versions
+
+
+@contextlib.contextmanager
+def _span(tracer: Tracer | None, kind: str, name: str) -> Iterator[None]:
+    """Time ``name`` under ``tracer`` (a no-op when tracing is off)."""
+    if tracer is None:
+        yield
+    else:
+        with tracer.span(kind, name):
+            yield
 
 
 def lint_worker(
@@ -45,9 +60,13 @@ def lint_worker(
 ) -> Report:
     """Connect to a worker, lint each data version, and return a :class:`Report`."""
     config = config or Config()
-    con, vgi_version = connect_loaded(install=install, spatial=spatial)
+    tracer = Tracer(Path(config.trace)) if config.trace else None
+    with _span(tracer, "phase", "connect+load (INSTALL/LOAD vgi)"):
+        con, vgi_version = connect_loaded(install=install, spatial=spatial)
     try:
-        catalogs = discover_catalogs(con, location)
+        apply_setup_sql(con, config.setup_sql)
+        with _span(tracer, "phase", "discover catalogs"):
+            catalogs = discover_catalogs(con, location)
         discovery = _choose(catalogs, location, catalog_name)
         advertised = [c.catalog for c in catalogs] or [discovery.catalog]
         name = discovery.catalog
@@ -66,11 +85,14 @@ def lint_worker(
                 vgi_version,
                 config,
                 update_baseline,
+                tracer,
             )
             for dv in versions
         ]
     finally:
         con.close()
+        if tracer is not None:
+            tracer.dump()
 
     comp = _comparison.build(results) if len(results) > 1 else None
     return Report(
@@ -93,6 +115,8 @@ def with_attached_catalog(
     install: bool = True,
     spatial: bool = True,
     data_version: str | None = None,
+    attach_options: dict[str, str] | None = None,
+    setup_sql: list[str] | tuple[str, ...] | None = None,
 ) -> Any:
     """Run ``runner(catalog, con)`` with the live attached connection still open.
 
@@ -111,6 +135,8 @@ def with_attached_catalog(
         install=install,
         spatial=spatial,
         data_version=data_version,
+        attach_options=attach_options,
+        setup_sql=setup_sql,
         _while_open=_run,
     )
 
@@ -123,6 +149,8 @@ def load_catalog(
     install: bool = True,
     spatial: bool = True,
     data_version: str | None = None,
+    attach_options: dict[str, str] | None = None,
+    setup_sql: list[str] | tuple[str, ...] | None = None,
 ) -> Any:
     """Connect, attach, and return the built :class:`Catalog` (no rules run).
 
@@ -135,6 +163,8 @@ def load_catalog(
         install=install,
         spatial=spatial,
         data_version=data_version,
+        attach_options=attach_options,
+        setup_sql=setup_sql,
         _while_open=None,
     )
 
@@ -147,6 +177,8 @@ def _load_catalog(
     install: bool = True,
     spatial: bool = True,
     data_version: str | None = None,
+    attach_options: dict[str, str] | None = None,
+    setup_sql: list[str] | tuple[str, ...] | None = None,
     _while_open: Any = None,
 ) -> Any:
     """Build the catalog (shared by load_catalog/with_attached_catalog).
@@ -156,6 +188,7 @@ def _load_catalog(
     """
     con, vgi_version = connect_loaded(install=install, spatial=spatial)
     try:
+        apply_setup_sql(con, setup_sql)
         catalogs = discover_catalogs(con, location)
         discovery = _choose(catalogs, location, catalog_name)
         advertised = [c.catalog for c in catalogs] or [discovery.catalog]
@@ -164,7 +197,14 @@ def _load_catalog(
             Release(r.version, r.released_at, r.summary, r.notes_url) for r in discovery.releases
         ]
         before = take_snapshot(con)
-        with attached(con, location, discovery.catalog, local_alias, data_version=data_version):
+        with attached(
+            con,
+            location,
+            discovery.catalog,
+            local_alias,
+            data_version=data_version,
+            attach_options=attach_options,
+        ):
             after = take_snapshot(con)
             diff = diff_snapshots(before, after, local_alias)
             catalog = build_catalog(
@@ -220,38 +260,54 @@ def _lint_one_version(
     vgi_version: str | None,
     config: Config,
     update_baseline: bool,
+    tracer: Tracer | None = None,
 ) -> VersionResult:
     releases = [
         Release(r.version, r.released_at, r.summary, r.notes_url) for r in discovery.releases
     ]
-    before = take_snapshot(con)
-    with attached(con, location, discovery.catalog, alias, data_version=data_version):
-        after = take_snapshot(con)
+    with _span(tracer, "phase", "snapshot (pre-attach)"):
+        before = take_snapshot(con)
+    with contextlib.ExitStack() as stack:
+        with _span(tracer, "phase", "ATTACH worker"):
+            stack.enter_context(
+                attached(
+                    con,
+                    location,
+                    discovery.catalog,
+                    alias,
+                    data_version=data_version,
+                    attach_options=config.attach_options,
+                )
+            )
+        with _span(tracer, "phase", "snapshot (post-attach)"):
+            after = take_snapshot(con)
         diff = diff_snapshots(before, after, alias)
         default_schema = read_default_schema(con, alias)
-        catalog = build_catalog(
-            after,
-            alias,
-            location,
-            vgi_version=vgi_version,
-            data_version=data_version,
-            catalog_name=discovery.catalog,
-            source_url=discovery.source_url,
-            implementation_version=discovery.implementation_version,
-            data_version_spec=discovery.data_version_spec,
-            default_schema=default_schema,
-            releases=releases,
-            setting_rows=diff.setting_rows,
-            pragma_rows=diff.pragma_rows,
-            attach_options=discovery.attach_options,
-            advertised_catalogs=advertised,
-            argument_rows=fetch_function_arguments(con, alias),
-        )
+        with _span(tracer, "phase", "build catalog (+ function args)"):
+            catalog = build_catalog(
+                after,
+                alias,
+                location,
+                vgi_version=vgi_version,
+                data_version=data_version,
+                catalog_name=discovery.catalog,
+                source_url=discovery.source_url,
+                implementation_version=discovery.implementation_version,
+                data_version_spec=discovery.data_version_spec,
+                default_schema=default_schema,
+                releases=releases,
+                setting_rows=diff.setting_rows,
+                pragma_rows=diff.pragma_rows,
+                attach_options=discovery.attach_options,
+                advertised_catalogs=advertised,
+                argument_rows=fetch_function_arguments(con, alias),
+            )
         rules = select_rules(config)
         needs_con = any(getattr(r, "requires_connection", False) for r in rules)
         needs_net = any(getattr(r, "requires_network", False) for r in rules)
         resolver = make_link_resolver(config.link_timeout) if needs_net else None
-        review_report, sim_report = _run_ai_passes(catalog, con, config, rules)
+        with _span(tracer, "phase", "AI passes (doc-review/agent-check)"):
+            review_report, sim_report = _run_ai_passes(catalog, con, config, rules)
         ctx = RuleContext(
             catalog,
             config,
@@ -259,8 +315,10 @@ def _lint_one_version(
             link_resolver=resolver,
             review_report=review_report,
             sim_report=sim_report,
+            tracer=tracer,
         )
-        findings = run(rules, ctx)
+        with _span(tracer, "phase", "run rules"):
+            findings = run(rules, ctx)
 
     if config.baseline:
         if update_baseline:
@@ -268,9 +326,10 @@ def _lint_one_version(
         findings = _baseline.classify(findings, config.baseline, catalog.data_version)
 
     agent_score = sim_report.score if (sim_report and sim_report.verdicts) else None
-    quality = scoring.compute(
-        catalog, findings, agent_score=agent_score, doc_quality=_doc_quality(review_report)
-    )
+    with _span(tracer, "phase", "score"):
+        quality = scoring.compute(
+            catalog, findings, agent_score=agent_score, doc_quality=_doc_quality(review_report)
+        )
     return VersionResult(
         catalog=catalog, findings=findings, quality=quality, diff_summary=diff.summary
     )

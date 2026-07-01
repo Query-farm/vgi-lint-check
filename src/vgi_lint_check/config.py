@@ -10,6 +10,7 @@ built-in defaults < pyproject.toml < dedicated file < CLI flags.
 from __future__ import annotations
 
 import fnmatch
+import os
 import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -21,6 +22,16 @@ from .findings import Severity
 if TYPE_CHECKING:
     from .model import ObjectId
     from .rules.base import Rule
+
+
+def _default_execute_concurrency() -> int:
+    """Default parallelism for execution rules: the machine's CPU count.
+
+    Execution rules (VGI9xx) are I/O-bound on the worker — often a live API — so
+    running example queries across this many cursors overlaps the round trips.
+    Falls back to 4 when the CPU count can't be determined.
+    """
+    return os.cpu_count() or 4
 
 
 @dataclass
@@ -97,7 +108,10 @@ class Config:
     execute_mode: str = "explain"
     execute_limit: int = 1
     execute_timeout: float = 30.0  # per-query wall-clock cap (seconds; 0 = off)
-    execute_concurrency: int = 1  # run example queries across N cursors (worker pool)
+    # Run example queries across N cursors (worker pool). Defaults to the CPU
+    # count so I/O-bound execution rules overlap their worker round trips; set
+    # lower for a rate-limited worker via --execute-concurrency / config.
+    execute_concurrency: int = field(default_factory=_default_execute_concurrency)
     slow_example_seconds: float = 5.0  # warn on executable examples slower than this (0 = off)
     sample_size: int = 100  # VGI810/VGI811: rows/values sampled per constraint probe
     sample_timeout: float = 10.0  # VGI810/VGI811: per-query cap (shorter than execute_timeout)
@@ -114,6 +128,14 @@ class Config:
     fail_on: Severity = Severity.ERROR
     location: str | None = None
     baseline: str | None = None
+    trace: str | None = None  # when set, write a per-phase / per-rule timing log here
+    # Extra ATTACH options + pre-attach setup SQL, for workers that require
+    # options/credentials to attach (e.g. PROVIDER/SECRET). attach_options render
+    # into the ATTACH statement; setup_sql runs on the connection before ATTACH
+    # (e.g. CREATE SECRET). Static metadata linting needs no live connection, so
+    # a placeholder secret name is enough to satisfy a deferred-credential attach.
+    attach_options: dict[str, str] = field(default_factory=dict)
+    setup_sql: list[str] = field(default_factory=list)
 
     # ---- rule selection / severity resolution ----------------------------
     @property
@@ -202,6 +224,11 @@ def from_table(raw: dict[str, Any]) -> Config:
         cfg.location = raw["location"]
     if "baseline" in raw:
         cfg.baseline = raw["baseline"]
+    if "attach_options" in raw and isinstance(raw["attach_options"], dict):
+        cfg.attach_options = {str(k): str(v) for k, v in raw["attach_options"].items()}
+    if "setup_sql" in raw:
+        val = raw["setup_sql"]
+        cfg.setup_sql = [str(val)] if isinstance(val, str) else [str(s) for s in val]
     if "check_links" in raw:
         cfg.check_links = bool(raw["check_links"])
     if "link_timeout" in raw:

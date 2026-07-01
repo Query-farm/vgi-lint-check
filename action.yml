@@ -60,6 +60,22 @@ inputs:
     description: "Explicit config file (passes --config). Empty uses normal discovery."
     required: false
     default: ""
+  attach-options:
+    description: >-
+      Extra ATTACH options for workers that require options/credentials to attach,
+      one KEY=VALUE per line (passes a --attach-option per line). A worker that
+      resolves credentials lazily attaches fine with a placeholder secret for a
+      static lint, e.g.:
+        provider=imap
+        secret=lint
+    required: false
+    default: ""
+  setup-sql:
+    description: >-
+      SQL statements to run on the connection before ATTACH, one per line (passes
+      a --setup-sql per line) — e.g. a CREATE SECRET needed by --execute rules.
+    required: false
+    default: ""
   args:
     description: "Extra raw arguments appended to the vgi-lint invocation (word-split)."
     required: false
@@ -102,6 +118,8 @@ runs:
         VGILC_SPATIAL: ${{ inputs.spatial }}
         VGILC_FORMAT: ${{ inputs.format }}
         VGILC_CONFIG: ${{ inputs.config }}
+        VGILC_ATTACH_OPTIONS: ${{ inputs.attach-options }}
+        VGILC_SETUP_SQL: ${{ inputs.setup-sql }}
         VGILC_ARGS: ${{ inputs.args }}
         VGILC_SUMMARY: ${{ inputs.summary }}
       run: |
@@ -125,6 +143,13 @@ runs:
         fi
         [ -n "${VGILC_BASELINE}" ] && flags+=( --baseline "${VGILC_BASELINE}" )
         [ -n "${VGILC_CONFIG}" ]   && flags+=( --config "${VGILC_CONFIG}" )
+        # One --attach-option / --setup-sql per non-empty input line.
+        while IFS= read -r _line; do
+          [ -n "${_line}" ] && flags+=( --attach-option "${_line}" )
+        done <<< "${VGILC_ATTACH_OPTIONS}"
+        while IFS= read -r _line; do
+          [ -n "${_line}" ] && flags+=( --setup-sql "${_line}" )
+        done <<< "${VGILC_SETUP_SQL}"
         if [ "${VGILC_EXECUTE}" = "false" ]; then flags+=( --no-execute ); else flags+=( --execute ); fi
         if [ "${VGILC_SPATIAL}" = "false" ]; then flags+=( --no-spatial ); else flags+=( --spatial ); fi
 
