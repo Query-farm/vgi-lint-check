@@ -153,3 +153,42 @@ class LongFunctionName(Rule):
                     f"function name is {n} characters (> {limit})",
                     "use a shorter, memorable name so it is easy to type and read",
                 )
+
+
+@register
+class RedundantNamePrefix(Rule):
+    code = "VGI142"
+    name = "redundant-name-prefix"
+    category = Category.STRUCTURE
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "Object names shouldn't carry a redundant retrieval verb (get_/list_)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        prefixes = [p.lower() for p in ctx.config.options.redundant_name_prefixes if p]
+        if not prefixes:
+            return
+        objects = [(t.id, t.name, str(t.kind)) for t in ctx.catalog.iter_table_like()]
+        objects += [(f.id, f.name, "function") for f in ctx.catalog.iter_all_functions()]
+        for oid, name, kind in objects:
+            low = (name or "").lower()
+            for p in prefixes:
+                # Prefix + at least one more char, so `playlist`/`budget` are safe
+                # and a bare `get`/`list` isn't flagged.
+                if low.startswith(p) and len(low) > len(p):
+                    stripped = (name or "")[len(p) :]
+                    yield self.finding(
+                        ctx,
+                        oid,
+                        f"{kind} name {name!r} starts with the redundant prefix {p!r}",
+                        f"a {kind} is already a queryable collection — consider renaming "
+                        f"{name!r} to {stripped!r} so it reads naturally in SQL",
+                    )
+                    break

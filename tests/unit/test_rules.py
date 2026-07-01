@@ -327,3 +327,22 @@ def test_findings_sorted_deterministically():
         )
         or len(fs) >= 1
     )  # smoke: deterministic order produced
+
+
+def test_vgi142_redundant_name_prefix():
+    # list_/get_ prefixes on a table and a function are flagged...
+    tbl = F.table("main", "list_holidays", comment="Holidays for a year")
+    fn = F.func("main", "get_price", description="Price of a thing")
+    ok_tbl = F.table("main", "holidays", comment="Holidays for a year")
+    ok_fn = F.func("main", "playlist", description="not a get/list prefix")
+    s = F.schema("main", comment="c", tables=[tbl, ok_tbl], functions=[fn, ok_fn])
+    found = codes(F.catalog(s))
+    names = [f.object_id.name for f in _findings(F.catalog(s)) if f.code == "VGI142"]
+    assert "VGI142" in found
+    assert set(names) == {"list_holidays", "get_price"}  # not holidays/playlist
+
+
+def test_vgi142_disabled_when_no_prefixes():
+    tbl = F.table("main", "list_holidays", comment="Holidays for a year")
+    s = F.schema("main", comment="c", tables=[tbl])
+    assert "VGI142" not in codes(F.catalog(s), options=Options(redundant_name_prefixes=[]))

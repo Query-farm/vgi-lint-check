@@ -102,7 +102,7 @@ families:
 | Pragmas | VGI7xx | pragma descriptions |
 | Constraints | VGI8xx | FK/PK/check validity; completeness nudges (no constraints / PKs / NOT NULL anywhere); per-table primary key; **`<table>_id` column with no FK suggests one**; **a key-shaped column shared by several tables with no FK may be a missing relationship** |
 | Attach options | VGI10xx | every `vgi_catalogs()` attach option is documented (description present + meaningful) |
-| Structure | VGI11x/13x | **schema not empty**; warn on excessive table/function counts and over-long table/function names; **schema object-count cap (>50 by default)** |
+| Structure | VGI11x/13x/14x | **schema not empty**; warn on excessive table/function counts and over-long table/function names; **schema object-count cap (>50 by default)**; **redundant `get_`/`list_` name prefixes** |
 | Execution | VGI9xx | example queries **must bind (error)**, runtime/data failures are warnings; **executable examples must run + match expected output + run fast** (slow ones warn, naming the example); CHECK constraints bind; advertised attach options are accepted and advertised catalogs attach (`--execute`, **on by default**); per-query timeout so nothing runs forever |
 
 **Strict by default.** `vgi-lint` ships a strict profile: descriptions on every

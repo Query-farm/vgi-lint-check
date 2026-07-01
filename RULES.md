@@ -187,6 +187,7 @@ skipped unless `--execute` is passed.
 | `VGI135` | warning | excessive-function-count | Warn when a catalog defines more functions than options.max_functions. |  |
 | `VGI136` | warning | long-table-name | Warn on table/view names longer than options.max_table_name_length. |  |
 | `VGI137` | warning | long-function-name | Warn on function names longer than options.max_function_name_length. |  |
+| `VGI142` | warning | redundant-name-prefix | Object names shouldn't carry a redundant retrieval verb (get_/list_). |  |
 
 ## Attach options (VGI10xx)
 
@@ -209,4 +210,4 @@ skipped unless `--execute` is passed.
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
-_124 rules._
+_125 rules._

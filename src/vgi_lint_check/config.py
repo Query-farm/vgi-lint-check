@@ -62,6 +62,10 @@ class Options:
     # Warn on over-long table/function names (0 = disabled).
     max_table_name_length: int = 64
     max_function_name_length: int = 64
+    # VGI142: redundant retrieval-verb prefixes on object names. A table/function
+    # is already a queryable collection, so `list_`/`get_` restate what FROM/the
+    # call already convey. Empty list disables the rule.
+    redundant_name_prefixes: list[str] = field(default_factory=lambda: ["get_", "list_"])
     # Required tags are opt-in: VGI401 only fires for keys you list here. There
     # is no universal tag every schema/table must carry.
     required_schema_tags: list[str] = field(default_factory=list)
