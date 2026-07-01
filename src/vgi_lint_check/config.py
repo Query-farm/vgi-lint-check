@@ -126,6 +126,7 @@ class Config:
     agent_check: bool = False  # VGI920: run `simulate` + gate (requires_agent rules)
     ai_backend: str = "claude"  # claude (subscription CLI) | api
     ai_model: str | None = None
+    ai_concurrency: int = 4  # parallel LLM batches/tasks for the doc-review pass
     # Content-hash verdict cache for the LLM passes (shared with `review`/`simulate`),
     # so unchanged docs/tasks aren't re-judged on a re-run. --no-ai-cache disables it.
     ai_cache: bool = True

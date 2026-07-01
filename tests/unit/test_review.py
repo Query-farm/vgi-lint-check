@@ -34,7 +34,29 @@ def test_build_items_includes_grounding():
     assert tbl["columns"][0]["name"] == "name" and tbl["columns"][0]["type"] == "VARCHAR"
     assert tbl["examples"] == ["SELECT * FROM v.main.animals"]
     fn = by["v.main.loud"]
+    # No per-argument metadata (older extension) -> bare parameter names.
     assert fn["parameters"] == ["x"]
+
+
+def test_build_items_exposes_argument_descriptions():
+    # When vgi_function_arguments() metadata is present, the reviewer sees each
+    # argument's description (not just its name/type) so it can judge documentation.
+    fn = F.func(
+        "main",
+        "candles",
+        "table_function",
+        description="OHLC bars",
+        arguments=[
+            F.arg("symbols", "VARCHAR[]", "Symbols to fetch, e.g. ['QQQ']."),
+            F.arg("period", "VARCHAR", "Candle width, e.g. '5m'."),
+        ],
+    )
+    cat = F.catalog(F.schema("main", functions=[fn]))
+    item = next(it for it in rv.build_items(cat) if it["object"] == "v.main.candles")
+    assert item["parameters"] == [
+        {"name": "symbols", "type": "VARCHAR[]", "description": "Symbols to fetch, e.g. ['QQQ']."},
+        {"name": "period", "type": "VARCHAR", "description": "Candle width, e.g. '5m'."},
+    ]
 
 
 def test_content_hash_changes_with_content():
@@ -117,6 +139,49 @@ def test_review_catalog_and_cache(tmp_path):
     report2 = rv.review_catalog(cat, backend2, cache=cache2, batch_size=2)
     assert report2.cached == len(rv.build_items(cat)) and report2.judged == 0
     assert backend2.calls == 0
+
+
+def test_review_catalog_parallel_preserves_order():
+    cat = _catalog()
+    backend = FakeBackend()
+    # batch_size 1 + concurrency 4 -> many single-object batches run in parallel
+    report = rv.review_catalog(cat, backend, cache=None, batch_size=1, concurrency=4)
+    n = len(rv.build_items(cat))
+    assert report.judged == n and backend.calls == n
+    # results are reassembled in the original object order despite parallelism
+    assert [r.object for r in report.reviews] == [it["object"] for it in rv.build_items(cat)]
+
+
+class _FlakyBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def complete(self, prompt):
+        self.calls += 1
+        if self.calls == 1:  # first batch fails
+            raise RuntimeError("boom")
+        import re
+
+        ids = re.findall(r'"object": "([^"]+)"', prompt)
+        return json.dumps(
+            [
+                {
+                    "object": i,
+                    "scores": {k: 3 for k in rv.SCORE_KEYS},
+                    "suggestions": [],
+                    "summary": "",
+                }
+                for i in ids
+            ]
+        )
+
+
+def test_review_catalog_survives_a_failed_batch():
+    cat = _catalog()
+    # concurrency 1 so exactly the first single-object batch is the one that raises
+    report = rv.review_catalog(cat, _FlakyBackend(), cache=None, batch_size=1, concurrency=1)
+    n = len(rv.build_items(cat))
+    assert report.judged == n - 1  # one object unreviewed, the rest still judged
 
 
 def test_render_terminal_and_json():

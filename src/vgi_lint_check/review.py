@@ -17,6 +17,7 @@ import json
 import shutil
 import subprocess
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -246,6 +247,17 @@ def build_items(catalog: Catalog) -> list[dict[str, Any]]:
     for f in catalog.iter_all_functions():
         if f.kind is ObjectKind.TABLE_FUNCTION and catalog.find_table_like(f.name, f.schema):
             continue  # documented via its backing table
+        # Prefer the per-argument metadata (name, type, description) from
+        # vgi_function_arguments() so the reviewer can judge whether each argument is
+        # actually documented; fall back to bare parameter names on older extensions
+        # that don't expose it.
+        if f.arguments:
+            parameters: Any = [
+                {"name": a.name, "type": a.type, "description": a.description or ""}
+                for a in f.arguments
+            ]
+        else:
+            parameters = list(f.parameters)
         items.append(
             {
                 "object": f.id.qualified(),
@@ -253,7 +265,7 @@ def build_items(catalog: Catalog) -> list[dict[str, Any]]:
                 "description": f.description or "",
                 "comment": f.comment or "",
                 **_doc(f.tags),
-                "parameters": list(f.parameters),
+                "parameters": parameters,
                 "parameter_types": list(f.parameter_types),
                 "examples": [e.sql for e in f.examples if e.sql],
             }
@@ -422,8 +434,16 @@ def review_catalog(
     backend_name: str = "claude",
     cache: ReviewCache | None = None,
     batch_size: int = 8,
+    concurrency: int = 4,
 ) -> ReviewReport:
-    """Review every object's docs; reuse cached verdicts for unchanged content."""
+    """Review every object's docs; reuse cached verdicts for unchanged content.
+
+    Cache-miss objects are judged in batches (``batch_size``) run **in parallel**
+    across ``concurrency`` threads — each a separate backend call — so a large
+    catalog's batches overlap instead of running one after another. A batch that
+    fails (backend/parse error) leaves its objects unreviewed rather than sinking
+    the whole pass; the cache is written once on the main thread.
+    """
     items = build_items(catalog)
     reviews: list[ObjectReview] = []
     to_judge: list[dict[str, Any]] = []
@@ -436,13 +456,26 @@ def review_catalog(
         else:
             to_judge.append(item)
 
-    judged = 0
-    for i in range(0, len(to_judge), batch_size):
-        batch = to_judge[i : i + batch_size]
-        parsed = parse_reviews(backend.complete(build_prompt(batch)), batch)
+    batches = [to_judge[i : i + batch_size] for i in range(0, len(to_judge), batch_size)]
+
+    def judge(batch: list[dict[str, Any]]) -> list[tuple[dict[str, Any], ObjectReview | None]]:
+        try:
+            parsed = parse_reviews(backend.complete(build_prompt(batch)), batch)
+        except Exception:  # noqa: BLE001 - a flaky batch leaves its objects unreviewed
+            return [(item, None) for item in batch]
         by_id = {r.object: r for r in parsed}
-        for item in batch:
-            r = by_id.get(item["object"])
+        return [(item, by_id.get(item["object"])) for item in batch]
+
+    workers = max(1, min(concurrency, len(batches)))
+    if workers <= 1 or len(batches) <= 1:
+        batch_results = [judge(b) for b in batches]
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            batch_results = list(ex.map(judge, batches))
+
+    judged = 0
+    for batch_result in batch_results:
+        for item, r in batch_result:
             if r is None:
                 continue
             reviews.append(r)

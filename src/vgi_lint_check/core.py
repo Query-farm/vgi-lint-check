@@ -306,8 +306,7 @@ def _lint_one_version(
         needs_con = any(getattr(r, "requires_connection", False) for r in rules)
         needs_net = any(getattr(r, "requires_network", False) for r in rules)
         resolver = make_link_resolver(config.link_timeout) if needs_net else None
-        with _span(tracer, "phase", "AI passes (doc-review/agent-check)"):
-            review_report, sim_report = _run_ai_passes(catalog, con, config, rules)
+        review_report, sim_report = _run_ai_passes(catalog, con, config, rules, tracer)
         ctx = RuleContext(
             catalog,
             config,
@@ -342,7 +341,9 @@ def _doc_quality(report: Any) -> int | None:
     return int(round((report.score - 1) / 4 * 100))
 
 
-def _run_ai_passes(catalog: Any, con: Any, config: Config, rules: Any) -> tuple[Any, Any]:
+def _run_ai_passes(
+    catalog: Any, con: Any, config: Config, rules: Any, tracer: Tracer | None = None
+) -> tuple[Any, Any]:
     """Run the opt-in LLM passes (doc-review / agent-simulation) when enabled.
 
     Gated by the selected rules: only runs a pass when a ``requires_review`` /
@@ -370,12 +371,14 @@ def _run_ai_passes(catalog: Any, con: Any, config: Config, rules: Any) -> tuple[
     review_report = None
     if needs_review:
         try:
-            review_report = review_catalog(
-                catalog,
-                backend,
-                backend_name=config.ai_backend,
-                cache=_cache(".vgi-review-cache.json"),
-            )
+            with _span(tracer, "phase", "doc-review LLM (VGI180)"):
+                review_report = review_catalog(
+                    catalog,
+                    backend,
+                    backend_name=config.ai_backend,
+                    cache=_cache(".vgi-review-cache.json"),
+                    concurrency=config.ai_concurrency,
+                )
         except Exception as e:  # noqa: BLE001 - any backend/parse failure degrades gracefully
             _warn_ai_pass("doc-review", e)
     sim_report = None
@@ -383,13 +386,14 @@ def _run_ai_passes(catalog: Any, con: Any, config: Config, rules: Any) -> tuple[
         from .simulate import simulate_tasks
 
         try:
-            sim_report = simulate_tasks(
-                catalog,
-                con,
-                backend,
-                backend_name=config.ai_backend,
-                cache=_cache(".vgi-sim-cache.json"),
-            )
+            with _span(tracer, "phase", "agent-check LLM (VGI920)"):
+                sim_report = simulate_tasks(
+                    catalog,
+                    con,
+                    backend,
+                    backend_name=config.ai_backend,
+                    cache=_cache(".vgi-sim-cache.json"),
+                )
         except Exception as e:  # noqa: BLE001
             _warn_ai_pass("agent-check", e)
     return review_report, sim_report

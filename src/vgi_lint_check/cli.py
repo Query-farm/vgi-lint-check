@@ -111,6 +111,12 @@ def app() -> None:
 )
 @click.option("--ai-model", default=None, help="LLM model override for the AI passes.")
 @click.option(
+    "--ai-concurrency",
+    type=int,
+    default=None,
+    help="Parallel LLM batches for --doc-review (default 4; raise to speed up a large catalog).",
+)
+@click.option(
     "--no-ai-cache",
     is_flag=True,
     help="Disable the LLM verdict cache (by default re-runs reuse unchanged verdicts).",
@@ -199,6 +205,7 @@ def lint(
     ai: bool,
     ai_backend: str | None,
     ai_model: str | None,
+    ai_concurrency: int | None,
     no_ai_cache: bool,
     select: str | None,
     extend_select: str | None,
@@ -242,6 +249,7 @@ def lint(
         agent_check=agent_check or ai,
         ai_backend=ai_backend,
         ai_model=ai_model,
+        ai_concurrency=ai_concurrency,
         no_ai_cache=no_ai_cache,
         fail_on=fail_on,
         baseline=baseline,
@@ -414,6 +422,9 @@ def versions_cmd(location: str, install: bool) -> None:
 )
 @click.option("--no-review-cache", is_flag=True, help="Disable the verdict cache.")
 @click.option("--review-batch", type=int, default=8, help="Objects per model call.")
+@click.option(
+    "--review-concurrency", type=int, default=4, help="Parallel model calls (batches at once)."
+)
 @click.option("--format", "fmt", type=click.Choice(["terminal", "json"]), default="terminal")
 @click.option("--output", type=click.Path(dir_okay=False), default=None)
 @click.option("--traceback", is_flag=True)
@@ -431,6 +442,7 @@ def review_cmd(
     review_cache: str,
     no_review_cache: bool,
     review_batch: int,
+    review_concurrency: int,
     fmt: str,
     output: str | None,
     traceback: bool,
@@ -454,7 +466,12 @@ def review_cmd(
         backend = rv.make_backend(review_backend, review_model)
         cache = None if no_review_cache else rv.ReviewCache(Path(review_cache)).load()
         report = rv.review_catalog(
-            catalog, backend, backend_name=review_backend, cache=cache, batch_size=review_batch
+            catalog,
+            backend,
+            backend_name=review_backend,
+            cache=cache,
+            batch_size=review_batch,
+            concurrency=review_concurrency,
         )
     except WorkerConnectionError as e:
         click.secho(f"error: {e}", fg="red", err=True)
@@ -701,6 +718,7 @@ def _apply_cli_overrides(
     agent_check: bool = False,
     ai_backend: str | None = None,
     ai_model: str | None = None,
+    ai_concurrency: int | None = None,
     no_ai_cache: bool = False,
     fail_on: str | None = None,
     baseline: str | None = None,
@@ -747,6 +765,8 @@ def _apply_cli_overrides(
         cfg.ai_backend = ai_backend
     if ai_model is not None:
         cfg.ai_model = ai_model
+    if ai_concurrency is not None:
+        cfg.ai_concurrency = ai_concurrency
     if no_ai_cache:
         cfg.ai_cache = False
     if fail_on is not None:
