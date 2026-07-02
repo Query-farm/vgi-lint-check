@@ -167,3 +167,29 @@ def test_inline_sql_span_flagged():
 def test_bare_keyword_in_inline_span_passes():
     # `SELECT` as a keyword reference, not a statement -> not flagged.
     assert "VGI174" not in _sql_codes("Bring calendar math into DuckDB with just a `SELECT`.")
+
+
+# --- VGI175 listing-doc-uses-markdown / VGI176 multi-paragraph -------------
+def test_vgi175_plain_prose_schema_doc_flagged():
+    s = F.schema(
+        "main", tags={"vgi.doc_md": "Just plain prose describing the schema, no markdown."}
+    )
+    assert "VGI175" in set(codes(F.catalog(s)))
+
+
+def test_vgi175_structured_schema_doc_passes():
+    s = F.schema("main", tags={"vgi.doc_md": "## Zoo\n\nAnimals and sounds.\n\n- a\n- b"})
+    assert "VGI175" not in set(codes(F.catalog(s)))
+
+
+def test_vgi176_single_paragraph_flagged():
+    # a header + one prose paragraph counts as one paragraph (header excluded)
+    s = F.schema("main", tags={"vgi.doc_md": "## Zoo\n\nOne single paragraph of prose here."})
+    assert "VGI176" in set(codes(F.catalog(s)))
+
+
+def test_vgi176_multi_paragraph_passes():
+    s = F.schema(
+        "main", tags={"vgi.doc_md": "First paragraph of the listing.\n\nSecond paragraph."}
+    )
+    assert "VGI176" not in set(codes(F.catalog(s)))

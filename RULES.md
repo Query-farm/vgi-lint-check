@@ -69,6 +69,8 @@ skipped unless `--execute` is passed.
 | `VGI172` | error | doc-links-well-formed | vgi.doc_links must be a JSON array of http(s) URLs (or {title?, url} objects). |  |
 | `VGI173` | error | description-enumerates-objects | Catalog/schema descriptions must not just enumerate the worker's own objects — that inventory is discoverable by listing the schema. |  |
 | `VGI174` | error | description-sql-fenced | SQL in a description must live in a ```sql code fence (or an executable example). |  |
+| `VGI175` | warning | listing-doc-uses-markdown | Catalog/schema vgi.doc_md should use Markdown structure, not be a plain-prose blob. |  |
+| `VGI176` | warning | listing-doc-multi-paragraph | Catalog/schema vgi.doc_md should be multiple paragraphs, not a single block. |  |
 | `VGI180` | warning | doc-quality-review | An object's docs should pass an LLM quality review (accuracy/clarity/completeness). |  |
 
 ## Descriptions (VGI1xx)
@@ -211,4 +213,4 @@ skipped unless `--execute` is passed.
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
-_126 rules._
+_128 rules._

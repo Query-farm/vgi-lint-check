@@ -451,3 +451,82 @@ class DescriptionLinksResolve(Rule):
                     f"{label} link is broken (HTTP {status}): {url}",
                     "fix or remove the dead link/image",
                 )
+
+
+# --- VGI175 / VGI176 — catalog/schema listing docs (structure + paragraphs) ---
+#
+# The catalog and schema vgi.doc_md are the worker's listing page. These reward
+# using Markdown (not a plain-prose blob) and splitting it into paragraphs.
+_MD_HEADER = re.compile(r"^\s{0,3}#{1,6}\s", re.MULTILINE)
+_MD_LIST = re.compile(r"^\s*([-*+]|\d+\.)\s", re.MULTILINE)
+_MD_TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$", re.MULTILINE)
+_MD_BLOCKQUOTE = re.compile(r"^\s*>\s", re.MULTILINE)
+_MD_LINK = re.compile(r"(?<!\!)\[[^\]]+\]\([^)]+\)")
+_MD_FENCE = re.compile(r"^\s*(```|~~~)", re.MULTILINE)
+
+
+def _has_markdown_structure(md: str) -> bool:
+    """True when ``md`` uses any Markdown structure (vs. a plain-prose blob)."""
+    return any(
+        pat.search(md)
+        for pat in (_MD_HEADER, _MD_LIST, _MD_TABLE_ROW, _MD_BLOCKQUOTE, _MD_LINK, _MD_FENCE)
+    )
+
+
+def _paragraph_count(md: str) -> int:
+    """Count blank-line-separated content blocks, ignoring lone header lines."""
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", (md or "").strip()) if b.strip()]
+    return sum(1 for b in blocks if not (b.startswith("#") and "\n" not in b))
+
+
+def _iter_listing_md(ctx: RuleContext) -> Iterator[tuple[ObjectId, str, str]]:
+    """(id, label, doc_md) for the catalog and each schema that carries a doc_md."""
+    cat = ctx.catalog
+    if not blank(cat.description_md):
+        yield cat.id, "catalog", cat.description_md or ""
+    for s in cat.iter_schemas():
+        md = s.tags.get(TAG_DOC_MD)
+        if not blank(md):
+            yield s.id, "schema", md or ""
+
+
+@register
+class ListingDocUsesMarkdown(Rule):
+    code = "VGI175"
+    name = "listing-doc-uses-markdown"
+    category = CONTENT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA)
+    summary = "Catalog/schema vgi.doc_md should use Markdown structure, not be a plain-prose blob."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, label, md in _iter_listing_md(ctx):
+            if not _has_markdown_structure(md):
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"{label} vgi.doc_md is plain prose (no Markdown structure)",
+                    f"format the {label} listing with Markdown — headers, lists, a table, "
+                    "or links — so it renders as a rich listing page, not a wall of text",
+                )
+
+
+@register
+class ListingDocMultiParagraph(Rule):
+    code = "VGI176"
+    name = "listing-doc-multi-paragraph"
+    category = CONTENT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA)
+    summary = "Catalog/schema vgi.doc_md should be multiple paragraphs, not a single block."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, label, md in _iter_listing_md(ctx):
+            if _paragraph_count(md) < 2:
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"{label} vgi.doc_md is a single paragraph",
+                    f"break the {label} description into multiple paragraphs (blank-line "
+                    "separated) — e.g. what it is, key concepts, and when to use it",
+                )
