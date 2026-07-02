@@ -97,6 +97,7 @@ skipped unless `--execute` is passed.
 | `VGI202` | warning | column-comment-required | Stricter variant: every single column must have a comment. |  |
 | `VGI203` | info | column-comment-not-echo | A column comment should add information, not restate the name. |  |
 | `VGI204` | info | timestamp-timezone-documented | A naive TIMESTAMP/TIME column should document its timezone assumption. |  |
+| `VGI205` | warning | column-type-consistent | A column name should map to one SQL type across all tables/views (no type drift). |  |
 
 ## Functions & macros (VGI3xx)
 
@@ -116,6 +117,7 @@ skipped unless `--execute` is passed.
 | `VGI312` | error | function-arguments-undocumented | Every function argument must have a description. Needs a vgi extension new enough to expose vgi_function_arguments(); silent on older ones. |  |
 | `VGI313` | warning | argument-description-states-type | An argument description should not restate the data type (it's a separate field). |  |
 | `VGI314` | warning | function-restates-argument-docs | A function's description shouldn't re-document its arguments (they'd drift). |  |
+| `VGI315` | warning | argument-type-consistent | An argument name should map to one SQL type across all functions (no type drift). |  |
 
 ## Tags (VGI4xx)
 
@@ -191,6 +193,8 @@ skipped unless `--execute` is passed.
 | `VGI136` | warning | long-table-name | Warn on table/view names longer than options.max_table_name_length. |  |
 | `VGI137` | warning | long-function-name | Warn on function names longer than options.max_function_name_length. |  |
 | `VGI142` | warning | redundant-name-prefix | Object names shouldn't carry a redundant retrieval verb (get_/list_). |  |
+| `VGI143` | warning | name-style-consistent | Object names should share one case/separator style (e.g. snake_case). |  |
+| `VGI144` | info | table-name-number-consistent | Tables/views should be consistently singular or plural, not a mix. |  |
 
 ## Attach options (VGI10xx)
 
@@ -213,4 +217,4 @@ skipped unless `--execute` is passed.
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
-_128 rules._
+_132 rules._

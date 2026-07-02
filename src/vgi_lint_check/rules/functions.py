@@ -15,6 +15,7 @@ from typing import Any
 
 from ..findings import Category, Finding, Severity
 from ..model import TAG_DOC_LLM, TAG_DOC_MD, TAG_RESULT_COLUMNS_MD, ObjectKind
+from ._util import base_type as _base_type
 from ._util import blank, is_trivial_echo
 from .base import Rule, RuleContext
 from .registry import register
@@ -259,12 +260,6 @@ _UNAMBIGUOUS_TYPES = (
     "varbinary",
     "bitstring",
 )
-
-
-def _base_type(arg_type: str | None) -> str:
-    """Leading type identifier (``DECIMAL(18,4)`` / ``BIGINT[]`` -> ``decimal``/``bigint``)."""
-    m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)", arg_type or "")
-    return m.group(1).lower() if m else ""
 
 
 def _mentions_type(description: str, arg_type: str | None) -> str | None:
@@ -529,3 +524,46 @@ class FunctionRestatesArgumentDocs(Rule):
                     "documented via vgi_function_arguments() — don't repeat a parameter list "
                     "in the function doc, where it drifts out of sync with the arg docs",
                 )
+
+
+@register
+class ArgumentTypeConsistent(Rule):
+    code = "VGI315"
+    name = "argument-type-consistent"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "An argument name should map to one SQL type across all functions (no type drift)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        ignore = {n.lower() for n in ctx.config.options.type_consistency_ignore_names}
+        # arg name -> {base type: [qualified function names]}
+        by_name: dict[str, dict[str, list[str]]] = {}
+        for f in ctx.catalog.iter_all_functions():
+            for a in f.arguments:
+                if a.is_any_type or blank(a.type) or a.name.lower() in ignore:
+                    continue
+                bt = _base_type(a.type)
+                if not bt:
+                    continue
+                fns = by_name.setdefault(a.name.lower(), {}).setdefault(bt, [])
+                label = f"{f.schema}.{f.name}"
+                if label not in fns:
+                    fns.append(label)
+        for name, types in by_name.items():
+            distinct_fns = {fn for fns in types.values() for fn in fns}
+            # Need >=2 distinct base types across >=2 distinct FUNCTIONS — overloads
+            # of one function (e.g. accept a path or raw bytes) legitimately vary a type.
+            if len(types) < 2 or len(distinct_fns) < 2:
+                continue
+            detail = "; ".join(
+                f"{bt.upper()} ({', '.join(sorted(fns))})" for bt, fns in sorted(types.items())
+            )
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"argument {name!r} is declared with {len(types)} different types: {detail}",
+                "use one consistent type for the same argument concept across functions — "
+                "differing types make the API harder to learn (add it to "
+                "options.type_consistency_ignore_names if the collision is intentional)",
+            )

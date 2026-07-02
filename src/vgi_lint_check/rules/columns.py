@@ -7,7 +7,7 @@ from collections.abc import Iterator
 
 from ..findings import Category, Finding, Severity
 from ..model import ObjectKind
-from ._util import is_trivial_echo
+from ._util import base_type, blank, is_trivial_echo
 from .base import Rule, RuleContext
 from .registry import register
 
@@ -113,3 +113,43 @@ class TimestampTimezoneDocumented(Rule):
                     "state the timezone (e.g. UTC) in the column comment, or use "
                     "TIMESTAMP WITH TIME ZONE so values are unambiguous",
                 )
+
+
+@register
+class ColumnTypeConsistent(Rule):
+    code = "VGI205"
+    name = "column-type-consistent"
+    category = COL
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A column name should map to one SQL type across all tables/views (no type drift)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        ignore = {n.lower() for n in ctx.config.options.type_consistency_ignore_names}
+        # column name -> {base type: [table names]}
+        by_name: dict[str, dict[str, list[str]]] = {}
+        for t in ctx.catalog.iter_table_like():
+            for c in t.columns:
+                if blank(c.data_type) or c.name.lower() in ignore:
+                    continue
+                bt = base_type(c.data_type)
+                if not bt:
+                    continue
+                tbls = by_name.setdefault(c.name.lower(), {}).setdefault(bt, [])
+                if t.name not in tbls:
+                    tbls.append(t.name)
+        for name, types in by_name.items():
+            distinct_tables = {t for tbls in types.values() for t in tbls}
+            if len(types) < 2 or len(distinct_tables) < 2:
+                continue  # need >=2 distinct base types across >=2 distinct tables
+            detail = "; ".join(
+                f"{bt.upper()} ({', '.join(sorted(tbls))})" for bt, tbls in sorted(types.items())
+            )
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"column {name!r} has {len(types)} different types across tables: {detail}",
+                "use one consistent type for the same column concept — differing types make "
+                "joins and reasoning harder (add it to options.type_consistency_ignore_names "
+                "if the collision is intentional)",
+            )

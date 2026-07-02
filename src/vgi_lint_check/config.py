@@ -66,6 +66,10 @@ class Options:
     # is already a queryable collection, so `list_`/`get_` restate what FROM/the
     # call already convey. Empty list disables the rule.
     redundant_name_prefixes: list[str] = field(default_factory=lambda: ["get_", "list_"])
+    # VGI205/VGI315: identifier names to skip when checking that a column/argument
+    # name maps to one SQL type catalog-wide (e.g. a generic 'id'/'value' that
+    # legitimately means different things per object). Empty = check everything.
+    type_consistency_ignore_names: list[str] = field(default_factory=list)
     # Required tags are opt-in: VGI401 only fires for keys you list here. There
     # is no universal tag every schema/table must carry.
     required_schema_tags: list[str] = field(default_factory=list)

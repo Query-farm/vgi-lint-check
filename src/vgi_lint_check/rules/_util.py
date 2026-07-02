@@ -44,6 +44,12 @@ def _normalize(s: str | None) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
+def base_type(sql_type: str | None) -> str:
+    """Leading type identifier, lowercased (``DECIMAL(18,4)``/``BIGINT[]`` -> ``decimal``/``bigint``)."""  # noqa: E501
+    m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)", sql_type or "")
+    return m.group(1).lower() if m else ""
+
+
 def is_trivial_echo(comment: str | None, name: str | None) -> bool:
     """True when a comment merely restates the object's name."""
     if blank(comment) or blank(name):
