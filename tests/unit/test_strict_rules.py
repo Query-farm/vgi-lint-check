@@ -682,3 +682,21 @@ def test_vgi152_agent_test_tasks_present_nudge():
     cat = F.catalog(s)
     cat.agent_test_tasks = [AgentTask(name="t", prompt="p")]
     assert "VGI152" not in _codes(cat)
+
+
+def test_vgi316_single_array_arg_suggests_table():
+    def codes_for(*args):
+        fn = F.func("main", "solve", description="d", arguments=list(args))
+        s = F.schema("main", comment="c", tags=_TAGS, functions=[fn])
+        return {f.code for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))}
+
+    # a single 2-D array argument (a matrix / list of rows) -> fires
+    assert "VGI316" in codes_for(F.arg("distance", "BIGINT[][]", "the distance matrix"))
+    # a list-of-struct (typed rows) -> fires
+    assert "VGI316" in codes_for(F.arg("rows", "STRUCT(a INTEGER, b INTEGER)[]", "rows"))
+    # two array args -> DOES NOT fire (DuckDB takes only one table input)
+    assert "VGI316" not in codes_for(
+        F.arg("a", "BIGINT[][]", "matrix a"), F.arg("b", "BIGINT[][]", "matrix b")
+    )
+    # a plain 1-D array (a vector) -> not flagged
+    assert "VGI316" not in codes_for(F.arg("v", "BIGINT[]", "a vector of weights"))

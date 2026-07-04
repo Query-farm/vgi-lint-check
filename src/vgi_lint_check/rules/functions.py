@@ -567,3 +567,54 @@ class ArgumentTypeConsistent(Rule):
                 "differing types make the API harder to learn (add it to "
                 "options.type_consistency_ignore_names if the collision is intentional)",
             )
+
+
+_ARRAY_DIM = re.compile(r"\[\d*\]")
+
+
+def _is_table_like_array(sql_type: str | None) -> bool:
+    """True when a SQL type is a nested array / list-of-struct (a table-in-a-scalar)."""
+    t = (sql_type or "").upper()
+    depth = len(_ARRAY_DIM.findall(t))
+    if depth >= 2:  # BIGINT[][], INTEGER[3][3] — a matrix / list of rows
+        return True
+    if "STRUCT" in t and depth >= 1:  # STRUCT(...)[] — a list of typed rows
+        return True
+    return bool(re.search(r"LIST\s*\(\s*(LIST|STRUCT)", t))
+
+
+@register
+class ArrayArgumentCouldBeTable(Rule):
+    code = "VGI316"
+    name = "array-argument-could-be-table"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "A function with a single multi-dimensional-array argument should take a table input."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for f in ctx.catalog.iter_all_functions():
+            array_args = [
+                a
+                for a in f.arguments
+                if not a.is_any_type and not blank(a.type) and _is_table_like_array(a.type)
+            ]
+            # Only the single-input case: DuckDB takes one table argument, so a
+            # multi-matrix function can't be converted and shouldn't be flagged.
+            if len(array_args) != 1:
+                continue
+            a = array_args[0]
+            yield self.finding(
+                ctx,
+                f.id,
+                f"argument {a.name!r} is a multi-dimensional array ({a.type}) — a whole "
+                "table passed as one parameter",
+                "expose it as a table function that takes a table/relation input, so callers "
+                f"pass a subquery (FROM …) instead of hand-building a nested-array literal for "
+                f"{a.name!r}",
+            )
