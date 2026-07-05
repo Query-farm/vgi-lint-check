@@ -223,3 +223,57 @@ def test_vgi320_two_choices_clean():
         "main", "m", description="d", arguments=[F.arg("z", "VARCHAR", "z", choices='["a", "b"]')]
     )
     assert "VGI320" not in _codes(F.catalog(F.schema("main", functions=[f])))
+
+
+# --- VGI317 broadened enum heuristic (colon-list / "…, or X") ----------------
+def test_vgi317_colon_list_enumeration():
+    f = F.func(
+        "main",
+        "hist",
+        description="d",
+        arguments=[
+            F.arg(
+                "bar",
+                "VARCHAR",
+                "Candle width — how much time each bar spans: 1m, 2m, 5m, 1h, 1d, 1wk",
+            )
+        ],
+    )
+    assert "VGI317" in _codes(F.catalog(F.schema("main", functions=[f])))
+
+
+def test_vgi317_or_list_enumeration():
+    f = F.func(
+        "main",
+        "hist",
+        description="d",
+        arguments=[
+            F.arg("range", "VARCHAR", "Named lookback window: 1d, 5d, 1mo, 1y, ytd, or max")
+        ],
+    )
+    assert "VGI317" in _codes(F.catalog(F.schema("main", functions=[f])))
+
+
+def test_vgi317_and_conjunction_not_flagged():
+    # A prose sentence joined with 'and' is not an enumeration — must stay quiet.
+    f = F.func(
+        "main",
+        "agg",
+        description="d",
+        arguments=[F.arg("cols", "VARCHAR", "the low, high, and close prices to aggregate")],
+    )
+    assert "VGI317" not in _codes(F.catalog(F.schema("main", functions=[f])))
+
+
+def test_vgi317_colon_list_silent_when_choices_declared():
+    f = F.func(
+        "main",
+        "hist",
+        description="d",
+        arguments=[
+            F.arg(
+                "bar", "VARCHAR", "candle width: 1m, 5m, 1h, 1d", choices='["1m", "5m", "1h", "1d"]'
+            )
+        ],
+    )
+    assert "VGI317" not in _codes(F.catalog(F.schema("main", functions=[f])))

@@ -629,6 +629,18 @@ _ENUM_CUES = re.compile(
     re.IGNORECASE,
 )
 _QUOTED_LIST = re.compile(r"""(?:'[^']+'|"[^"]+")\s*,\s*(?:'[^']+'|"[^"]+")""")
+# A "value-like" token: a single word possibly carrying digits/units/punctuation
+# (e.g. 1mo, cm, add, 90m, ytd) — but no internal spaces, so prose words qualify
+# too; the surrounding structure (below) is what makes it an enumeration.
+_TOKEN = r"[A-Za-z0-9][\w./%+-]*"
+# A list of 3+ comma-separated tokens introduced by a colon, e.g.
+# "candle width: 1m, 2m, 5m". A colon then a comma-list of short tokens is a
+# strong enumeration signal that prose rarely produces.
+_COLON_LIST = re.compile(rf":\s*{_TOKEN}(?:\s*,\s*{_TOKEN}){{2,}}")
+# A comma-list of 3+ tokens closed with ", or X" (e.g. "1d, 5d, 1mo, … or max").
+# Restricted to "or" (not "and") because "and" is the common prose conjunction,
+# which would over-match ordinary sentences.
+_OR_LIST = re.compile(rf"\b{_TOKEN}(?:\s*,\s*{_TOKEN})+\s*,?\s+or\s+{_TOKEN}\b", re.IGNORECASE)
 _RANGE_CUES = re.compile(
     r"\b(between\s+-?\d|-?\d+\s*(?:to|-|–|—)\s*-?\d|at least\s+-?\d|at most\s+-?\d|"
     r"no (?:more|less) than\s+-?\d|must be (?:positive|non-negative|negative)|in the range)\b",
@@ -638,7 +650,12 @@ _RANGE_CUES = re.compile(
 
 def _constraint_prose_kind(description: str) -> str | None:
     """``"enum"`` if the text enumerates a fixed vocabulary, ``"range"`` for a numeric range."""
-    if _ENUM_CUES.search(description) or _QUOTED_LIST.search(description):
+    if (
+        _ENUM_CUES.search(description)
+        or _QUOTED_LIST.search(description)
+        or _COLON_LIST.search(description)
+        or _OR_LIST.search(description)
+    ):
         return "enum"
     if _RANGE_CUES.search(description):
         return "range"
