@@ -120,6 +120,9 @@ skipped unless `--execute` is passed.
 | `VGI315` | warning | argument-type-consistent | An argument name should map to one SQL type across all functions (no type drift). |  |
 | `VGI316` | warning | array-argument-could-be-table | A function with a single multi-dimensional-array argument should take a table input. |  |
 | `VGI317` | info | constrained-argument-not-discoverable | An argument whose description enumerates allowed values or a numeric range should declare machine-readable constraints (choices / ge / le) so agents discover valid inputs. Needs a vgi extension exposing vgi_function_arguments(); silent on older ones. |  |
+| `VGI318` | error | default-violates-constraint | An argument's declared default must satisfy its own constraints — be a member of choices, inside the numeric range, and match the pattern. Needs a vgi extension exposing vgi_function_arguments(); silent on older ones. |  |
+| `VGI319` | warning | invalid-constraint | A declared constraint must be well-formed: the pattern must be a valid regex and the numeric range must be non-empty. Needs a vgi extension exposing vgi_function_arguments(). |  |
+| `VGI320` | info | degenerate-choices | A choices set should offer a real choice — 0 or 1 allowed value is pointless (drop it, or use a fixed value). Needs a vgi extension exposing vgi_function_arguments(). |  |
 
 ## Tags (VGI4xx)
 
@@ -219,4 +222,4 @@ skipped unless `--execute` is passed.
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
-_134 rules._
+_137 rules._

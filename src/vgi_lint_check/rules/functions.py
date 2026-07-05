@@ -9,6 +9,7 @@ those. Table-functions' result columns are documented separately (VGI307).
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterator
 from typing import Any
@@ -698,4 +699,241 @@ class ConstrainedArgumentNotDiscoverable(Rule):
                 f"machine-readable constraint{extra}",
                 f"{hint} so agents discover valid inputs via vgi_function_arguments() "
                 "instead of learning them by trial-and-error",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Constraint-coherence rules (VGI318/319/320)
+#
+# Once a worker declares per-argument constraints (surfaced by
+# vgi_function_arguments() as arg_default / arg_choices / arg_range /
+# arg_pattern), these rules check the *declared metadata itself* is internally
+# coherent — a deterministic, no-LLM complement to VGI317. All stay silent on
+# older extensions that don't expose the columns (the fields are then None).
+# ---------------------------------------------------------------------------
+
+# Sentinel for "present but unparseable" so a malformed value isn't confused
+# with a genuine JSON null.
+_UNPARSED: Any = object()
+
+# Interval notation as emitted by the framework's formatRange, e.g. "[0, 100]",
+# "(0, +inf)", "[1, 10)", "(-inf, 5]".
+_RANGE_NOTATION = re.compile(
+    r"^([\[(])\s*(-inf|[-+]?[0-9][0-9.eE+-]*)\s*,\s*(\+inf|[-+]?[0-9][0-9.eE+-]*)\s*([\])])$"
+)
+
+
+def _decode_constraint(raw: str | None) -> Any:
+    """Decode a JSON-encoded constraint value; ``_UNPARSED`` on malformed input."""
+    if raw is None:
+        return _UNPARSED
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return _UNPARSED
+
+
+def _parse_range(notation: str) -> tuple[float | None, bool, float | None, bool] | None:
+    """Parse interval notation into ``(low, low_inclusive, high, high_inclusive)``.
+
+    ``low``/``high`` are None for an open (-inf/+inf) side. Returns None when the
+    string isn't recognizable interval notation.
+    """
+    m = _RANGE_NOTATION.match(notation.strip())
+    if not m:
+        return None
+    lb, lo_s, hi_s, rb = m.groups()
+    try:
+        low = None if lo_s == "-inf" else float(lo_s)
+        high = None if hi_s == "+inf" else float(hi_s)
+    except ValueError:
+        return None
+    return (low, lb == "[", high, rb == "]")
+
+
+def _is_number(value: Any) -> bool:
+    """True for a real numeric constraint value (bools are excluded)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _default_range_violation(default: Any, notation: str) -> str | None:
+    """Return a message if ``default`` falls outside ``notation``, else None."""
+    parsed = _parse_range(notation)
+    if parsed is None or not _is_number(default):
+        return None
+    low, low_incl, high, high_incl = parsed
+    d = float(default)
+    if low is not None and (d < low or (d == low and not low_incl)):
+        return f"default {default!r} is below the allowed range {notation}"
+    if high is not None and (d > high or (d == high and not high_incl)):
+        return f"default {default!r} is above the allowed range {notation}"
+    return None
+
+
+@register
+class DefaultViolatesConstraint(Rule):
+    code = "VGI318"
+    name = "default-violates-constraint"
+    category = FUNC
+    default_severity = Severity.ERROR
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+        ObjectKind.MACRO,
+    )
+    summary = (
+        "An argument's declared default must satisfy its own constraints — be a member "
+        "of choices, inside the numeric range, and match the pattern. Needs a vgi "
+        "extension exposing vgi_function_arguments(); silent on older ones."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        seen: dict[tuple[str, str], list[Any]] = {}
+        for f in ctx.catalog.iter_all_functions():
+            local: set[str] = set()
+            for a in f.arguments:
+                if a.default is None or a.name in local:
+                    continue
+                default = _decode_constraint(a.default)
+                if default is _UNPARSED or default is None:
+                    continue  # no default / JSON null / unparseable — nothing to check
+                local.add(a.name)
+                for reason in self._violations(a, default):
+                    key = (a.name, reason)
+                    if key in seen:
+                        seen[key][1] += 1
+                    else:
+                        seen[key] = [f.id, 1]
+        for (name, reason), (oid, count) in seen.items():
+            extra = f" (on {count} functions)" if count > 1 else ""
+            yield self.finding(
+                ctx,
+                oid,
+                f"argument {name!r}: {reason}{extra}",
+                "fix the default so it satisfies the argument's own declared constraints "
+                "— otherwise omitting the argument produces a value the function rejects",
+            )
+
+    @staticmethod
+    def _violations(a: Any, default: Any) -> Iterator[str]:
+        choices = _decode_constraint(a.choices)
+        if isinstance(choices, list) and choices and default not in choices:
+            yield f"default {default!r} is not one of the allowed values {choices}"
+        if a.value_range is not None:
+            msg = _default_range_violation(default, a.value_range)
+            if msg:
+                yield msg
+        if a.pattern is not None and isinstance(default, str):
+            try:
+                if re.compile(a.pattern).search(default) is None:
+                    yield f"default {default!r} does not match pattern {a.pattern!r}"
+            except re.error:
+                pass  # invalid regex is VGI319's concern, not this rule's
+
+
+@register
+class InvalidConstraint(Rule):
+    code = "VGI319"
+    name = "invalid-constraint"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+        ObjectKind.MACRO,
+    )
+    summary = (
+        "A declared constraint must be well-formed: the pattern must be a valid regex "
+        "and the numeric range must be non-empty. Needs a vgi extension exposing "
+        "vgi_function_arguments()."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        seen: dict[tuple[str, str], list[Any]] = {}
+        for f in ctx.catalog.iter_all_functions():
+            local: set[str] = set()
+            for a in f.arguments:
+                if a.name in local:
+                    continue
+                reasons = list(self._problems(a))
+                if reasons:
+                    local.add(a.name)
+                for reason in reasons:
+                    key = (a.name, reason)
+                    if key in seen:
+                        seen[key][1] += 1
+                    else:
+                        seen[key] = [f.id, 1]
+        for (name, reason), (oid, count) in seen.items():
+            extra = f" (on {count} functions)" if count > 1 else ""
+            yield self.finding(
+                ctx,
+                oid,
+                f"argument {name!r}: {reason}{extra}",
+                "correct the declared constraint — a malformed pattern or empty range "
+                "can never be satisfied, so the metadata misleads callers and agents",
+            )
+
+    @staticmethod
+    def _problems(a: Any) -> Iterator[str]:
+        if a.pattern is not None:
+            try:
+                re.compile(a.pattern)
+            except re.error as exc:
+                yield f"pattern {a.pattern!r} is not a valid regex ({exc})"
+        if a.value_range is not None:
+            parsed = _parse_range(a.value_range)
+            if parsed is not None:
+                low, low_incl, high, high_incl = parsed
+                if low is not None and high is not None:
+                    empty = low > high or (low == high and not (low_incl and high_incl))
+                    if empty:
+                        yield f"range {a.value_range} is empty (no value can satisfy it)"
+
+
+@register
+class DegenerateChoices(Rule):
+    code = "VGI320"
+    name = "degenerate-choices"
+    category = FUNC
+    default_severity = Severity.INFO
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+        ObjectKind.MACRO,
+    )
+    summary = (
+        "A choices set should offer a real choice — 0 or 1 allowed value is pointless "
+        "(drop it, or use a fixed value). Needs a vgi extension exposing "
+        "vgi_function_arguments()."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        seen: dict[tuple[str, int], list[Any]] = {}
+        for f in ctx.catalog.iter_all_functions():
+            local: set[str] = set()
+            for a in f.arguments:
+                if a.choices is None or a.name in local:
+                    continue
+                choices = _decode_constraint(a.choices)
+                if not isinstance(choices, list) or len(choices) >= 2:
+                    continue
+                local.add(a.name)
+                key = (a.name, len(choices))
+                if key in seen:
+                    seen[key][1] += 1
+                else:
+                    seen[key] = [f.id, 1]
+        for (name, n), (oid, count) in seen.items():
+            extra = f" (on {count} functions)" if count > 1 else ""
+            what = "an empty choices set" if n == 0 else "a single-value choices set"
+            yield self.finding(
+                ctx,
+                oid,
+                f"argument {name!r} declares {what}{extra}",
+                "drop the choices constraint or give it two or more values — one option "
+                "is not a choice and just adds noise to discovery",
             )
