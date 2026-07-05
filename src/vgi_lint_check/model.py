@@ -317,6 +317,13 @@ class Argument:
     is_varargs: bool = False
     is_table_input: bool = False
     is_any_type: bool = False
+    # Discovery-facing constraint metadata (newer vgi extensions only; None when
+    # absent). ``default``/``choices`` are JSON-encoded text, ``value_range`` is
+    # interval notation (e.g. ``"[0, 100]"``), ``pattern`` is a raw regex.
+    default: str | None = None
+    choices: str | None = None
+    value_range: str | None = None
+    pattern: str | None = None
 
 
 @dataclass

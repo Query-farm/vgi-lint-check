@@ -378,6 +378,35 @@ def _arg_calling(a: Any) -> str:
     return "positional"
 
 
+def _decode_json(raw: str) -> Any:
+    """Best-effort JSON decode of surfaced constraint text; fall back to the raw string."""
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return raw
+
+
+def _arg_constraints(a: Any) -> dict[str, Any]:
+    """Discovery-facing per-argument constraints, when the worker declares them.
+
+    Surfaces ``allowed_values`` (the closed choice set), ``default``, ``range``
+    (interval notation), and ``pattern`` so the analyst can read valid inputs
+    instead of learning them by trial-and-error. These are all *public* argument
+    metadata from ``vgi_function_arguments()`` — never grader-only task fields, so
+    the no-leak invariant holds.
+    """
+    out: dict[str, Any] = {}
+    if getattr(a, "choices", None) is not None:
+        out["allowed_values"] = _decode_json(a.choices)
+    if getattr(a, "default", None) is not None:
+        out["default"] = _decode_json(a.default)
+    if getattr(a, "value_range", None) is not None:
+        out["range"] = a.value_range
+    if getattr(a, "pattern", None) is not None:
+        out["pattern"] = a.pattern
+    return out
+
+
 def _usage_hint(catalog: Catalog, schema: str, name: str, arguments: list[Any]) -> str | None:
     """A copy-pasteable call template that makes the calling convention explicit.
 
@@ -417,6 +446,7 @@ def tool_describe_function(catalog: Catalog, schema: str, name: str) -> dict[str
                         "description": a.description,
                         "calling": _arg_calling(a),
                         **({"varargs": True} if a.is_varargs else {}),
+                        **_arg_constraints(a),
                     }
                     for a in f.arguments
                 ],

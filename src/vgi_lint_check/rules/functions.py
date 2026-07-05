@@ -618,3 +618,84 @@ class ArrayArgumentCouldBeTable(Rule):
                 f"pass a subquery (FROM …) instead of hand-building a nested-array literal for "
                 f"{a.name!r}",
             )
+
+
+# Prose cues that an argument has a fixed vocabulary (→ declare choices) or a
+# numeric range (→ declare ge/le). Kept specific so the rule doesn't fire on
+# descriptions that merely mention a value illustratively.
+_ENUM_CUES = re.compile(
+    r"\b(one of|(?:valid|allowed|permitted|supported|accepted)\s+values?|must be one of)\b",
+    re.IGNORECASE,
+)
+_QUOTED_LIST = re.compile(r"""(?:'[^']+'|"[^"]+")\s*,\s*(?:'[^']+'|"[^"]+")""")
+_RANGE_CUES = re.compile(
+    r"\b(between\s+-?\d|-?\d+\s*(?:to|-|–|—)\s*-?\d|at least\s+-?\d|at most\s+-?\d|"
+    r"no (?:more|less) than\s+-?\d|must be (?:positive|non-negative|negative)|in the range)\b",
+    re.IGNORECASE,
+)
+
+
+def _constraint_prose_kind(description: str) -> str | None:
+    """``"enum"`` if the text enumerates a fixed vocabulary, ``"range"`` for a numeric range."""
+    if _ENUM_CUES.search(description) or _QUOTED_LIST.search(description):
+        return "enum"
+    if _RANGE_CUES.search(description):
+        return "range"
+    return None
+
+
+@register
+class ConstrainedArgumentNotDiscoverable(Rule):
+    code = "VGI317"
+    name = "constrained-argument-not-discoverable"
+    category = FUNC
+    default_severity = Severity.INFO
+    targets = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+        ObjectKind.MACRO,
+    )
+    summary = (
+        "An argument whose description enumerates allowed values or a numeric range should "
+        "declare machine-readable constraints (choices / ge / le) so agents discover valid "
+        "inputs. Needs a vgi extension exposing vgi_function_arguments(); silent on older ones."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        # Collapse a templated argument reused across many functions into one
+        # finding with a recurrence count (mirrors VGI313).
+        seen: dict[tuple[str, str, str], list[Any]] = {}
+        for f in ctx.catalog.iter_all_functions():
+            local: set[str] = set()
+            for a in f.arguments:
+                if blank(a.description) or a.name in local:
+                    continue
+                # Already machine-discoverable — the author declared it, nothing to nudge.
+                if a.choices is not None or a.value_range is not None or a.pattern is not None:
+                    continue
+                local.add(a.name)
+                kind = _constraint_prose_kind(a.description or "")
+                if not kind:
+                    continue
+                key = (a.name, kind, " ".join((a.description or "").split()).lower())
+                if key in seen:
+                    seen[key][1] += 1
+                else:
+                    seen[key] = [f.id, 1]
+        for (name, kind, _desc), (oid, count) in seen.items():
+            extra = f" — the same description is reused on {count} functions" if count > 1 else ""
+            states = "lists allowed values" if kind == "enum" else "states a numeric range"
+            hint = (
+                "declare choices=[…] on the argument"
+                if kind == "enum"
+                else "declare numeric bounds (ge/le) on the argument"
+            )
+            yield self.finding(
+                ctx,
+                oid,
+                f"argument {name!r} description {states} but declares no "
+                f"machine-readable constraint{extra}",
+                f"{hint} so agents discover valid inputs via vgi_function_arguments() "
+                "instead of learning them by trial-and-error",
+            )

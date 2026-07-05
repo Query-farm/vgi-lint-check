@@ -119,6 +119,7 @@ skipped unless `--execute` is passed.
 | `VGI314` | warning | function-restates-argument-docs | A function's description shouldn't re-document its arguments (they'd drift). |  |
 | `VGI315` | warning | argument-type-consistent | An argument name should map to one SQL type across all functions (no type drift). |  |
 | `VGI316` | warning | array-argument-could-be-table | A function with a single multi-dimensional-array argument should take a table input. |  |
+| `VGI317` | info | constrained-argument-not-discoverable | An argument whose description enumerates allowed values or a numeric range should declare machine-readable constraints (choices / ge / le) so agents discover valid inputs. Needs a vgi extension exposing vgi_function_arguments(); silent on older ones. |  |
 
 ## Tags (VGI4xx)
 
@@ -218,4 +219,4 @@ skipped unless `--execute` is passed.
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
-_133 rules._
+_134 rules._

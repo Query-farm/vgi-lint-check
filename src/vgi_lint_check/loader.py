@@ -125,6 +125,10 @@ def build_catalog(
                 is_varargs=bool(r.get("is_varargs")),
                 is_table_input=bool(r.get("is_table_input")),
                 is_any_type=bool(r.get("is_any_type")),
+                default=r.get("arg_default"),
+                choices=r.get("arg_choices"),
+                value_range=r.get("arg_range"),
+                pattern=r.get("arg_pattern"),
             )
         )
     schemas: dict[str, Schema] = {}

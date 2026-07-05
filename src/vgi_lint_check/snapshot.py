@@ -50,11 +50,13 @@ def take_snapshot(con: Any) -> Snapshot:
     return Snapshot(**{attr: _rows(con, sql) for attr, sql in _SYSTEM_TABLES.items()})
 
 
+# Selecting * keeps us resilient to column additions (newer vgi extensions add
+# per-argument constraint columns — arg_default/arg_choices/arg_range/arg_pattern);
+# the loader reads columns by name with .get(). An explicit column list would raise
+# a binder error against an older extension missing a listed column and — swallowed
+# by the except below — silently drop ALL argument metadata.
 _FUNCTION_ARGUMENTS_SQL = """
-SELECT schema_name, function_name, function_type, arg_position, field_index,
-       arg_name, arg_type, arg_description, is_named, is_positional,
-       is_const, is_varargs, is_table_input, is_any_type
-FROM vgi_function_arguments()
+SELECT * FROM vgi_function_arguments()
 WHERE catalog_name = ?
 ORDER BY function_name, field_index
 """
