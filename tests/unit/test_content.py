@@ -169,6 +169,30 @@ def test_bare_keyword_in_inline_span_passes():
     assert "VGI174" not in _sql_codes("Bring calendar math into DuckDB with just a `SELECT`.")
 
 
+# --- VGI177 code-fence-declares-language -----------------------------------
+def test_unlabeled_non_sql_fence_flagged():
+    # A JSON snippet in a bare fence -> VGI177 (declare a language).
+    codes_ = _sql_codes('Config:\n\n```\n{"tz": "UTC"}\n```\n')
+    assert "VGI177" in codes_
+    assert "VGI174" not in codes_  # not SQL, so VGI174 stays quiet
+
+
+def test_labeled_fence_passes():
+    assert "VGI177" not in _sql_codes('Config:\n\n```json\n{"tz": "UTC"}\n```\n')
+
+
+def test_unlabeled_sql_fence_defers_to_vgi174():
+    # An unlabeled SQL fence is VGI174's concern; VGI177 must not double-report it.
+    codes_ = _sql_codes("Example:\n\n```\nSELECT easter(2026)\n```\n")
+    assert "VGI174" in codes_
+    assert "VGI177" not in codes_
+
+
+def test_indented_block_not_flagged_by_vgi177():
+    # Indented code blocks can't carry a language tag; VGI177 targets fences only.
+    assert "VGI177" not in _sql_codes("Output:\n\n    some plain text\n")
+
+
 # --- VGI175 listing-doc-uses-markdown / VGI176 multi-paragraph -------------
 def test_vgi175_plain_prose_schema_doc_flagged():
     s = F.schema(

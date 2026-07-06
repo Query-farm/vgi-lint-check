@@ -415,6 +415,35 @@ class DescriptionSqlFenced(Rule):
 
 
 @register
+class CodeFenceDeclaresLanguage(Rule):
+    code = "VGI177"
+    name = "code-fence-declares-language"
+    category = CONTENT
+    default_severity = Severity.WARNING
+    targets = _DOC_TARGET_KINDS
+    summary = "Fenced code blocks in descriptions should declare a language (```sql, ```json, …)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, label, text in _iter_prose(ctx):
+            for tok in _MD.parse(text):
+                if tok.type != "fence":
+                    continue
+                if (tok.info or "").strip():
+                    continue
+                # An unlabeled SQL fence is VGI174's job (it says "tag it ```sql");
+                # don't double-report. This rule owns every *other* unlabeled fence.
+                if _looks_like_sql(tok.content):
+                    continue
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"{label} has a fenced code block with no language tag",
+                    "add a language to the opening fence (```sql, ```json, ```text, …) so it "
+                    "renders with syntax highlighting and its content is unambiguous",
+                )
+
+
+@register
 class DescriptionLinksResolve(Rule):
     code = "VGI171"
     name = "description-links-resolve"
