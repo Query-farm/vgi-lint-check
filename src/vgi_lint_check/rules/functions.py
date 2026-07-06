@@ -667,7 +667,7 @@ class ConstrainedArgumentNotDiscoverable(Rule):
     code = "VGI317"
     name = "constrained-argument-not-discoverable"
     category = FUNC
-    default_severity = Severity.INFO
+    default_severity = Severity.ERROR
     targets = (
         ObjectKind.SCALAR_FUNCTION,
         ObjectKind.AGGREGATE,
