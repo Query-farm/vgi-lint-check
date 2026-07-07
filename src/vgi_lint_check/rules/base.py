@@ -26,6 +26,9 @@ class RuleContext:
     # URL -> HTTP status resolver, wired only for real runs when --check-links is
     # on; network rules no-op when it is None (keeps tests offline).
     link_resolver: Any | None = None
+    # URL -> linkcheck.ImageInfo probe, wired alongside link_resolver under
+    # --check-links; the icon-image rule (VGI015) no-ops when it is None.
+    image_probe: Any | None = None
     # Resolved severity for the rule currently executing (set by the engine).
     severity: Severity = Severity.WARNING
     # Per-executable-example wall-clock seconds, recorded by VGI906 as it runs so

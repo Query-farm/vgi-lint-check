@@ -13,9 +13,11 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from ..findings import Category, Finding, Severity
+from ..linkcheck import DISPLAYABLE_IMAGE_FORMATS, is_broken
 from ..model import (
     TAG_DOC_LLM,
     TAG_DOC_MD,
+    TAG_ICON_URL,
     TAG_LICENSE,
     TAG_SUPPORT_CONTACT,
     TAG_SUPPORT_POLICY_URL,
@@ -244,6 +246,101 @@ class SupportLinksValid(Rule):
                 f"support policy URL is not a valid http(s) URL: {policy!r}",
                 "use an absolute http(s) URL for the support policy",
             )
+
+
+@register
+class CatalogIconUrlValid(Rule):
+    code = "VGI014"
+    name = "catalog-icon-url-valid"
+    category = CAT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "vgi.icon_url, when set, must be a valid http(s) URL."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        url = (ctx.catalog.tags.get(TAG_ICON_URL) or "").strip()
+        if not url:
+            return  # the icon is opt-in; only its shape is checked when present
+        if not _is_http_url(url):
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"vgi.icon_url is not a valid http(s) URL: {url!r}",
+                "use an absolute http(s) URL to a browser-displayable image "
+                "(PNG/SVG/WebP/…) for the catalog's icon/logo",
+            )
+
+
+@register
+class CatalogIconImage(Rule):
+    code = "VGI015"
+    name = "catalog-icon-image"
+    category = CAT
+    default_severity = Severity.WARNING
+    requires_network = True
+    targets = (ObjectKind.CATALOG,)
+    summary = "vgi.icon_url must resolve to a browser-displayable image at a reasonable resolution."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        probe = ctx.image_probe
+        if probe is None:  # no probe wired (offline / --no-check-links)
+            return
+        url = (ctx.catalog.tags.get(TAG_ICON_URL) or "").strip()
+        if not url or not _is_http_url(url):
+            return  # VGI014 reports a missing/malformed URL; nothing to fetch
+        info = probe(url)
+        if info.error is not None:  # DNS/timeout/TLS — unverifiable, stay quiet
+            return
+        cid = ctx.catalog.id
+        if is_broken(info.status):
+            yield self.finding(
+                ctx,
+                cid,
+                f"vgi.icon_url is broken (HTTP {info.status}): {url}",
+                "fix or remove the dead icon URL",
+            )
+            return
+        if info.fmt not in DISPLAYABLE_IMAGE_FORMATS:
+            declared = f" (Content-Type {info.content_type})" if info.content_type else ""
+            yield self.finding(
+                ctx,
+                cid,
+                f"vgi.icon_url is not a browser-displayable image{declared}: {url}",
+                "point vgi.icon_url at a PNG, SVG, JPEG, WebP, GIF, BMP, ICO, or AVIF "
+                "image so browsers can render it in an <img> tag",
+            )
+            return
+        opts = ctx.config.options
+        if info.size_bytes is not None and info.size_bytes > opts.icon_max_bytes:
+            yield self.finding(
+                ctx,
+                cid,
+                f"vgi.icon_url image is {info.size_bytes} bytes (> {opts.icon_max_bytes}): {url}",
+                "ship a smaller icon (compress it or reduce its dimensions) so "
+                "listings load quickly",
+            )
+        # SVG/AVIF report no pixel dimensions — only judge resolution when known.
+        if info.width and info.height:
+            smaller = min(info.width, info.height)
+            larger = max(info.width, info.height)
+            if smaller < opts.icon_min_dimension:
+                yield self.finding(
+                    ctx,
+                    cid,
+                    f"vgi.icon_url image is only {info.width}x{info.height} "
+                    f"(min {opts.icon_min_dimension}px per side): {url}",
+                    "use a higher-resolution icon so it stays crisp when scaled up "
+                    "in listings and directories",
+                )
+            elif larger > opts.icon_max_dimension:
+                yield self.finding(
+                    ctx,
+                    cid,
+                    f"vgi.icon_url image is {info.width}x{info.height} "
+                    f"(max {opts.icon_max_dimension}px per side): {url}",
+                    "downscale the icon — an oversized image is wasteful to ship "
+                    "for a listing thumbnail",
+                )
 
 
 @register

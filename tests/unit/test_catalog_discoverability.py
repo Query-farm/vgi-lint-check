@@ -238,3 +238,102 @@ def test_classifying_tag_and_units_strict_default():
     off = codes(cat, severity_overrides={"VGI123": Severity.OFF, "VGI131": Severity.OFF})
     assert "VGI123" not in set(off)
     assert "VGI131" not in set(off)
+
+
+# --- VGI014 / VGI015 catalog icon (static shape + network image) ----------
+def test_icon_url_shape_opt_in_and_valid():
+    # absent -> nothing (icon is opt-in)
+    assert "VGI014" not in set(codes(F.catalog(F.schema("main"))))
+    # present + malformed -> flagged
+    assert "VGI014" in set(codes(F.catalog(F.schema("main"), tags={"vgi.icon_url": "logo.png"})))
+    # present + valid http(s) -> not flagged
+    assert "VGI014" not in set(
+        codes(F.catalog(F.schema("main"), tags={"vgi.icon_url": "https://example.com/logo.png"}))
+    )
+
+
+def _run_icon(cat, probe, *, check_links=True):
+    from vgi_lint_check.findings import Severity
+    from vgi_lint_check.linkcheck import ImageInfo  # noqa: F401
+    from vgi_lint_check.rules.catalog import CatalogIconImage
+
+    cfg = Config(check_links=check_links)
+    ctx = RuleContext(cat, cfg, image_probe=probe)
+    ctx.severity = Severity.WARNING
+    return list(CatalogIconImage().check(ctx))
+
+
+def _icon_cat(url="https://example.com/logo.png"):
+    return F.catalog(F.schema("main"), tags={"vgi.icon_url": url})
+
+
+def test_icon_image_accepts_good_image():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    ok = ImageInfo(
+        status=200, content_type="image/png", fmt="png", width=256, height=256, size_bytes=4096
+    )
+    assert _run_icon(_icon_cat(), lambda url: ok) == []
+
+
+def test_icon_image_flags_non_image():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    html = ImageInfo(status=200, content_type="text/html", fmt=None, size_bytes=1200)
+    out = _run_icon(_icon_cat(), lambda url: html)
+    assert out and out[0].code == "VGI015"
+    assert "not a browser-displayable image" in out[0].message
+
+
+def test_icon_image_flags_low_and_high_resolution():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    tiny = ImageInfo(status=200, fmt="png", width=16, height=16, size_bytes=200)
+    out = _run_icon(_icon_cat(), lambda url: tiny)
+    assert out and "min" in out[0].message
+
+    huge = ImageInfo(status=200, fmt="png", width=4096, height=4096, size_bytes=5000)
+    out = _run_icon(_icon_cat(), lambda url: huge)
+    assert out and "max" in out[0].message
+
+
+def test_icon_image_flags_oversized_bytes():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    heavy = ImageInfo(status=200, fmt="png", width=256, height=256, size_bytes=5_000_000)
+    out = _run_icon(_icon_cat(), lambda url: heavy)
+    assert out and "bytes" in out[0].message
+
+
+def test_icon_image_flags_broken_status():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    out = _run_icon(_icon_cat(), lambda url: ImageInfo(status=404))
+    assert out and "broken" in out[0].message
+
+
+def test_icon_image_svg_has_no_resolution_check():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    svg = ImageInfo(status=200, content_type="image/svg+xml", fmt="svg", size_bytes=800)
+    assert _run_icon(_icon_cat(), lambda url: svg) == []
+
+
+def test_icon_image_silent_on_unreachable_and_no_probe():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    # network error -> stay quiet (not flaky)
+    assert _run_icon(_icon_cat(), lambda url: ImageInfo(error="timed out")) == []
+    # no probe wired (offline) -> no findings
+    assert _run_icon(_icon_cat(), None) == []
+
+
+def test_icon_image_gated_off_without_check_links():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    bad = ImageInfo(status=200, fmt=None)
+    cat = _icon_cat()
+    # requires_network rule is OFF unless check_links is set
+    assert "VGI015" not in set(codes(cat, check_links=False))
+    # sanity: the rule itself would fire when driven directly
+    assert _run_icon(cat, lambda url: bad)

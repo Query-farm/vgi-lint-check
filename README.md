@@ -90,7 +90,7 @@ families:
 
 | Family | Codes | Examples |
 | --- | --- | --- |
-| Catalog | VGI0xx | catalog description, `vgi.doc_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty**, worker advertises 1–N catalogs, `vgi.license` is a valid SPDX id |
+| Catalog | VGI0xx | catalog description, `vgi.doc_llm`/`_md`, `source_url`, default schema resolves, `data_version_spec` semver + releases within it, **catalog not empty**, worker advertises 1–N catalogs, `vgi.license` is a valid SPDX id, `vgi.icon_url` is a displayable image |
 | Descriptions | VGI1xx | schema/table/view/function comment, `vgi.doc_llm`, `vgi.doc_md`; **catalog/schema docs must be detailed** (≥300/≥160 chars) |
 | Discoverability | VGI12x/13x | duplicate/short/echoed descriptions, **no placeholder text (TODO/TBD/…)**, classifying tag present + **reused (small vocabulary)**, **`vgi.title` required on catalog + schemas** (optional, validated when set, below), keywords present (**JSON array**), **source_url is catalog-only**, join-path docs, release freshness, example richness, column units |
 | Content | VGI17x | `vgi.doc_md` is valid Markdown; description links/images & source URLs resolve (no 404); descriptions must not enumerate the worker's own objects or embed unfenced SQL; **catalog/schema listing docs must use Markdown structure and multiple paragraphs** |
@@ -120,8 +120,10 @@ installed version, or `vgi-lint explain VGI112` for one.
 **Link checking is on by default** (VGI171): URLs and images in descriptions,
 and `source_url`/`vgi.source_url` repo links, are resolved over HTTP and flagged
 if they 404. Only definitive client errors (4xx) are reported — timeouts, DNS
-failures, 5xx, and access-gated codes are skipped so CI isn't flaky. Disable
-with `--no-check-links` (or run fully offline).
+failures, 5xx, and access-gated codes are skipped so CI isn't flaky. The same
+pass fetches `vgi.icon_url` (VGI015) and checks it is a browser-displayable
+image at a reasonable resolution. Disable with `--no-check-links` (or run fully
+offline).
 
 **Execution is on by default** (`--no-execute` for a static-only lint). Execution
 rules run against the live worker under a per-query wall-clock cap
@@ -381,6 +383,7 @@ table below is a quick index:
 | `vgi.license` | License name or SPDX identifier (catalog) |
 | `vgi.support_contact` | Where to report issues/bugs — email or URL (catalog) |
 | `vgi.support_policy_url` | Link to the support / SLA policy (catalog) |
+| `vgi.icon_url` | Link to a browser-displayable icon/logo image for the catalog — validated for format & resolution under `--check-links` (catalog) |
 
 > **Renamed:** `vgi.doc_llm`/`vgi.doc_md` (was `vgi.description_llm`/`_md`),
 > `vgi.result_columns_md` (was `vgi.columns_md`), and `vgi.classification_tags`

@@ -75,6 +75,12 @@ class Options:
     required_schema_tags: list[str] = field(default_factory=list)
     required_table_tags: list[str] = field(default_factory=list)
     allowed_tag_keys: list[str] = field(default_factory=list)
+    # VGI015: catalog icon (vgi.icon_url) resolution/size budget, checked under
+    # --check-links. min/max are the smaller/larger side in pixels; a tiny icon
+    # looks blurry when scaled up and an oversized one is wasteful to ship.
+    icon_min_dimension: int = 64
+    icon_max_dimension: int = 2048
+    icon_max_bytes: int = 1048576  # 1 MiB
     # Discoverability (VGI12x) tuning.
     min_meaningful_description_chars: int = 30
     min_example_queries: int = 3

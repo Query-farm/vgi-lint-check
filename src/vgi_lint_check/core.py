@@ -25,7 +25,7 @@ from .connection import (
     validate_alias,
 )
 from .diff import diff_snapshots
-from .linkcheck import make_link_resolver
+from .linkcheck import make_image_probe, make_link_resolver
 from .loader import build_catalog
 from .model import Release
 from .result import Report, VersionResult
@@ -365,12 +365,14 @@ def _lint_one_version(
         needs_con = any(getattr(r, "requires_connection", False) for r in rules)
         needs_net = any(getattr(r, "requires_network", False) for r in rules)
         resolver = make_link_resolver(config.link_timeout) if needs_net else None
+        image_probe = make_image_probe(config.link_timeout) if needs_net else None
         review_report, sim_report = _run_ai_passes(catalog, con, config, rules, tracer)
         ctx = RuleContext(
             catalog,
             config,
             connection=con if needs_con else None,
             link_resolver=resolver,
+            image_probe=image_probe,
             review_report=review_report,
             sim_report=sim_report,
             tracer=tracer,

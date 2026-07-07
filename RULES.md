@@ -32,6 +32,8 @@ skipped unless `--execute` is passed.
 | `VGI011` | warning | catalog-not-empty | A catalog must expose at least one table, view, or function. |  |
 | `VGI012` | warning | worker-catalog-count | A worker should advertise at least one catalog and not an unbounded number. |  |
 | `VGI013` | info | license-valid-spdx | vgi.license should be an SPDX identifier (or a LicenseRef-… for custom). |  |
+| `VGI014` | warning | catalog-icon-url-valid | vgi.icon_url, when set, must be a valid http(s) URL. |  |
+| `VGI015` | warning | catalog-icon-image | vgi.icon_url must resolve to a browser-displayable image at a reasonable resolution. |  |
 
 ## Discoverability (VGI12x)
 
@@ -259,4 +261,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_169 rules._
+_171 rules._

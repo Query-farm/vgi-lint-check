@@ -31,6 +31,7 @@ TAG_COPYRIGHT = "vgi.copyright"  # copyright notice
 TAG_LICENSE = "vgi.license"  # license name or SPDX identifier
 TAG_SUPPORT_CONTACT = "vgi.support_contact"  # where to report issues/bugs (email or URL)
 TAG_SUPPORT_POLICY_URL = "vgi.support_policy_url"  # link to the support/SLA policy
+TAG_ICON_URL = "vgi.icon_url"  # link to a browser-displayable icon/logo image for the catalog
 
 # Deprecated tag keys kept working for back-compat (old key -> canonical key).
 TAG_DESCRIPTION_LLM = "vgi.description_llm"  # deprecated: use vgi.doc_llm
@@ -68,6 +69,7 @@ RESERVED_TAG_KEYS = frozenset(
         TAG_LICENSE,
         TAG_SUPPORT_CONTACT,
         TAG_SUPPORT_POLICY_URL,
+        TAG_ICON_URL,
         *DEPRECATED_TAG_ALIASES,
     }
 )
