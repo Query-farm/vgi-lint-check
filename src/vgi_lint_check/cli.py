@@ -172,6 +172,13 @@ def app() -> None:
     help="SQL to run on the connection before ATTACH (repeatable), e.g. a CREATE SECRET needed "
     "by --execute rules.",
 )
+@click.option(
+    "--worker-idle-timeout",
+    type=int,
+    default=None,
+    help="Keep the subprocess worker pool warm this many seconds (default 300; 0 = leave the "
+    "vgi extension's 5s default). Avoids cold-starting the worker across slow LLM/rule phases.",
+)
 @click.option("--config", "config_path", type=click.Path(exists=True, dir_okay=False), default=None)
 @click.option(
     "--trace",
@@ -223,6 +230,7 @@ def lint(
     color: str,
     attach_options: tuple[str, ...],
     setup_sql: tuple[str, ...],
+    worker_idle_timeout: int | None,
     config_path: str | None,
     trace_path: str | None,
     traceback: bool,
@@ -234,6 +242,7 @@ def lint(
         cfg.trace = trace_path
     _apply_cli_overrides(
         cfg,
+        worker_idle_timeout=worker_idle_timeout,
         select=select,
         extend_select=extend_select,
         ignore=ignore,
@@ -682,7 +691,10 @@ def init(location: str | None, target: str) -> None:
         'select = ["ALL"]\n'
         "ignore = []\n"
         'fail_on = "error"\n'
-        '# baseline = "vgi-lint-baseline"\n\n'
+        '# baseline = "vgi-lint-baseline"\n'
+        "# Keep the subprocess worker pool warm across slow phases"
+        " (seconds; 0 = extension default):\n"
+        "# worker_idle_timeout = 300\n\n"
         "[tool.vgi-lint-check.options]\n"
         "column_comment_min_ratio = 0.8\n"
         "# Require specific tag keys (opt-in; empty by default):\n"
@@ -724,7 +736,10 @@ def _apply_cli_overrides(
     baseline: str | None = None,
     attach_options: tuple[str, ...] = (),
     setup_sql: tuple[str, ...] = (),
+    worker_idle_timeout: int | None = None,
 ) -> None:
+    if worker_idle_timeout is not None:
+        cfg.worker_idle_timeout = worker_idle_timeout
     for item in attach_options:
         if "=" not in item:
             raise click.UsageError(f"--attach-option expects KEY=VALUE, got {item!r}")

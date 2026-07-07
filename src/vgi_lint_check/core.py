@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import contextlib
 import sys
+import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,7 @@ from .connection import (
     attached,
     connect_loaded,
     derive_alias,
+    is_subprocess_location,
     read_default_schema,
     validate_alias,
 )
@@ -46,6 +49,31 @@ def _span(tracer: Tracer | None, kind: str, name: str) -> Iterator[None]:
             yield
 
 
+@dataclass
+class _RelaunchMeter:
+    """Accumulate subprocess-worker (re)launch cost across a lint run.
+
+    A bare-command ``LOCATION`` is spawned fresh by the vgi extension on a cold
+    pool miss (per data version, per process), so a multi-version or fleet run can
+    pay a cold start many times over. ``spawn()`` times each probe/ATTACH so a run
+    that spends too long launching workers can warn and point at a persistent
+    transport.
+    """
+
+    count: int = 0
+    seconds: float = 0.0
+
+    @contextlib.contextmanager
+    def spawn(self) -> Iterator[None]:
+        """Time one worker probe/ATTACH, recording its count and wall-clock seconds."""
+        t0 = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.seconds += time.perf_counter() - t0
+            self.count += 1
+
+
 def lint_worker(
     location: str,
     *,
@@ -61,11 +89,14 @@ def lint_worker(
     """Connect to a worker, lint each data version, and return a :class:`Report`."""
     config = config or Config()
     tracer = Tracer(Path(config.trace)) if config.trace else None
+    meter = _RelaunchMeter()
     with _span(tracer, "phase", "connect+load (INSTALL/LOAD vgi)"):
-        con, vgi_version = connect_loaded(install=install, spatial=spatial)
+        con, vgi_version = connect_loaded(
+            install=install, spatial=spatial, worker_idle_timeout=config.worker_idle_timeout
+        )
     try:
         apply_setup_sql(con, config.setup_sql)
-        with _span(tracer, "phase", "discover catalogs"):
+        with _span(tracer, "phase", "discover catalogs"), meter.spawn():
             catalogs = discover_catalogs(con, location)
         discovery = _choose(catalogs, location, catalog_name)
         advertised = [c.catalog for c in catalogs] or [discovery.catalog]
@@ -86,6 +117,7 @@ def lint_worker(
                 config,
                 update_baseline,
                 tracer,
+                meter,
             )
             for dv in versions
         ]
@@ -93,6 +125,7 @@ def lint_worker(
         con.close()
         if tracer is not None:
             tracer.dump()
+    _maybe_warn_relaunch(location, meter, config)
 
     comp = _comparison.build(results) if len(results) > 1 else None
     return Report(
@@ -320,6 +353,7 @@ def _lint_one_version(
     config: Config,
     update_baseline: bool,
     tracer: Tracer | None = None,
+    meter: _RelaunchMeter | None = None,
 ) -> VersionResult:
     releases = [
         Release(r.version, r.released_at, r.summary, r.notes_url) for r in discovery.releases
@@ -327,7 +361,8 @@ def _lint_one_version(
     with _span(tracer, "phase", "snapshot (pre-attach)"):
         before = take_snapshot(con)
     with contextlib.ExitStack() as stack:
-        with _span(tracer, "phase", "ATTACH worker"):
+        _m = meter.spawn() if meter else contextlib.nullcontext()
+        with _span(tracer, "phase", "ATTACH worker"), _m:
             stack.enter_context(
                 attached(
                     con,
@@ -465,5 +500,32 @@ def _warn_ai_pass(name: str, err: Exception) -> None:
     print(
         f"warning: {name} pass failed ({type(err).__name__}: {err}); "
         "scoring without it. Re-run to retry the LLM pass.",
+        file=sys.stderr,
+    )
+
+
+def _maybe_warn_relaunch(location: str, meter: _RelaunchMeter, config: Config) -> None:
+    """Warn once when a subprocess worker was (re)launched slowly/repeatedly this run.
+
+    Only fires for the plain-subprocess transport (a persistent endpoint has nothing
+    to relaunch) and only when the cumulative launch time crosses the configured
+    threshold, so a fast run stays silent. Points at persistent transports for the
+    cross-process/fleet case the pool keepalive cannot fix.
+    """
+    if (
+        config.relaunch_warn_seconds <= 0
+        or not is_subprocess_location(location)
+        or meter.count < 2
+        or meter.seconds < config.relaunch_warn_seconds
+    ):
+        return
+    print(
+        f"warning: spent ~{meter.seconds:.1f}s (re)launching the subprocess worker "
+        f"{meter.count}× this run. A bare-command LOCATION cold-starts a fresh worker "
+        f"per data version and per vgi-lint process — the extension's warm pool does "
+        f"not survive across processes. For fleet/CI or --all-data-versions runs, run "
+        f"the worker persistently and attach to it: LOCATION 'launch:<cmd>' (if the "
+        f"worker speaks the launcher protocol), 'unix:///path/to.sock', or "
+        f"'http://host:port/'.",
         file=sys.stderr,
     )

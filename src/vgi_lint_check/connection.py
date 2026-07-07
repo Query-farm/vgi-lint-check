@@ -27,6 +27,20 @@ _BOOL_LITERALS = {"true", "false"}
 _INT_RE = re.compile(r"^-?\d+$")
 log = logging.getLogger("vgi_lint_check")
 
+# Default keepalive for the subprocess worker pool (seconds). The vgi extension
+# reaps idle pooled workers after 5s; a run-long keepalive stops slow phases from
+# cold-starting the worker. See connect_loaded / Config.worker_idle_timeout.
+DEFAULT_WORKER_IDLE_TIMEOUT = 300
+
+# LOCATION schemes that reach a persistent worker rather than spawning a fresh
+# child per process (so the "relaunch" warning does not apply to them).
+_PERSISTENT_PREFIXES = ("http://", "https://", "unix://", "launch:")
+
+
+def is_subprocess_location(location: str) -> bool:
+    """Return True when LOCATION spawns a child per process (not a persistent endpoint)."""
+    return not location.strip().lower().startswith(_PERSISTENT_PREFIXES)
+
 
 class WorkerConnectionError(RuntimeError):
     """Operational failure reaching/attaching a worker (CLI exit code 3)."""
@@ -52,10 +66,24 @@ def derive_alias(catalog_name: str) -> str:
     return slug
 
 
-def connect_loaded(*, install: bool = True, spatial: bool = True) -> tuple[Any, str | None]:
+def connect_loaded(
+    *,
+    install: bool = True,
+    spatial: bool = True,
+    worker_idle_timeout: int = DEFAULT_WORKER_IDLE_TIMEOUT,
+) -> tuple[Any, str | None]:
     """Open a haybarn connection with the vgi extension loaded.
 
-    Returns ``(con, vgi_version)``.
+    Args:
+        install: FORCE INSTALL the vgi extension from the community repo first.
+        spatial: also LOAD the spatial extension (best-effort).
+        worker_idle_timeout: keep the subprocess worker pool warm this many seconds
+            by raising ``vgi_worker_pool_idle_limit_seconds`` before any ATTACH
+            (0 leaves the extension default of 5s). Best-effort: a no-op on an older
+            extension that lacks the setting.
+
+    Returns:
+        ``(con, vgi_version)``.
     """
     import haybarn
 
@@ -76,6 +104,13 @@ def connect_loaded(*, install: bool = True, spatial: bool = True) -> tuple[Any, 
     except Exception as e:  # noqa: BLE001
         con.close()
         raise WorkerConnectionError(f"couldn't LOAD the vgi extension: {e}") from e
+    if worker_idle_timeout > 0:
+        # Raise the pool idle timeout before ATTACH (the extension snapshots it
+        # per-path at attach time). Best-effort: unknown on older extensions.
+        try:
+            con.execute(f"SET vgi_worker_pool_idle_limit_seconds = {int(worker_idle_timeout)}")
+        except Exception as e:  # noqa: BLE001 - older extension without the setting
+            log.debug("couldn't raise vgi_worker_pool_idle_limit_seconds (%s)", e)
     if spatial:
         try:
             if install:

@@ -155,6 +155,15 @@ class Config:
     location: str | None = None
     baseline: str | None = None
     trace: str | None = None  # when set, write a per-phase / per-rule timing log here
+    # Keep the subprocess worker pool warm this many seconds by raising the vgi
+    # extension's vgi_worker_pool_idle_limit_seconds (SET before ATTACH). The pool
+    # reaps idle workers after 5s by default, so slow phases (LLM passes, the
+    # simulate ReAct loop) get the worker reaped and cold-start it again; a run-long
+    # keepalive avoids that. 0 = leave the extension default (5s).
+    worker_idle_timeout: int = 300
+    # Warn when cumulative subprocess-worker (re)launch time in a run exceeds this,
+    # nudging fleet/CI users toward a persistent transport (0 = off).
+    relaunch_warn_seconds: float = 6.0
     # Extra ATTACH options + pre-attach setup SQL, for workers that require
     # options/credentials to attach (e.g. PROVIDER/SECRET). attach_options render
     # into the ATTACH statement; setup_sql runs on the connection before ATTACH
@@ -259,6 +268,10 @@ def from_table(raw: dict[str, Any]) -> Config:
         cfg.check_links = bool(raw["check_links"])
     if "link_timeout" in raw:
         cfg.link_timeout = float(raw["link_timeout"])
+    if "worker_idle_timeout" in raw:
+        cfg.worker_idle_timeout = int(raw["worker_idle_timeout"])
+    if "relaunch_warn_seconds" in raw:
+        cfg.relaunch_warn_seconds = float(raw["relaunch_warn_seconds"])
     if "severity" in raw and isinstance(raw["severity"], dict):
         cfg.severity_overrides = {
             code: Severity.parse(level) for code, level in raw["severity"].items()
