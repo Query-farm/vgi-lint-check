@@ -700,3 +700,68 @@ def test_vgi316_single_array_arg_suggests_table():
     )
     # a plain 1-D array (a vector) -> not flagged
     assert "VGI316" not in codes_for(F.arg("v", "BIGINT[]", "a vector of weights"))
+
+
+def test_vgi145_view_wraps_table_function():
+    # A view whose body is a bare SELECT over a parameterless table function is
+    # pure indirection -> flagged as an error (should be a scan-backed table).
+    tf = F.func("main", "exchanges", "table", description="d", tags=_TAGS)
+    v = F.view(
+        "main",
+        "exchanges_v",
+        comment="c",
+        tags=_TAGS,
+        sql_definition="CREATE VIEW exchanges_v AS SELECT code FROM cal.main.exchanges();",
+    )
+    s = F.schema("main", comment="c", tags=_TAGS, views=[v], functions=[tf])
+    assert "VGI145" in _codes(F.catalog(s))
+
+    # SELECT * over the same parameterless table function -> also flagged.
+    v_star = F.view(
+        "main",
+        "exchanges_v",
+        comment="c",
+        tags=_TAGS,
+        sql_definition="SELECT * FROM main.exchanges()",
+    )
+    s_star = F.schema("main", comment="c", tags=_TAGS, views=[v_star], functions=[tf])
+    assert "VGI145" in _codes(F.catalog(s_star))
+
+
+def test_vgi145_clean_cases():
+    # A view that filters/transforms is doing real work -> not flagged.
+    tf = F.func("main", "exchanges", "table", description="d", tags=_TAGS)
+    filtered = F.view(
+        "main",
+        "us_exchanges",
+        comment="c",
+        tags=_TAGS,
+        sql_definition="SELECT code FROM main.exchanges() WHERE country = 'US'",
+    )
+    s = F.schema("main", comment="c", tags=_TAGS, views=[filtered], functions=[tf])
+    assert "VGI145" not in _codes(F.catalog(s))
+
+    # A view over a table function that TAKES parameters is not the anti-pattern.
+    param_tf = F.func(
+        "main", "history", "table", description="d", tags=_TAGS, parameters=["since"]
+    )
+    over_param = F.view(
+        "main",
+        "history_v",
+        comment="c",
+        tags=_TAGS,
+        sql_definition="SELECT * FROM main.history()",
+    )
+    s2 = F.schema("main", comment="c", tags=_TAGS, views=[over_param], functions=[param_tf])
+    assert "VGI145" not in _codes(F.catalog(s2))
+
+    # A view over a real base relation (no matching parameterless table fn) is fine.
+    plain = F.view(
+        "main",
+        "plain_v",
+        comment="c",
+        tags=_TAGS,
+        sql_definition="SELECT * FROM main.some_table()",
+    )
+    s3 = F.schema("main", comment="c", tags=_TAGS, views=[plain])
+    assert "VGI145" not in _codes(F.catalog(s3))

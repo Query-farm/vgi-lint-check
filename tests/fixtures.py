@@ -92,7 +92,7 @@ def constraint(
     )
 
 
-def view(schema, name, *, comment=None, tags=None, columns=(), examples=()):
+def view(schema, name, *, comment=None, tags=None, columns=(), examples=(), sql_definition=None):
     return View(
         id=ObjectId("v", ObjectKind.VIEW, schema=schema, name=name),
         schema=schema,
@@ -101,6 +101,7 @@ def view(schema, name, *, comment=None, tags=None, columns=(), examples=()):
         tags=TagSet(dict(tags or {})),
         columns=list(columns),
         examples=list(examples),
+        sql_definition=sql_definition,
     )
 
 

@@ -306,3 +306,77 @@ class TableNameNumberConsistent(Rule):
                 f"({len(singular)} singular / {len(plural)} plural)",
                 f"make table/view naming consistent — prefer the {want} form used by the majority",
             )
+
+
+# A view body that is a bare pass-through of a parameterless table-function call:
+#   SELECT <*|col-list> FROM [catalog.][schema.]fn()
+# The trailing `$` after the empty argument list rejects any WHERE/JOIN/GROUP/
+# ORDER/LIMIT/UNION or additional source — those would make the view do real work.
+_PASSTHROUGH_VIEW = re.compile(
+    r"""(?isx)
+    ^\s*SELECT\s+(?P<cols>.+?)\s+FROM\s+
+    (?P<src>[\w".]+)\s*\(\s*\)\s*$
+    """
+)
+# Strips an optional `CREATE [OR REPLACE] [TEMP…] VIEW <name> [(cols)] AS` prefix,
+# so the rule works whether sql_definition is the full DDL or just the SELECT.
+_VIEW_DDL_PREFIX = re.compile(r"(?is)^\s*CREATE\s+.*?\bVIEW\b.*?\bAS\b\s+")
+# A single bare (optionally qualified/quoted) column reference — no calls,
+# operators, literals, CASE, or `AS` renames. Used to confirm the select list is
+# a pure projection and not a transformation.
+_BARE_COLUMN = re.compile(r'^[\w".]+$')
+
+
+def _is_passthrough_projection(cols: str) -> bool:
+    """True when ``cols`` is ``*`` or a comma list of bare column references."""
+    cols = cols.strip()
+    if cols == "*":
+        return True
+    parts = [p.strip() for p in cols.split(",")]
+    return bool(parts) and all(_BARE_COLUMN.match(p) for p in parts)
+
+
+@register
+class ViewWrapsTableFunction(Rule):
+    code = "VGI145"
+    name = "view-wraps-table-function"
+    category = Category.STRUCTURE
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.VIEW,)
+    summary = (
+        "A view that only wraps a parameterless table function should be a table."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        # Index parameterless table functions by name for O(1) lookup.
+        param_free_tfs = {
+            f.name
+            for f in cat.iter_all_functions()
+            if f.kind is ObjectKind.TABLE_FUNCTION and not f.parameters
+        }
+        if not param_free_tfs:
+            return
+        for view in cat.iter_views():
+            body = view.sql_definition
+            if not body:
+                continue
+            body = _VIEW_DDL_PREFIX.sub("", body.strip()).rstrip(";").strip()
+            m = _PASSTHROUGH_VIEW.match(body)
+            if not m or not _is_passthrough_projection(m.group("cols")):
+                continue
+            # Last dotted segment of the source is the function name.
+            fn = m.group("src").split(".")[-1].strip('"')
+            if fn not in param_free_tfs:
+                continue
+            yield self.finding(
+                ctx,
+                view.id,
+                f"view trivially wraps the parameterless table function "
+                f"{fn}() and returns its columns unchanged — a view over a "
+                f"table function is pure indirection",
+                "expose this data as a regular table that scans the function "
+                "(a scan-backed table) instead of a view over a table function, "
+                "so consumers get SELECT * FROM schema.name with no redundant "
+                "view layer and no parentheses",
+            )

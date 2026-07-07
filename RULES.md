@@ -201,6 +201,7 @@ skipped unless `--execute` is passed.
 | `VGI142` | warning | redundant-name-prefix | Object names shouldn't carry a redundant retrieval verb (get_/list_). |  |
 | `VGI143` | warning | name-style-consistent | Object names should share one case/separator style (e.g. snake_case). |  |
 | `VGI144` | info | table-name-number-consistent | Tables/views should be consistently singular or plural, not a mix. |  |
+| `VGI145` | error | view-wraps-table-function | A view that only wraps a parameterless table function should be a scan-backed table, not a view. |  |
 
 ## Attach options (VGI10xx)
 
@@ -223,4 +224,4 @@ skipped unless `--execute` is passed.
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
-_138 rules._
+_139 rules._
