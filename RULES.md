@@ -244,6 +244,7 @@ skipped unless `--execute` is passed.
 | `VGI1324` | warning | tutorial-next-steps-links | A tutorial should link out (next steps / related) — at least two links. |  |
 | `VGI1325` | info | tutorial-keyword-placement | The primary keyword should appear in the title, opening, and description. |  |
 | `VGI1326` | warning | tutorial-anti-sameness | Tutorials must not be near-duplicates of each other (doorway-page risk). |  |
+| `VGI1327` | warning | tutorial-features-duckdb | A tutorial's title or keywords should feature DuckDB or SQL (search intent). |  |
 | `VGI1330` | error | tutorial-assets-resolve | Referenced assets must exist on disk and be declared in front-matter. |  |
 | `VGI1331` | error | tutorial-asset-budget | Assets must fit the git size budget (per-file and per-tutorial total). |  |
 | `VGI1332` | warning | tutorial-asset-kinds | An asset's kind must be known and match its file extension. |  |
@@ -258,4 +259,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_168 rules._
+_169 rules._

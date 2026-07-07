@@ -117,6 +117,19 @@ def test_placeholder_data_flagged(tmp_path):
     assert "VGI1322" in _codes(text, tmp_path)
 
 
+def test_features_duckdb_flagged_when_absent(tmp_path):
+    # Strip DuckDB/SQL from the title and keywords -> VGI1327.
+    text = _GOOD.replace(
+        "title: Count business days between two dates in DuckDB SQL",
+        "title: Count business days between two dates",
+    ).replace("keywords: [business days, duckdb, calendar]", "keywords: [business days, calendar]")
+    assert "VGI1327" in _codes(text, tmp_path)
+
+
+def test_features_duckdb_passes_via_keyword(tmp_path):
+    assert "VGI1327" not in _codes(_GOOD, tmp_path)
+
+
 def test_too_few_links_flagged(tmp_path):
     text = _GOOD.replace("- Try the [trading-calendar recipe](trading-calendar-gotchas.html).", "")
     assert "VGI1324" in _codes(text, tmp_path)

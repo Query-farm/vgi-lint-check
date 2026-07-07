@@ -29,9 +29,11 @@ _SUGGEST = (
     "searches for, not a tour of the API. Cover the TARGET OBJECTS below. Return "
     "ONLY a JSON array of "
     '{{"slug","title","keyword","job","tier","functions","with"}} where: slug is '
-    "kebab-case; title is a task-shaped searchable phrase (30-70 chars); keyword is "
-    "the primary search query the tutorial targets (2-5 words a real user would "
-    "google); job is one sentence; tier is quickstart|recipe|composition; functions "
+    "kebab-case; title is a task-shaped searchable phrase (30-70 chars) that FEATURES "
+    "'DuckDB' (or 'SQL') — these are DuckDB-native tutorials and 'how to X in DuckDB' is "
+    "the target query; keyword is the primary search query (2-5 words a real user would "
+    "google, and it should include 'duckdb' or 'sql'); job is one sentence; tier is "
+    "quickstart|recipe|composition; functions "
     "is the list of qualified object names it exercises; and 'with' is a list of "
     "OTHER worker catalog ids it composes with (only for tier=composition, drawn from "
     "the FLEET list below — else []).\n\n"
@@ -48,7 +50,8 @@ _COMPOSE = (
     "enrichment join). Return ONLY a JSON array of "
     '{{"slug","title","keyword","job","tier","functions","with"}} with '
     "tier=\"composition\" and 'with' listing the partner catalog ids from the "
-    "FLEET. Only propose a composition that a real user would actually build.\n\n"
+    "FLEET. Titles/keywords should feature 'DuckDB' (or 'SQL'). Only propose a "
+    "composition that a real user would actually build.\n\n"
     "THIS WORKER:\n{overview}\n\n{fleet}"
 )
 
@@ -56,8 +59,9 @@ _DRAFT = (
     "Write a complete DuckDB tutorial as a single .vgi.md file for the worker "
     "catalog '{worker}'. The job: {job}\n\n"
     "Rules: start with YAML front-matter containing exactly these keys — title "
-    "(task-shaped, 30-70 chars), slug: {slug}, worker: {worker}, description "
-    "(120-200 chars, NO colon characters), keywords (list), difficulty, est_minutes, "
+    "(task-shaped, 30-70 chars, FEATURING 'DuckDB' or 'SQL'), slug: {slug}, worker: "
+    "{worker}, description (120-200 chars, NO colon characters), keywords (list that "
+    "includes 'duckdb'), difficulty, est_minutes, "
     "tier: {tier}, dataset (name+provenance), datePublished: {today}, dateModified: "
     "{today}, runtime: {{wasm: auto}}. Then a one-paragraph problem statement BEFORE "
     "any code. Then 3-4 steps as ```sql {{role=step expect=rows}}``` blocks, each call "

@@ -169,6 +169,9 @@ catalog tags). `vgi-lint-check` lints, executes, renders, and LLM-plans them.
   `SET search_path` and must be **fully-qualified** (`cat.schema.fn(...)`), so each step
   is self-contained and multi-worker compositions work. The runner attaches the worker via
   the front-matter directive — tutorials usually need no `role=setup` block.
+- **Feature DuckDB (VGI1327):** these are DuckDB-native tutorials, so the title or keywords
+  should say "DuckDB" (or "SQL") — the target query is "how to X in DuckDB". The planner
+  prompts and `init` scaffold bake this in; `~/Development/vgi-tutorial-plans.yaml` is 100% so.
 - **Package.** `tutorials/` = `model` (frozen dataclasses), `fences` (the bespoke
   `{role= expect=}` parser — defensive, never raises), `frontmatter`/`loader` (never raise;
   problems → `parse_error`/`fm_errors`), `hub`, `jsonld`, `render` (self-contained HTML +

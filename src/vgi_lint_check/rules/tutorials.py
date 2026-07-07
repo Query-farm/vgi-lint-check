@@ -76,6 +76,7 @@ _SUPERLATIVE = re.compile(
     re.IGNORECASE,
 )
 _REF_TITLE = re.compile(r"\b(reference|api|function list|cheat.?sheet)\b", re.IGNORECASE)
+_DUCKDB = re.compile(r"duckdb|\bsql\b", re.IGNORECASE)
 
 
 # --------------------------------------------------------------------------
@@ -624,6 +625,29 @@ class TutorialKeywordPlacement(TutorialRule):
                     doc,
                     f"primary keyword {kw!r} missing from: {', '.join(missing)}",
                     "work the primary keyword into the title, first 100 words, and description",
+                )
+
+
+@register_tutorial
+class TutorialFeaturesDuckDB(TutorialRule):
+    code = "VGI1327"
+    name = "tutorial-features-duckdb"
+    default_severity = Severity.WARNING
+    summary = "A tutorial's title or keywords should feature DuckDB or SQL (search intent)."
+
+    def evaluate(self, ctx: TutorialContext) -> Iterator[Finding]:
+        for doc in ctx.docs:
+            fm = doc.front_matter
+            if fm is None:
+                continue
+            hay = f"{fm.title or ''} {' '.join(fm.keywords or [])}"
+            if not _DUCKDB.search(hay):
+                yield self._finding(
+                    ctx,
+                    doc,
+                    "neither the title nor the keywords mention DuckDB or SQL",
+                    "these are DuckDB-native tutorials — feature 'DuckDB' (or 'SQL') in the "
+                    "title or keywords so it ranks for 'how to … in DuckDB' searches",
                 )
 
 
