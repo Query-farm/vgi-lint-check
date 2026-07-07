@@ -54,8 +54,12 @@ Pipeline: **connect → load → model → rules/engine → reporting.**
   `ReviewCache`). Backend is single-shot `complete(prompt) -> str`; default is the
   local `claude -p` CLI (runs on the user's subscription), `api` uses Anthropic API.
 - `simulate.py` — agent-suitability testing (see below).
+- `tutorials/` + `rules/tutorials.py` — the **tutorials** subsystem: executable
+  `.vgi.md` worker tutorials, linted / executed / rendered / LLM-planned (see below).
+  File-sourced, so it runs on a **parallel engine**, not the catalog `RuleContext` loop.
 - `cli.py` — `click` app; subcommands `lint` (default), `review`, `simulate`, `rules`,
-  `explain`, `init`, `diff`, …
+  `explain`, `init`, `versions`, and the `tutorials` group
+  (`lint` / `verify` / `build` / `suggest` / `init`).
 
 ## Adding / changing a rule
 
@@ -69,8 +73,17 @@ Pipeline: **connect → load → model → rules/engine → reporting.**
 Rule families: VGI0xx catalog, VGI1xx descriptions/discoverability, VGI17x content,
 VGI2xx columns, VGI3xx functions, VGI4xx tags, VGI5xx examples, VGI6xx settings,
 VGI7xx pragmas, VGI8xx constraints, VGI9xx execution, VGI10xx attach options,
-VGI11x structure. The profile is **strict by default**; users opt out via
-`[tool.vgi-lint-check]` `ignore`/`severity`.
+VGI11x structure, **VGI13xx tutorials** (see below — a *separate* registry). The
+profile is **strict by default**; users opt out via `[tool.vgi-lint-check]`
+`ignore`/`severity`.
+
+**Tutorial rules are different:** they subclass `TutorialRule` in `rules/tutorials.py`,
+register via `@register_tutorial` into a dedicated `TUTORIAL_REGISTRY` (so they never
+leak into `vgi-lint lint` and worker rules never leak into `tutorials lint`), and run
+against a `TutorialContext` via `run_tutorial_rules` (not `RuleContext`/`engine.run`).
+They still reuse `Finding` + `config.effective_severity` (so `requires_connection`
+rules are gated by `tutorials verify --execute` and `requires_review` by `--judge`).
+`gen_rules_doc` merges both registries, so VGI13xx still lands in RULES.md.
 
 ## `simulate` (agent-suitability testing)
 
@@ -138,6 +151,55 @@ declared in the catalog tag `vgi.agent_test_tasks` (decoded to `AgentTask`).
   fake) falls back to `_ResendConversation`, which reproduces the original re-send
   behavior. Each task gets its own session id, so parallel tasks don't collide.
 
+## `tutorials` (executable worker tutorials)
+
+Workers publish **tutorials** as `tutorials/*.vgi.md` files in their own repo (NOT
+catalog tags). `vgi-lint-check` lints, executes, renders, and LLM-plans them.
+
+- **Format.** CommonMark + YAML front-matter + SQL fences annotated in the info
+  string: ` ```sql {role=setup|step|teardown|illustrative expect=rows|scalar|error|empty} `
+  with an adjacent ` ```result ``` ` block for the pinned expected output. One shared
+  DuckDB session (one cursor) across a tutorial's steps. Required front-matter set (error
+  on missing): title, worker(s), description, slug, keywords, difficulty, est_minutes,
+  dataset, datePublished, dateModified, tier (quickstart|recipe|composition). A worker's
+  suite is defined by a **hub** `tutorials/index.vgi.yaml` (series order + cross-links; the
+  renderer injects prev/next — authors don't hand-wire links). Small static assets
+  (`assets:`, kind data|image|media) are declared, size-budgeted, and embedded as data URIs.
+- **Composability convention (enforced by VGI1313):** tutorial SQL must **not**
+  `SET search_path` and must be **fully-qualified** (`cat.schema.fn(...)`), so each step
+  is self-contained and multi-worker compositions work. The runner attaches the worker via
+  the front-matter directive — tutorials usually need no `role=setup` block.
+- **Package.** `tutorials/` = `model` (frozen dataclasses), `fences` (the bespoke
+  `{role= expect=}` parser — defensive, never raises), `frontmatter`/`loader` (never raise;
+  problems → `parse_error`/`fm_errors`), `hub`, `jsonld`, `render` (self-contained HTML +
+  schema.org JSON-LD; wasm "Run" is progressive enhancement, disabled unless `--wasm-endpoint`
+  and the doc is wasm-safe), `runner` (one cursor, `safe_session_sql` gate, string result
+  compare), `wasm`, `scaffold`, `suggest`.
+- **Commands.**
+  - `tutorials lint PATHS…` — static VGI13xx, fully offline. `--judge` adds the LLM
+    narrative review (VGI1370). Reuses the shared select/ignore/severity config.
+  - `tutorials verify PATHS… --location LOC` (or `--worker-location WORKER=LOC` for a
+    composition) — attaches the worker(s) via `core.with_attached_catalogs` (multi-worker,
+    one connection, `ExitStack`), runs each step, and checks the pinned results (conn rules
+    VGI1340 refs-resolve / 1341 runs / 1342 matches / 1343 slow).
+  - `tutorials build PATHS… --out DIR [--base-url … --wasm-endpoint … --open]` — renders
+    self-contained HTML (a suite + hub page when an `index.vgi.yaml` is present).
+  - `tutorials suggest LOCATION [--fleet FILE --cap N]` — LLM planner (see below).
+  - `tutorials init --worker … --slug … [--tier …]` — scaffold a compliant skeleton;
+    `--draft --job "…" --location LOC` LLM-drafts one instead.
+- **LLM planner (`tutorials/suggest.py`).** `suggest_tutorials` mirrors
+  `simulate.suggest_tasks` — coverage-driven batches of uncovered catalog objects, real
+  function names, `{slug,title,keyword,job,tier,functions,with}`. It's **single-worker**, so
+  compositions need a **fleet index** (`--fleet FILE`, `{catalog_id: one-liner}`); a
+  **dedicated `_COMPOSE` round** then proposes cross-worker `composition` tutorials (coverage
+  batching never volunteers one). `init --draft` uses `_DRAFT`. All prompts use `str.format`
+  with escaped `{{ }}`.
+- **Gotchas.** An unquoted colon in a front-matter *value* breaks YAML (caught as VGI1300).
+  `TIMESTAMPTZ` renders in the session's local zone, not UTC — format explicitly
+  (`strftime(ts AT TIME ZONE 'America/New_York', …)`) and `ROUND` floats so pinned results are
+  stable. `verify` catches these as VGI1342 mismatches. Tutorial tests live in
+  `tests/unit/test_tutorials.py` (fake cursor + fake backend for the conn/LLM paths).
+
 ## Conventions & gotchas
 
 - Reserved-tag defaults must be **opt-in** unless near-universal (the user rejected
@@ -165,3 +227,11 @@ Commit messages end with:
   simulate ~/Development/vgi-units/target/release/units-worker --no-cache`.
 - `~/Development/vgi-web-frontend/src/lib/ai-agent.ts` — the production "ask AI" tool
   contract that `simulate`'s discovery tools mirror.
+- `~/Development/vgi-tutorial-plans.yaml` — reusable 25-worker tutorial plan cache
+  (topics/tiers/keywords/compositions); feed it to `tutorials/index.vgi.yaml` hubs and
+  `tutorials init --draft --job`.
+- `~/Development/vgi-fleet.yaml` — `{catalog_id: one-liner}` index of the worker fleet,
+  passed to `tutorials suggest --fleet` so the planner can propose cross-worker compositions.
+- Example tutorials live in `examples/tutorials/` (a `calendar/` suite + hub + single
+  tutorials); `tutorials verify` them live against `~/Development/vgi-units/target/release/units-worker`
+  or the calendar worker (`sh -c 'cd ~/Development/vgi-calendar && exec uv run calendar_worker.py'`).

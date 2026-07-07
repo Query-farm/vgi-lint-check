@@ -141,6 +141,65 @@ def with_attached_catalog(
     )
 
 
+def with_attached_catalogs(
+    specs: list[tuple[str, str | None, str | None]],
+    runner: Any,
+    *,
+    install: bool = True,
+    spatial: bool = True,
+) -> Any:
+    """Attach several workers on one connection, then run ``runner(catalogs, con)``.
+
+    ``specs`` is a list of ``(location, data_version, alias)``. Every worker is
+    attached simultaneously on a single connection (via an ``ExitStack`` of
+    ``attached()`` contexts) so a composition tutorial can query across them, then
+    ``runner`` is called with ``{alias: Catalog}`` and the live connection. The
+    connection is closed on exit. Returns the runner's result.
+    """
+    con, vgi_version = connect_loaded(install=install, spatial=spatial)
+    try:
+        catalogs: dict[str, Any] = {}
+        with contextlib.ExitStack() as stack:
+            for location, data_version, alias in specs:
+                discovered = discover_catalogs(con, location)
+                discovery = _choose(discovered, location, None)
+                advertised = [c.catalog for c in discovered] or [discovery.catalog]
+                local_alias = validate_alias(alias) if alias else derive_alias(discovery.catalog)
+                releases = [
+                    Release(r.version, r.released_at, r.summary, r.notes_url)
+                    for r in discovery.releases
+                ]
+                before = take_snapshot(con)
+                stack.enter_context(
+                    attached(
+                        con, location, discovery.catalog, local_alias, data_version=data_version
+                    )
+                )
+                after = take_snapshot(con)
+                diff = diff_snapshots(before, after, local_alias)
+                catalogs[local_alias] = build_catalog(
+                    after,
+                    local_alias,
+                    location,
+                    vgi_version=vgi_version,
+                    data_version=data_version,
+                    catalog_name=discovery.catalog,
+                    source_url=discovery.source_url,
+                    implementation_version=discovery.implementation_version,
+                    data_version_spec=discovery.data_version_spec,
+                    default_schema=read_default_schema(con, local_alias),
+                    releases=releases,
+                    setting_rows=diff.setting_rows,
+                    pragma_rows=diff.pragma_rows,
+                    attach_options=discovery.attach_options,
+                    advertised_catalogs=advertised,
+                    argument_rows=fetch_function_arguments(con, local_alias),
+                )
+            return runner(catalogs, con)
+    finally:
+        con.close()
+
+
 def load_catalog(
     location: str,
     *,

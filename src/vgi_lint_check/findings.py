@@ -55,6 +55,7 @@ class Category(StrEnum):
     CONSTRAINTS = "constraints"
     STRUCTURE = "structure"
     EXECUTION = "execution"
+    TUTORIAL = "tutorials"
 
 
 @dataclass(frozen=True)

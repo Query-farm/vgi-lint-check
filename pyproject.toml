@@ -47,6 +47,7 @@ dependencies = [
     # Needed by DuckDB/haybarn to materialize timezone-aware timestamps that
     # workers publish in vgi_catalogs() release metadata.
     "pytz>=2024.1",
+    "pyyaml>=6",
 ]
 
 [project.urls]
@@ -65,6 +66,7 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pydoclint>=0.5",
+    "types-pyyaml>=6.0.12.20260518",
 ]
 
 [tool.uv]

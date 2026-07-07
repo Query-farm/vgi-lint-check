@@ -22,6 +22,7 @@ from . import (  # noqa: F401  (imported for registration side effects)
     settings,
     structure,
     tags,
+    tutorials,  # VGI13xx — registers into the separate TUTORIAL_REGISTRY
 )
 from .base import Rule, RuleContext
 from .engine import run

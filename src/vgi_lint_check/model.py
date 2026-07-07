@@ -88,6 +88,9 @@ class ObjectKind(StrEnum):
     PRAGMA = "pragma"
     SETTING = "setting"
     ATTACH_OPTION = "attach_option"
+    # File-sourced tutorials (not catalog objects); used to anchor VGI13xx findings.
+    TUTORIAL = "tutorial"
+    TUTORIAL_STEP = "tutorial_step"
 
 
 # Maps duckdb_functions().function_type -> our ObjectKind.

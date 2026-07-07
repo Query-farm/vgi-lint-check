@@ -797,5 +797,336 @@ def _resolve_color(mode: str) -> bool:
     return sys.stdout.isatty() and not os.environ.get("CI")
 
 
+# --------------------------------------------------------------------------
+# tutorials — lint / build / init executable tutorials (VGI13xx)
+# --------------------------------------------------------------------------
+@app.group("tutorials")
+def tutorials_grp() -> None:
+    """Lint, build, and scaffold executable ``*.vgi.md`` tutorials."""
+
+
+def _collect_tutorials(paths: tuple[str, ...]) -> tuple[list[Any], Any]:
+    """Load docs from the given files/dirs; return (docs, hub-or-None)."""
+    from .tutorials.hub import find_hub
+    from .tutorials.loader import load_dir, load_tutorial
+
+    docs: list[Any] = []
+    hub = None
+    for p in paths:
+        path = Path(p)
+        if path.is_dir():
+            docs.extend(load_dir(path))
+            hub = hub or find_hub(path)
+        else:
+            docs.append(load_tutorial(path))
+    return docs, hub
+
+
+@tutorials_grp.command("lint")
+@click.argument("paths", nargs=-1, required=True)
+@click.option("--format", "fmt", type=click.Choice(["terminal", "json"]), default="terminal")
+@click.option("--select", multiple=True, help="Only run these rule codes/globs.")
+@click.option("--ignore", multiple=True, help="Skip these rule codes/globs.")
+@click.option("--config", "config_path", default=None, help="Path to a config file.")
+@click.option(
+    "--fail-on", type=click.Choice(["error", "warning", "info", "never"]), default="error"
+)
+@click.option("--judge", is_flag=True, help="LLM narrative-quality review (VGI1370).")
+@click.option("--ai-backend", type=click.Choice(["claude", "api"]), default="claude")
+@click.option("--ai-model", default=None)
+def tutorials_lint(
+    paths: tuple[str, ...],
+    fmt: str,
+    select: tuple[str, ...],
+    ignore: tuple[str, ...],
+    config_path: str | None,
+    fail_on: str,
+    judge: bool,
+    ai_backend: str,
+    ai_model: str | None,
+) -> None:
+    """Statically lint tutorials (offline; ``--judge`` adds an LLM review)."""
+    from .rules.tutorials import (
+        TutorialContext,
+        render_findings,
+        run_tutorial_rules,
+        tutorial_rules,
+    )
+
+    cfg = load_config(config_path)
+    cfg.execute = False  # static only: connection rules stay gated to `verify`
+    if select:
+        cfg.select = list(select)
+    if ignore:
+        cfg.ignore = list(ignore)
+    cfg.fail_on = Severity.parse(fail_on) if fail_on != "never" else Severity.OFF
+
+    backend = None
+    if judge:
+        from .review import make_backend
+
+        cfg.doc_review = True  # ungate the requires_review rule (VGI1370)
+        backend = make_backend(ai_backend, ai_model)
+
+    docs, hub = _collect_tutorials(paths)
+    ctx = TutorialContext(docs=docs, config=cfg, hub=hub, backend=backend)
+    findings = run_tutorial_rules(tutorial_rules(), ctx)
+    click.echo(render_findings(findings, fmt))
+
+    gating = [f for f in findings if cfg.fail_on is not Severity.OFF and f.severity >= cfg.fail_on]
+    sys.exit(EXIT_FINDINGS if gating else 0)
+
+
+@tutorials_grp.command("verify")
+@click.argument("paths", nargs=-1, required=True)
+@click.option("--location", default=None, help="Worker LOCATION (single-worker tutorials).")
+@click.option(
+    "--worker-location",
+    "worker_locations",
+    multiple=True,
+    metavar="WORKER=LOCATION",
+    help="Per-worker LOCATION for composition tutorials (repeatable).",
+)
+@click.option("--install/--no-install", default=True, help="FORCE INSTALL vgi from community.")
+@click.option("--format", "fmt", type=click.Choice(["terminal", "json"]), default="terminal")
+@click.option("--select", multiple=True)
+@click.option("--ignore", multiple=True)
+@click.option("--config", "config_path", default=None)
+@click.option(
+    "--fail-on", type=click.Choice(["error", "warning", "info", "never"]), default="error"
+)
+def tutorials_verify(
+    paths: tuple[str, ...],
+    location: str | None,
+    worker_locations: tuple[str, ...],
+    install: bool,
+    fmt: str,
+    select: tuple[str, ...],
+    ignore: tuple[str, ...],
+    config_path: str | None,
+    fail_on: str,
+) -> None:
+    """Execute tutorials against a live worker and check the pinned results."""
+    from .core import with_attached_catalogs
+    from .rules.tutorials import (
+        TutorialContext,
+        render_findings,
+        run_tutorial_rules,
+        tutorial_rules,
+    )
+    from .tutorials.runner import run_tutorial
+
+    cfg = load_config(config_path)
+    cfg.execute = True  # enable the connection rules (VGI1340–1343)
+    if select:
+        cfg.select = list(select)
+    if ignore:
+        cfg.ignore = list(ignore)
+    cfg.fail_on = Severity.parse(fail_on) if fail_on != "never" else Severity.OFF
+
+    docs, hub = _collect_tutorials(paths)
+
+    # Resolve worker -> LOCATION and per-worker data-version pin.
+    locmap: dict[str, str] = {}
+    for wl in worker_locations:
+        w, _, loc = wl.partition("=")
+        locmap[w.strip()] = loc.strip()
+    needed = sorted({w for d in docs if d.front_matter for w in d.front_matter.workers})
+    if location and len(needed) == 1 and needed[0] not in locmap:
+        locmap[needed[0]] = location
+    missing = [w for w in needed if w not in locmap]
+    if missing:
+        click.secho(
+            f"no LOCATION for worker(s): {', '.join(missing)} — pass --location "
+            "(single worker) or --worker-location WORKER=LOCATION",
+            fg="red",
+            err=True,
+        )
+        sys.exit(EXIT_TOOL_ERROR)
+    dvmap: dict[str, str] = {}
+    for d in docs:
+        for spec in d.front_matter.attach if d.front_matter else []:
+            if spec.data_version and spec.worker not in dvmap:
+                dvmap[spec.worker] = spec.data_version
+    specs = [(locmap[w], dvmap.get(w), w) for w in needed]
+
+    def _runner(catalogs: dict[str, Any], con: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        results = {d.slug: run_tutorial(con, d, timeout=cfg.execute_timeout) for d in docs}
+        return catalogs, results
+
+    try:
+        catalogs, results = with_attached_catalogs(specs, _runner, install=install)
+    except WorkerConnectionError as e:
+        click.secho(str(e), fg="red", err=True)
+        sys.exit(EXIT_CONNECTION)
+
+    ctx = TutorialContext(
+        docs=docs, config=cfg, hub=hub, catalogs=catalogs, connection=True, results=results
+    )
+    findings = run_tutorial_rules(tutorial_rules(), ctx)
+    click.echo(render_findings(findings, fmt))
+    gating = [f for f in findings if cfg.fail_on is not Severity.OFF and f.severity >= cfg.fail_on]
+    sys.exit(EXIT_FINDINGS if gating else 0)
+
+
+@tutorials_grp.command("build")
+@click.argument("paths", nargs=-1, required=True)
+@click.option("--out", "out_dir", default="_site", help="Output directory for HTML.")
+@click.option("--base-url", default=None, help="Site base URL for canonical/breadcrumb links.")
+@click.option(
+    "--wasm-endpoint",
+    default=None,
+    help="HTTP worker endpoint; enables the live Run button on wasm-safe tutorials.",
+)
+@click.option("--open", "open_browser", is_flag=True, help="Open the result in the browser.")
+def tutorials_build(
+    paths: tuple[str, ...],
+    out_dir: str,
+    base_url: str | None,
+    wasm_endpoint: str | None,
+    open_browser: bool,
+) -> None:
+    """Render tutorials to self-contained HTML (a suite when a hub is present)."""
+    import subprocess
+
+    from .tutorials.hub import find_hub, nav_for
+    from .tutorials.render import render_html, render_hub
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    docs, _ = _collect_tutorials(paths)
+    written: list[Path] = []
+    # A hub is per-directory; find the hub for the dir a doc lives in.
+    hubs: dict[str, Any] = {}
+    for doc in docs:
+        d = str(Path(doc.path).parent)
+        if d not in hubs:
+            hubs[d] = find_hub(d)
+        hub = hubs[d]
+        nav = nav_for(hub, doc.slug) if hub else None
+        target = out / f"{doc.slug}.html"
+        target.write_text(
+            render_html(doc, nav=nav, base_url=base_url, wasm_endpoint=wasm_endpoint),
+            encoding="utf-8",
+        )
+        written.append(target)
+    for d, hub in hubs.items():
+        if hub is not None:
+            hub_docs = [doc for doc in docs if str(Path(doc.path).parent) == d]
+            (out / "index.html").write_text(render_hub(hub, hub_docs), encoding="utf-8")
+            written.append(out / "index.html")
+    for w in written:
+        click.echo(f"wrote {w}")
+    if open_browser and written:
+        first = out / "index.html" if (out / "index.html").exists() else written[0]
+        subprocess.run(["open", str(first)], check=False)
+
+
+@tutorials_grp.command("suggest")
+@click.argument("location")
+@click.option("--data-version", default=None, help="Pin a worker data version.")
+@click.option(
+    "--cap", type=int, default=0, help="Propose at most N tutorials (0 = size to worker)."
+)
+@click.option("--format", "fmt", type=click.Choice(["terminal", "json"]), default="terminal")
+@click.option(
+    "--fleet",
+    "fleet_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="YAML {worker_id: one-liner} index of other workers, so it can propose compositions.",
+)
+@click.option("--ai-backend", type=click.Choice(["claude", "api"]), default="claude")
+@click.option("--ai-model", default=None)
+def tutorials_suggest(
+    location: str,
+    data_version: str | None,
+    cap: int,
+    fmt: str,
+    fleet_path: str | None,
+    ai_backend: str,
+    ai_model: str | None,
+) -> None:
+    """Propose a coverage-driven tutorial suite for a worker (LLM planner)."""
+    from .core import with_attached_catalog
+    from .review import make_backend
+    from .tutorials.suggest import render_suggestions, suggest_tutorials
+
+    backend = make_backend(ai_backend, ai_model)
+    fleet = None
+    if fleet_path:
+        import yaml
+
+        loaded = yaml.safe_load(Path(fleet_path).read_text())
+        fleet = {str(k): str(v) for k, v in loaded.items()} if isinstance(loaded, dict) else None
+
+    def _runner(catalog: Any, con: Any) -> Any:
+        return suggest_tutorials(catalog, backend, cap=cap, fleet=fleet)
+
+    try:
+        proposals = with_attached_catalog(location, _runner, data_version=data_version)
+    except WorkerConnectionError as e:
+        click.secho(str(e), fg="red", err=True)
+        sys.exit(EXIT_CONNECTION)
+    click.echo(render_suggestions(proposals, fmt))
+
+
+@tutorials_grp.command("init")
+@click.option("--worker", required=True, help="Worker catalog id (e.g. cal).")
+@click.option("--slug", required=True, help="Tutorial slug (kebab-case; becomes the filename).")
+@click.option(
+    "--tier", type=click.Choice(["quickstart", "recipe", "composition"]), default="quickstart"
+)
+@click.option("--out", "out_dir", default=".", help="Directory to write the .vgi.md into.")
+@click.option("--draft", is_flag=True, help="LLM-draft the tutorial (needs --location + --job).")
+@click.option("--job", default=None, help="The task the drafted tutorial should teach.")
+@click.option("--location", default=None, help="Worker LOCATION (for --draft catalog context).")
+@click.option("--ai-backend", type=click.Choice(["claude", "api"]), default="claude")
+@click.option("--ai-model", default=None)
+def tutorials_init(
+    worker: str,
+    slug: str,
+    tier: str,
+    out_dir: str,
+    draft: bool,
+    job: str | None,
+    location: str | None,
+    ai_backend: str,
+    ai_model: str | None,
+) -> None:
+    """Scaffold a compliant ``.vgi.md`` (static skeleton, or an LLM ``--draft``)."""
+    target = Path(out_dir) / f"{slug}.vgi.md"
+    if target.exists():
+        click.secho(f"refusing to overwrite {target}", fg="red", err=True)
+        sys.exit(EXIT_TOOL_ERROR)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if draft:
+        if not (location and job):
+            click.secho("--draft needs --location and --job", fg="red", err=True)
+            sys.exit(EXIT_TOOL_ERROR)
+        from .core import with_attached_catalog
+        from .review import make_backend
+        from .tutorials.suggest import draft_tutorial
+
+        backend = make_backend(ai_backend, ai_model)
+
+        def _runner(catalog: Any, con: Any) -> str:
+            return draft_tutorial(catalog, backend, worker=worker, slug=slug, tier=tier, job=job)
+
+        try:
+            content = with_attached_catalog(location, _runner)
+        except WorkerConnectionError as e:
+            click.secho(str(e), fg="red", err=True)
+            sys.exit(EXIT_CONNECTION)
+    else:
+        from .tutorials.scaffold import scaffold_tutorial
+
+        content = scaffold_tutorial(worker=worker, slug=slug, tier=tier)
+
+    target.write_text(content, encoding="utf-8")
+    click.echo(f"wrote {target}")
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()

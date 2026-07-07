@@ -343,9 +343,7 @@ class ViewWrapsTableFunction(Rule):
     category = Category.STRUCTURE
     default_severity = Severity.ERROR
     targets = (ObjectKind.VIEW,)
-    summary = (
-        "A view that only wraps a parameterless table function should be a table."
-    )
+    summary = "A view that only wraps a parameterless table function should be a table."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         cat = ctx.catalog

@@ -94,6 +94,17 @@ class Options:
     # Agent-suitability gate (VGI920): a simulate pass-rate below this fails the
     # run. Only fires under --agent-check.
     agent_pass_threshold: float = 0.8
+    # Tutorials (VGI13xx). Asset git-size budget (bytes): per-file and per-tutorial
+    # total (VGI1331). Similarity ceiling for anti-sameness (VGI1326): two tutorials
+    # whose normalized prose is more similar than this are flagged as formulaic.
+    tutorial_max_asset_bytes: int = 262144
+    tutorial_max_assets_total_bytes: int = 2097152
+    tutorial_similarity_max: float = 0.6
+    # Title length window (VGI1320) and description window (VGI1321), in characters.
+    tutorial_title_min: int = 30
+    tutorial_title_max: int = 70
+    tutorial_description_min: int = 120
+    tutorial_description_max: int = 200
 
 
 @dataclass

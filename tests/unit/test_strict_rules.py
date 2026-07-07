@@ -742,9 +742,7 @@ def test_vgi145_clean_cases():
     assert "VGI145" not in _codes(F.catalog(s))
 
     # A view over a table function that TAKES parameters is not the anti-pattern.
-    param_tf = F.func(
-        "main", "history", "table", description="d", tags=_TAGS, parameters=["since"]
-    )
+    param_tf = F.func("main", "history", "table", description="d", tags=_TAGS, parameters=["since"])
     over_param = F.view(
         "main",
         "history_v",

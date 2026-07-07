@@ -201,7 +201,7 @@ skipped unless `--execute` is passed.
 | `VGI142` | warning | redundant-name-prefix | Object names shouldn't carry a redundant retrieval verb (get_/list_). |  |
 | `VGI143` | warning | name-style-consistent | Object names should share one case/separator style (e.g. snake_case). |  |
 | `VGI144` | info | table-name-number-consistent | Tables/views should be consistently singular or plural, not a mix. |  |
-| `VGI145` | error | view-wraps-table-function | A view that only wraps a parameterless table function should be a scan-backed table, not a view. |  |
+| `VGI145` | error | view-wraps-table-function | A view that only wraps a parameterless table function should be a table. |  |
 
 ## Attach options (VGI10xx)
 
@@ -224,4 +224,38 @@ skipped unless `--execute` is passed.
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
-_139 rules._
+## Tutorials (VGI13xx)
+
+| Code | Default | Rule | What it checks | Notes |
+| --- | --- | --- | --- | --- |
+| `VGI1300` | error | tutorial-parses | A .vgi.md tutorial must parse (front-matter + fenced steps). |  |
+| `VGI1301` | error | tutorial-frontmatter-required | A tutorial must declare the full required front-matter set. |  |
+| `VGI1302` | error | tutorial-frontmatter-valid | Front-matter fields must be well-formed (enums, ISO dates, slug). |  |
+| `VGI1303` | error | tutorial-attach-directive | A tutorial must name at least one worker to attach. |  |
+| `VGI1310` | error | tutorial-fence-attrs | Every SQL fence must use a known role and expect kind. |  |
+| `VGI1311` | warning | tutorial-problem-before-code | A tutorial must state the problem in prose before its first code block. |  |
+| `VGI1312` | warning | tutorial-expect-result-coherent | A step's expect kind must agree with its pinned result block. |  |
+| `VGI1313` | error | tutorial-no-search-path | Tutorial SQL must not SET search_path; use fully-qualified names. |  |
+| `VGI1314` | warning | tutorial-illustrative-not-verified | An illustrative (non-run) step should not pin a result that can't be verified. |  |
+| `VGI1320` | warning | tutorial-title-task-shaped | The title should be task-shaped and a searchable length, not a reference label. |  |
+| `VGI1321` | warning | tutorial-description | The description should be a unique meta-description length. |  |
+| `VGI1322` | warning | tutorial-no-placeholder-data | Tutorials should use real, recognizable data — not foo/bar placeholders. |  |
+| `VGI1323` | warning | tutorial-no-superlatives | Avoid unsubstantiated superlatives (blazing-fast, revolutionary, …). |  |
+| `VGI1324` | warning | tutorial-next-steps-links | A tutorial should link out (next steps / related) — at least two links. |  |
+| `VGI1325` | info | tutorial-keyword-placement | The primary keyword should appear in the title, opening, and description. |  |
+| `VGI1326` | warning | tutorial-anti-sameness | Tutorials must not be near-duplicates of each other (doorway-page risk). |  |
+| `VGI1330` | error | tutorial-assets-resolve | Referenced assets must exist on disk and be declared in front-matter. |  |
+| `VGI1331` | error | tutorial-asset-budget | Assets must fit the git size budget (per-file and per-tutorial total). |  |
+| `VGI1332` | warning | tutorial-asset-kinds | An asset's kind must be known and match its file extension. |  |
+| `VGI1333` | warning | tutorial-asset-metadata | Images need alt text; data fixtures need provenance. |  |
+| `VGI1334` | warning | tutorial-asset-orphans | A declared asset that is never referenced is dead weight. |  |
+| `VGI1340` | error | tutorial-refs-resolve | Step SQL must reference real, fully-qualified worker objects. | requires `--execute` |
+| `VGI1341` | error | tutorial-steps-run | Every runnable step must execute (error steps must actually error). | requires `--execute` |
+| `VGI1342` | error | tutorial-result-matches | A step's live output must match its pinned result block. | requires `--execute` |
+| `VGI1343` | info | tutorial-slow-step | A step slower than options.slow_example_seconds bloats CI. | requires `--execute` |
+| `VGI1350` | warning | tutorial-wasm-subset | A wasm-enabled tutorial's steps must stay in the duckdb-wasm subset. |  |
+| `VGI1360` | warning | tutorial-suite-has-quickstart | A worker with tutorials should have at least one quickstart. |  |
+| `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
+| `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
+
+_168 rules._

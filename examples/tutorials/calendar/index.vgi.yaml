@@ -1,0 +1,18 @@
+# Tutorial suite hub for vgi-calendar. The hub owns the series order and the
+# cross-links; individual tutorials don't link to each other by hand.
+worker: cal
+title: Calendar & trading-day recipes for DuckDB
+description: >-
+  Holiday math, business-day arithmetic, exchange trading calendars, and RFC-5545
+  recurrence — worked end to end as SQL you can paste into DuckDB. Start with
+  business days, then handle the market-calendar edge cases and recurring events.
+series:
+  - slug: business-days-between-dates
+    title: Count business days between two dates
+    summary: The everyday case — working-day arithmetic that skips weekends and public holidays.
+  - slug: trading-calendar-gotchas
+    title: Stop your backtest trading on market holidays
+    summary: Why calendar days lie for finance, and how exchange sessions fix it.
+  - slug: expand-recurring-events-rrule
+    title: Expand recurring events with RRULE
+    summary: Turn one RFC-5545 rule into a table of occurrences — then make them business days.

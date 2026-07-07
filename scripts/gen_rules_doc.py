@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from vgi_lint_check.findings import Category  # noqa: E402
 from vgi_lint_check.rules.registry import all_rule_classes  # noqa: E402
+from vgi_lint_check.rules.tutorials import all_tutorial_rule_classes  # noqa: E402
 
 CATEGORY_TITLES = {
     Category.CATALOG: "Catalog (VGI0xx)",
@@ -31,6 +32,7 @@ CATEGORY_TITLES = {
     Category.STRUCTURE: "Structure & size limits (VGI11x/13x)",
     Category.ATTACH_OPTIONS: "Attach options (VGI10xx)",
     Category.EXECUTION: "Execution (VGI9xx)",
+    Category.TUTORIAL: "Tutorials (VGI13xx)",
 }
 
 HEADER = """# vgi-lint rule reference
@@ -63,7 +65,7 @@ def _flags(cls) -> str:
 
 def render() -> str:
     by_cat: dict[Category, list] = {}
-    for cls in all_rule_classes():
+    for cls in [*all_rule_classes(), *all_tutorial_rule_classes()]:
         by_cat.setdefault(cls.category, []).append(cls)
 
     out = [HEADER]
