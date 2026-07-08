@@ -350,6 +350,56 @@ class ExampleReferencesObject(Rule):
                     )
 
 
+# A "bare dump" example: the whole statement is ``SELECT *`` (optionally
+# table-qualified, ALL/DISTINCT) straight ``FROM`` the object, with no predicate,
+# grouping, or join. ORDER BY / LIMIT alone don't rescue it. A leading CTE/WITH or
+# a longer select list won't match — we only fire on the unambiguous lazy case.
+_BARE_SELECT_STAR = re.compile(
+    r"^\s*SELECT\s+(?:ALL\s+|DISTINCT\s+)?(?:\*|[A-Za-z_]\w*\s*\.\s*\*)\s+FROM\b",
+    re.IGNORECASE,
+)
+# Signals the example actually demonstrates *usage* — if any is present, a star
+# projection is fine (the teaching is in the filter/grouping/join, not the columns).
+_MEANINGFUL_SHAPING = re.compile(r"\b(WHERE|GROUP\s+BY|HAVING|JOIN|QUALIFY)\b", re.IGNORECASE)
+
+
+@register
+class ExampleIsBareSelectStar(Rule):
+    code = "VGI514"
+    name = "example-is-bare-select-star"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.MACRO,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = (
+        "An example that is a bare 'SELECT *' dump (no projection, filter, or "
+        "aggregation) is low-effort and teaches an agent nothing about usage."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for obj in _named_example_hosts(ctx.catalog):
+            for ex in obj.examples:
+                if blank(ex.sql):
+                    continue
+                code = _strip_sql_noise(ex.sql or "")
+                if _BARE_SELECT_STAR.search(code) and not _MEANINGFUL_SHAPING.search(code):
+                    yield self.finding(
+                        ctx,
+                        obj.id,
+                        f"example #{ex.index} is a bare 'SELECT *' with no "
+                        "projection, filter, or aggregation",
+                        "replace it with an analytical example that projects the "
+                        "columns that matter and filters/aggregates/orders — a bare "
+                        "star dump teaches an agent nothing an absent example wouldn't",
+                    )
+
+
 _ORDER_BY = re.compile(r"\bORDER\s+BY\b", re.IGNORECASE)
 _LIMIT = re.compile(r"\bLIMIT\b", re.IGNORECASE)
 

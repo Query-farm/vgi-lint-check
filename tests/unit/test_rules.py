@@ -174,6 +174,60 @@ def test_example_qualification():
     assert "b" in flagged and "a" not in flagged
 
 
+def test_example_is_bare_select_star():
+    # A bare 'SELECT *' dump is flagged (VGI514); the moment an example projects
+    # specific columns OR filters/aggregates, it is not — the value is in showing
+    # which columns matter or how to shape the query, and a star + WHERE does that.
+    _TAGS = {"vgi.doc_llm": "x" * 50, "vgi.doc_md": "y" * 90}
+    dump = F.table(
+        "main",
+        "dump",
+        comment="c",
+        tags=_TAGS,
+        examples=[F.example(0, "everything", "SELECT * FROM v.main.dump")],
+    )
+    qualified_star = F.table(
+        "main",
+        "qstar",
+        comment="c",
+        tags=_TAGS,
+        examples=[F.example(0, "everything", "SELECT qstar.* FROM v.main.qstar LIMIT 5")],
+    )
+    star_with_filter = F.table(
+        "main",
+        "filtered",
+        comment="c",
+        tags=_TAGS,
+        examples=[F.example(0, "recent", "SELECT * FROM v.main.filtered WHERE ts > now()")],
+    )
+    projected = F.table(
+        "main",
+        "proj",
+        comment="c",
+        tags=_TAGS,
+        examples=[F.example(0, "names", "SELECT name FROM v.main.proj")],
+    )
+    tf = F.func(
+        "main",
+        "tf",
+        "table",
+        examples=[F.example(0, "dump", "SELECT * FROM v.main.tf('IVV')")],
+    )
+    s = F.schema(
+        "main",
+        comment="c",
+        tags=_SCHEMA_TAGS,
+        tables=[dump, qualified_star, star_with_filter, projected],
+        functions=[tf],
+    )
+    findings = [f for f in _findings(F.catalog(s)) if f.code == "VGI514"]
+    flagged = {f.object_id.name for f in findings}
+    # Bare star (incl. table-qualified + LIMIT, and a table-function dump) is flagged;
+    # a star with a WHERE and a projected example are not.
+    assert flagged == {"dump", "qstar", "tf"}
+    assert "filtered" not in flagged and "proj" not in flagged
+
+
 def test_example_references_object():
     # A function whose example never calls it, and a table whose example uses a
     # different table, are both flagged (VGI504); correct ones are not. The match
