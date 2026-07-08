@@ -647,8 +647,8 @@ _OR_LIST = re.compile(rf"\b{_TOKEN}(?:\s*,\s*{_TOKEN})+\s*,?\s+or\s+{_TOKEN}\b",
 # (to / en-dash / em-dash / "between" / "at least" …) don't need that guard.
 _RANGE_CUES = re.compile(
     r"\bbetween\s+-?\d"
-    r"|-?\d+\s*(?:to|through|–|—)\s*-?\d+"          # "1 to 10", "0–100"
-    r"|(?<![\w-])\d+\s*-\s*\d+(?![\w-])"            # "0-100", but not ISO-3166-1
+    r"|-?\d+\s*(?:to|through|–|—)\s*-?\d+"  # "1 to 10", "0–100"
+    r"|(?<![\w-])\d+\s*-\s*\d+(?![\w-])"  # "0-100", but not ISO-3166-1
     r"|\bat least\s+-?\d|\bat most\s+-?\d"
     r"|\bno (?:more|less) than\s+-?\d"
     r"|\bmust be (?:positive|non-negative|negative)\b"

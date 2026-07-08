@@ -443,6 +443,63 @@ class CodeFenceDeclaresLanguage(Rule):
                 )
 
 
+# --- VGI178 — leading heading duplicates the short description ------------
+#
+# The short comment is already the object's title (the listing/renderer shows
+# it as the heading). A vgi.doc_md that *opens* with an H1/H2 restating that
+# same string just prints the title twice and wastes the most valuable line of
+# the doc — it should lead with substance instead.
+_HEADING_MARKUP = re.compile(r"[*_`~]")
+
+
+def _norm_title(s: str | None) -> str:
+    """Normalize a title for comparison: strip markup/punctuation, collapse space, casefold."""
+    text = _HEADING_MARKUP.sub("", s or "")
+    text = re.sub(r"\s+", " ", text).strip().strip(".:#!?—-")
+    return text.casefold()
+
+
+def _leading_heading(md: str) -> str | None:
+    """Text of the heading that opens ``md`` (None if the doc doesn't lead with one)."""
+    toks = _MD.parse(md or "")
+    for i, tok in enumerate(toks):
+        if tok.type == "heading_open":
+            nxt = toks[i + 1] if i + 1 < len(toks) else None
+            return nxt.content if nxt is not None and nxt.type == "inline" else ""
+        # The first block-opening token that isn't a heading means no leading heading.
+        if tok.type.endswith("_open") or tok.type in ("fence", "code_block", "hr"):
+            return None
+    return None
+
+
+@register
+class DescriptionRepeatsTitle(Rule):
+    code = "VGI178"
+    name = "description-repeats-title"
+    category = CONTENT
+    default_severity = Severity.ERROR
+    targets = _DOC_TARGET_KINDS
+    summary = "vgi.doc_md must not open with a heading that just repeats the short description."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, comment, _llm, md, _src in _described(ctx):
+            if blank(comment) or blank(md):
+                continue
+            heading = _leading_heading(md or "")
+            if heading is None:
+                continue
+            if _norm_title(heading) and _norm_title(heading) == _norm_title(comment):
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"vgi.doc_md opens with a heading that just repeats the short "
+                    f"description ({(comment or '').strip()!r})",
+                    "drop the redundant title heading — the listing already shows the "
+                    "short description as the title. Lead the doc_md with substance "
+                    "(what it is, key concepts, when to use it)",
+                )
+
+
 @register
 class DescriptionLinksResolve(Rule):
     code = "VGI171"

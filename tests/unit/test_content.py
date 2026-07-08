@@ -217,3 +217,63 @@ def test_vgi176_multi_paragraph_passes():
         "main", tags={"vgi.doc_md": "First paragraph of the listing.\n\nSecond paragraph."}
     )
     assert "VGI176" not in set(codes(F.catalog(s)))
+
+
+# --- VGI178 description-repeats-title --------------------------------------
+def _repeats_codes(comment, doc_md):
+    cat = F.catalog(
+        F.schema("main"),
+        comment=comment,
+        tags={
+            "vgi.doc_llm": "A narrative overview of the worker used for testing. " * 6,
+            "vgi.doc_md": doc_md,
+        },
+    )
+    return set(codes(cat))
+
+
+def test_vgi178_heading_repeating_title_is_error():
+    out = [
+        f
+        for f in run(
+            select_rules(Config()),
+            RuleContext(
+                F.catalog(
+                    F.schema("main"),
+                    comment="Volcano & Earthquake Monitoring",
+                    tags={
+                        "vgi.doc_llm": "Narrative overview of the volcano worker. " * 6,
+                        "vgi.doc_md": (
+                            "# Volcano & Earthquake Monitoring\n\n"
+                            "A multi-source dataset combining Smithsonian and USGS feeds.\n\n"
+                            "Second paragraph with more detail."
+                        ),
+                    },
+                ),
+                Config(),
+            ),
+        )
+        if f.code == "VGI178"
+    ]
+    assert out and out[0].severity.name == "ERROR"
+
+
+def test_vgi178_case_and_punctuation_insensitive():
+    assert "VGI178" in _repeats_codes(
+        "Volcano Monitoring",
+        "## volcano monitoring.\n\nBody paragraph one.\n\nBody paragraph two.",
+    )
+
+
+def test_vgi178_distinct_heading_passes():
+    assert "VGI178" not in _repeats_codes(
+        "Volcano & Earthquake Monitoring",
+        "# Getting started\n\nHow to query the volcano worker.\n\nMore detail here.",
+    )
+
+
+def test_vgi178_no_leading_heading_passes():
+    assert "VGI178" not in _repeats_codes(
+        "Volcano & Earthquake Monitoring",
+        "Volcano & Earthquake Monitoring is a multi-source dataset.\n\nSecond paragraph.",
+    )

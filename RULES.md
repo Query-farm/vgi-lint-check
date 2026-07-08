@@ -74,6 +74,7 @@ skipped unless `--execute` is passed.
 | `VGI175` | warning | listing-doc-uses-markdown | Catalog/schema vgi.doc_md should use Markdown structure, not be a plain-prose blob. |  |
 | `VGI176` | warning | listing-doc-multi-paragraph | Catalog/schema vgi.doc_md should be multiple paragraphs, not a single block. |  |
 | `VGI177` | warning | code-fence-declares-language | Fenced code blocks in descriptions should declare a language (```sql, ```json, …). |  |
+| `VGI178` | error | description-repeats-title | vgi.doc_md must not open with a heading that just repeats the short description. |  |
 | `VGI180` | warning | doc-quality-review | An object's docs should pass an LLM quality review (accuracy/clarity/completeness). |  |
 
 ## Descriptions (VGI1xx)
@@ -266,4 +267,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_176 rules._
+_177 rules._
