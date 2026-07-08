@@ -40,6 +40,17 @@ class RuleContext:
     sim_report: Any | None = None  # simulate.SimReport
     # Timing tracer, set only under --trace; the engine times each rule with it.
     tracer: Any | None = None  # trace.Tracer
+    # Lazily-computed, run-shared corpus coverage (parse-based). Do not read
+    # directly — call ``corpus_coverage()`` so it is parsed at most once per run.
+    _corpus: Any = None  # corpus.CorpusCoverage
+
+    def corpus_coverage(self) -> Any:
+        """Parse-based coverage of the worker surface (memoized for the run)."""
+        if self._corpus is None:
+            from ..corpus import compute_corpus_coverage
+
+            self._corpus = compute_corpus_coverage(self.catalog)
+        return self._corpus
 
 
 class Rule(ABC):

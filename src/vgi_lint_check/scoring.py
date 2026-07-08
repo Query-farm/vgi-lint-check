@@ -24,6 +24,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .corpus import compute_corpus_coverage
 from .findings import Severity
 from .model import Catalog
 
@@ -38,6 +39,11 @@ FAMILY_WEIGHTS = {
     "function_docs": 0.15,
     "examples": 0.15,
     "categories": 0.20,
+    # Parse-based coverage of the worker surface (from vgi_lint_check.corpus):
+    # example_coverage is which objects an example actually *calls*; test_coverage
+    # is which the agent-test suite exercises (renormalized out when no suite).
+    "example_coverage": 0.20,
+    "test_coverage": 0.15,
 }
 ERROR_PENALTY = 2.0  # points off per ERROR finding (capped)
 MAX_ERROR_PENALTY = 30.0
@@ -131,6 +137,9 @@ def compute_coverage(cat: Catalog) -> Coverage:
     prag_total = len(cat.pragmas)
     prag_ok = sum(1 for p in cat.pragmas if (p.description or "").strip())
 
+    # Parse-based corpus coverage (which objects the examples/tasks actually call).
+    corpus_cov = compute_corpus_coverage(cat)
+
     return Coverage(
         families={
             "descriptions": _ratio(desc_ok, desc_total),
@@ -138,6 +147,8 @@ def compute_coverage(cat: Catalog) -> Coverage:
             "function_docs": _ratio(fn_ok, fn_total),
             "examples": _ratio(ex_ok, ex_total),
             "categories": _ratio(cat_ok, cat_total),
+            "example_coverage": corpus_cov.doc_ratio(),
+            "test_coverage": corpus_cov.test_ratio(),
             "settings": _ratio(set_ok, set_total),
             "pragmas": _ratio(prag_ok, prag_total),
         }

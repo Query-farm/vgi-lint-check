@@ -159,6 +159,11 @@ skipped unless `--execute` is passed.
 | `VGI508` | warning | too-many-executable-examples | Warn when one object carries more executable examples than options.max_executable_examples. |  |
 | `VGI509` | warning | worker-has-executable-examples | A worker should ship at least one vgi.executable_examples (guaranteed-runnable). |  |
 | `VGI510` | warning | executable-example-deterministic | An executable example asserting output should ORDER BY so its rows are stable. |  |
+| `VGI511` | warning | object-undemonstrated | Every function/table should be called by at least one example query. |  |
+| `VGI512` | warning | example-reference-resolves | A worker-qualified object called in an example must exist in the catalog. |  |
+| `VGI513` | warning | macro-demonstrated-on-input | A macro's examples should feed it a column/expression, not only literal constants. |  |
+| `VGI520` | warning | object-untested | Every function/table should be exercised by at least one agent test task. |  |
+| `VGI521` | warning | test-reference-resolves | A worker-qualified object called in an agent test task must exist in the catalog. |  |
 
 ## Settings (VGI6xx)
 
@@ -261,4 +266,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_171 rules._
+_176 rules._

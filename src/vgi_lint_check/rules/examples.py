@@ -396,3 +396,127 @@ class ExecutableExampleDeterministic(Rule):
                             "add an ORDER BY so the rows are deterministic — "
                             "expected_result is compared in order",
                         )
+
+
+# --------------------------------------------------------------------------
+# Corpus coverage (VGI511-513, 520-521) — parse the worker's own example/task
+# SQL (AST via json_serialize_sql, offline) and grade how much of the surface it
+# actually *calls*. See vgi_lint_check.corpus. These measure how well documented
+# and tested the worker is, and feed the example_coverage / test_coverage scoring
+# families, so they never disagree with the headline score.
+# --------------------------------------------------------------------------
+
+# Every callable/relational object of the worker surface — what coverage counts.
+_SURFACE_KINDS = (
+    ObjectKind.TABLE,
+    ObjectKind.VIEW,
+    ObjectKind.MACRO,
+    ObjectKind.SCALAR_FUNCTION,
+    ObjectKind.AGGREGATE,
+    ObjectKind.TABLE_FUNCTION,
+)
+
+
+@register
+class ObjectUndemonstrated(Rule):
+    code = "VGI511"
+    name = "object-undemonstrated"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = _SURFACE_KINDS
+    summary = "Every function/table should be called by at least one example query."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cov = ctx.corpus_coverage()
+        for oid in cov.undemonstrated():
+            yield self.finding(
+                ctx,
+                oid,
+                "object is never called by any example query in the worker",
+                "add a vgi.example_queries entry that actually calls this object "
+                "(or demonstrate it from a related object's example)",
+            )
+
+
+@register
+class ExampleReferenceResolves(Rule):
+    code = "VGI512"
+    name = "example-reference-resolves"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A worker-qualified object called in an example must exist in the catalog."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for b in ctx.corpus_coverage().broken:
+            if b.source != "doc":
+                continue
+            yield self.finding(
+                ctx,
+                b.origin,
+                f"{b.where} calls {b.reference!r}, which this worker does not expose",
+                "fix the reference (a typo or a renamed object) or remove the stale example",
+            )
+
+
+@register
+class MacroDemonstratedOnInput(Rule):
+    code = "VGI513"
+    name = "macro-demonstrated-on-input"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.MACRO,)
+    summary = "A macro's examples should feed it a column/expression, not only literal constants."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid in ctx.corpus_coverage().macro_const_only.values():
+            yield self.finding(
+                ctx,
+                oid,
+                "every example calls this macro with a literal constant only",
+                "add an example that applies the macro to a real column — e.g. the "
+                "output of a producing function — so its decoding is shown on data",
+            )
+
+
+@register
+class ObjectUntested(Rule):
+    code = "VGI520"
+    name = "object-untested"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = _SURFACE_KINDS
+    summary = "Every function/table should be exercised by at least one agent test task."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cov = ctx.corpus_coverage()
+        if not cov.has_test_suite:
+            return  # no vgi.agent_test_tasks declared — nothing to measure against
+        for oid in cov.untested():
+            yield self.finding(
+                ctx,
+                oid,
+                "no vgi.agent_test_tasks task exercises this object",
+                "add or extend a task whose reference_sql/check_sql calls this object",
+            )
+
+
+@register
+class TestReferenceResolves(Rule):
+    code = "VGI521"
+    name = "test-reference-resolves"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A worker-qualified object called in an agent test task must exist in the catalog."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for b in ctx.corpus_coverage().broken:
+            if b.source != "test":
+                continue
+            yield self.finding(
+                ctx,
+                b.origin,
+                f"{b.where} calls {b.reference!r}, which this worker does not expose",
+                "fix the reference (a typo or a renamed object) or update the stale task SQL",
+            )

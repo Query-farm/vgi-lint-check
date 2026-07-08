@@ -50,6 +50,20 @@ Pipeline: **connect → load → model → rules/engine → reporting.**
   resolves severities from config and runs enabled rules.
 - `reporting/`, `findings.py`, `scoring.py`, `baseline.py` — output formats
   (terminal grouped-by-rule, `agent`, `json`/`jsonl`), scoring, per-data-version baselines.
+- `sql_parse.py` / `corpus.py` — **parse-based coverage.** `sql_parse.parse_refs`
+  extracts the objects a SQL statement actually *calls* via DuckDB's built-in
+  `json_serialize_sql` (a private in-memory connection — offline, no worker attach, no
+  community extension); it is defensive (returns `None` on unparseable SQL, never raises).
+  Crucially it sees **table-functions in `FROM`** (a `FUNCTION` node), which a regex —
+  and the `parser_tools` community extension — cannot; that blind spot is why we build on
+  `json_serialize_sql`, not `parser_tools`. `corpus.compute_corpus_coverage` resolves those
+  refs against the worker surface to report which objects are **demonstrated** (called by an
+  example), **tested** (exercised by a `vgi.agent_test_tasks` task), and which
+  worker-qualified references are **broken** (resolve to nothing). Shared by the VGI5xx
+  coverage rules (511 undemonstrated / 512 example-ref-resolves / 513 macro-on-input /
+  520 untested / 521 test-ref-resolves) **and** by `scoring.py` (the `example_coverage`
+  and `test_coverage` families) so a finding and the score never disagree. Rules read it
+  once via `RuleContext.corpus_coverage()` (memoized per run).
 - `review.py` — LLM-as-judge doc review (`ReviewBackend`, `make_backend`,
   `ReviewCache`). Backend is single-shot `complete(prompt) -> str`; default is the
   local `claude -p` CLI (runs on the user's subscription), `api` uses Anthropic API.
