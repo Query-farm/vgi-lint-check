@@ -2,6 +2,7 @@
 
 from tests import fixtures as F
 from vgi_lint_check.config import Config
+from vgi_lint_check.model import ObjectKind
 from vgi_lint_check.rules import run, select_rules
 from vgi_lint_check.rules.base import RuleContext
 
@@ -575,6 +576,34 @@ def test_vgi313_argument_description_states_type():
     assert codes_for(F.arg("factor", "BIGINT", "double the input when true")) == []
     # a type token inside a larger word ('characters') is not a false match
     assert codes_for(F.arg("s", "VARCHAR", "number of characters to read")) == []
+    # 'decimal'/'numeric'/'interval' are common English words: not flagged unless
+    # they are the argument's OWN declared type
+    assert codes_for(F.arg("lat", "DOUBLE", "Latitude in decimal degrees (WGS84).")) == []
+    assert codes_for(F.arg("gap", "BIGINT", "the interval between samples")) == []
+    assert codes_for(F.arg("amount", "DECIMAL", "the decimal amount to add")) == ["VGI313"]
+
+
+def _vgi126_flagged_kinds(cat):
+    findings = run(select_rules(Config()), RuleContext(cat, Config()))
+    return {f.object_id.kind for f in findings if f.code == "VGI126"}
+
+
+def test_vgi126_not_required_on_functions_or_macros():
+    # regression: VGI126 (keywords) is scoped to catalog/schema/table/view and must
+    # not leak onto functions/macros, which iter_functions() also yields.
+    fn = F.func("main", "sf", description="d")  # scalar function, no keywords
+    mac = F.func("main", "mm", ftype="macro", description="d")  # macro, no keywords
+    s = F.schema("main", comment="c", tags=_TAGS, functions=[fn, mac])
+    flagged = _vgi126_flagged_kinds(F.catalog(s))
+    assert ObjectKind.SCALAR_FUNCTION not in flagged
+    assert ObjectKind.MACRO not in flagged
+
+
+def test_vgi126_still_required_on_tables():
+    # guard against over-suppression: a table without keywords is still flagged.
+    t = F.table("main", "t", comment="c")  # table, no keywords
+    s = F.schema("main", comment="c", tags=_TAGS, tables=[t])
+    assert ObjectKind.TABLE in _vgi126_flagged_kinds(F.catalog(s))
 
 
 def test_vgi314_function_redocuments_arguments():

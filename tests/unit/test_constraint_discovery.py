@@ -50,6 +50,32 @@ def test_vgi317_flags_numeric_range():
     assert msgs and "numeric range" in msgs[0]
 
 
+def test_vgi317_flags_tight_hyphen_range():
+    # "1-100" is a genuine range; the old regex missed multi-digit tight ranges.
+    f = F.func(
+        "main",
+        "geocode",
+        description="d",
+        arguments=[F.arg("count", "BIGINT", "Maximum number of results (1-100).")],
+    )
+    msgs = _messages(F.catalog(F.schema("main", functions=[f])), "VGI317")
+    assert msgs and "numeric range" in msgs[0]
+
+
+def test_vgi317_ignores_hyphenated_identifier():
+    # "ISO-3166-1" is a standard identifier, not a "3166 to 1" range. The old
+    # regex matched "-3166-1" and false-flagged this argument.
+    f = F.func(
+        "main",
+        "geocode",
+        description="d",
+        arguments=[
+            F.arg("country_code", "VARCHAR", "ISO-3166-1 alpha2 filter (empty = any country)."),
+        ],
+    )
+    assert "VGI317" not in _codes(F.catalog(F.schema("main", functions=[f])))
+
+
 # --- VGI317 stays quiet once the constraint is machine-readable --------------
 def test_vgi317_silent_when_choices_declared():
     f = F.func(

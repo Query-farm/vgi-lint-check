@@ -237,7 +237,9 @@ class FunctionArgumentsUndocumented(Rule):
 
 # Type tokens unambiguous enough to flag in any argument description (no common
 # English meaning). Ambiguous ones (DOUBLE/REAL/DATE/TIME/INT/MAP/LIST/CHAR/TEXT/
-# BLOB) are only flagged when they are the argument's OWN declared type.
+# BLOB, and DECIMAL/NUMERIC/INTERVAL — cf. "decimal degrees", "numeric keypad",
+# "interval training") are only flagged when they are the argument's OWN declared
+# type, so an ordinary English phrase isn't misread as restating a type.
 _UNAMBIGUOUS_TYPES = (
     "varchar",
     "bigint",
@@ -253,11 +255,8 @@ _UNAMBIGUOUS_TYPES = (
     "boolean",
     "timestamp",
     "timestamptz",
-    "decimal",
-    "numeric",
     "varint",
     "uuid",
-    "interval",
     "varbinary",
     "bitstring",
 )
@@ -641,9 +640,19 @@ _COLON_LIST = re.compile(rf":\s*{_TOKEN}(?:\s*,\s*{_TOKEN}){{2,}}")
 # Restricted to "or" (not "and") because "and" is the common prose conjunction,
 # which would over-match ordinary sentences.
 _OR_LIST = re.compile(rf"\b{_TOKEN}(?:\s*,\s*{_TOKEN})+\s*,?\s+or\s+{_TOKEN}\b", re.IGNORECASE)
+# A numeric range. The bare hyphen is the tricky separator: "0-100" is a range,
+# but "ISO-3166-1", "UTF-8" and "x86-64" are identifiers, not ranges. So the
+# hyphen branch requires both operands to be full numbers not glued to a word
+# char or another hyphen (lookarounds), while the unambiguous separators
+# (to / en-dash / em-dash / "between" / "at least" …) don't need that guard.
 _RANGE_CUES = re.compile(
-    r"\b(between\s+-?\d|-?\d+\s*(?:to|-|–|—)\s*-?\d|at least\s+-?\d|at most\s+-?\d|"
-    r"no (?:more|less) than\s+-?\d|must be (?:positive|non-negative|negative)|in the range)\b",
+    r"\bbetween\s+-?\d"
+    r"|-?\d+\s*(?:to|through|–|—)\s*-?\d+"          # "1 to 10", "0–100"
+    r"|(?<![\w-])\d+\s*-\s*\d+(?![\w-])"            # "0-100", but not ISO-3166-1
+    r"|\bat least\s+-?\d|\bat most\s+-?\d"
+    r"|\bno (?:more|less) than\s+-?\d"
+    r"|\bmust be (?:positive|non-negative|negative)\b"
+    r"|\bin the range\b",
     re.IGNORECASE,
 )
 

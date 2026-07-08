@@ -33,15 +33,33 @@ DISC = Category.DISCOVERABILITY
 
 
 # Object kinds that can carry a title/keywords tag, with (id, tags, name).
-def _taggable(ctx: RuleContext) -> Iterator[tuple[ObjectId, TagSet, str]]:
+def _taggable(
+    ctx: RuleContext, kinds: tuple[ObjectKind, ...] | None = None
+) -> Iterator[tuple[ObjectId, TagSet, str]]:
+    """Yield ``(id, tags, name)`` for taggable objects.
+
+    ``iter_functions()`` includes scalar/aggregate functions and macros, so a
+    rule scoped to catalog/schema/table/view must pass ``kinds`` (its own
+    ``targets``) to avoid leaking onto functions and macros — the rules here
+    declare ``targets`` but the engine doesn't enforce them, so the filtering
+    has to happen at iteration.
+    """
     cat = ctx.catalog
-    yield cat.id, cat.tags, cat.qualifier
+
+    def _keep(oid: ObjectId) -> bool:
+        return kinds is None or oid.kind in kinds
+
+    if _keep(cat.id):
+        yield cat.id, cat.tags, cat.qualifier
     for s in cat.iter_schemas():
-        yield s.id, s.tags, s.name
+        if _keep(s.id):
+            yield s.id, s.tags, s.name
     for t in cat.iter_table_like():
-        yield t.id, t.tags, t.name
+        if _keep(t.id):
+            yield t.id, t.tags, t.name
     for f in cat.iter_functions():
-        yield f.id, f.tags, f.name
+        if _keep(f.id):
+            yield f.id, f.tags, f.name
 
 
 # Tokens that suggest a column comment states a unit/definition.
@@ -358,7 +376,7 @@ class TitleQuality(Rule):
     summary = "A 'vgi.title', when set, should differ from the machine name."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        for oid, tags, name in _taggable(ctx):
+        for oid, tags, name in _taggable(ctx, self.targets):
             title = tags.get(TAG_TITLE)
             if not blank(title) and is_trivial_echo(title, name):
                 yield self.finding(
@@ -379,7 +397,7 @@ class KeywordsPresent(Rule):
     summary = "Objects should carry 'vgi.keywords' (search terms / synonyms)."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        for oid, tags, _name in _taggable(ctx):
+        for oid, tags, _name in _taggable(ctx, self.targets):
             if not tags.has(TAG_KEYWORDS):
                 yield self.finding(
                     ctx,
@@ -400,7 +418,7 @@ class KeywordsJsonArray(Rule):
     summary = "'vgi.keywords' must be a JSON array of strings, not a comma-separated string."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        for oid, tags, _name in _taggable(ctx):
+        for oid, tags, _name in _taggable(ctx, self.targets):
             value = tags.get(TAG_KEYWORDS)
             if not tags.has(TAG_KEYWORDS) or keywords_is_json_array(value):
                 continue
@@ -423,7 +441,7 @@ class KeywordsWellFormed(Rule):
     summary = "'vgi.keywords', when set, should be non-empty with no duplicates."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        for oid, tags, _name in _taggable(ctx):
+        for oid, tags, _name in _taggable(ctx, self.targets):
             if not tags.has(TAG_KEYWORDS):
                 continue
             kws = parse_keywords(tags.get(TAG_KEYWORDS))
@@ -457,7 +475,7 @@ class SourceUrlPresent(Rule):
     summary = "Objects may link to their implementation via 'vgi.source_url' (opt-in)."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        for oid, tags, _name in _taggable(ctx):
+        for oid, tags, _name in _taggable(ctx, self.targets):
             if oid.kind is ObjectKind.CATALOG:
                 continue  # catalog provenance is covered by VGI004 (source_url)
             if not tags.has(TAG_SOURCE_URL):
@@ -514,7 +532,7 @@ class SourceUrlValid(Rule):
     summary = "'vgi.source_url', when set, should be an http(s) URL."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        for oid, tags, _name in _taggable(ctx):
+        for oid, tags, _name in _taggable(ctx, self.targets):
             url = tags.get(TAG_SOURCE_URL)
             if not blank(url) and not _looks_like_url(url or ""):
                 yield self.finding(
@@ -655,7 +673,9 @@ class ClassifyingTagsReused(Rule):
     name = "classifying-tags-reused"
     category = DISC
     default_severity = Severity.WARNING
-    targets = (ObjectKind.CATALOG,)
+    # Classifying tags (domain/provider/topic) live on schemas/tables/views; scan
+    # those to judge the vocabulary. Findings still anchor to the catalog.
+    targets = (ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
     summary = "A classifying tag should be a small, reused vocabulary — not unique per object."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
@@ -663,7 +683,7 @@ class ClassifyingTagsReused(Rule):
         cap = ctx.config.options.max_distinct_categories
         # value frequency per classifying key across every tagged object
         freqs: dict[str, dict[str, int]] = {k: defaultdict(int) for k in keys}
-        for _id, tags, _name in _taggable(ctx):
+        for _id, tags, _name in _taggable(ctx, self.targets):
             for k in keys:
                 v = (tags.get(k) or "").strip()
                 if v:
