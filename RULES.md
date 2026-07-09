@@ -218,6 +218,7 @@ skipped unless `--execute` is passed.
 | `VGI143` | warning | name-style-consistent | Object names should share one case/separator style (e.g. snake_case). |  |
 | `VGI144` | info | table-name-number-consistent | Tables/views should be consistently singular or plural, not a mix. |  |
 | `VGI145` | error | view-wraps-table-function | A view that only wraps a parameterless table function should be a table. |  |
+| `VGI146` | warning | table-functions-without-browsable-table | A worker with table functions but no browsable table/view makes an agent guess arguments before it can see any data. |  |
 
 ## Attach options (VGI10xx)
 
@@ -276,4 +277,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_186 rules._
+_187 rules._

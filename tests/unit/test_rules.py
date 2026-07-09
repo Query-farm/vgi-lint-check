@@ -339,6 +339,27 @@ def test_excessive_counts_and_long_names():
     assert "VGI135" not in found  # disabled (0)
 
 
+def test_vgi146_table_functions_without_browsable_table():
+    tf = F.func("main", "holdings", ftype="table", description="holdings by ticker")
+    # table functions but no table/view -> flagged
+    only_tf = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=[tf])
+    assert "VGI146" in set(codes(F.catalog(only_tf, advertised_catalogs=["a"])))
+    # a plain table (even alongside table functions) satisfies it
+    with_tbl = F.schema(
+        "main",
+        comment="c",
+        tags=_SCHEMA_TAGS,
+        tables=[F.table("main", "products", comment="the browsable table")],
+        functions=[tf],
+    )
+    assert "VGI146" not in set(codes(F.catalog(with_tbl, advertised_catalogs=["a"])))
+    # a scalar-only worker (no table functions) is not flagged
+    scalar = F.schema(
+        "main", comment="c", tags=_SCHEMA_TAGS, functions=[F.func("main", "add", description="d")]
+    )
+    assert "VGI146" not in set(codes(F.catalog(scalar, advertised_catalogs=["a"])))
+
+
 def test_scalar_function_stability():
     vol = [
         F.func("main", "f1", "scalar", description="d", stability="VOLATILE"),

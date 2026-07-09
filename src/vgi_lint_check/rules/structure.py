@@ -378,3 +378,38 @@ class ViewWrapsTableFunction(Rule):
                 "so consumers get SELECT * FROM schema.name with no redundant "
                 "view layer and no parentheses",
             )
+
+
+@register
+class TableFunctionsWithoutBrowsableTable(Rule):
+    code = "VGI146"
+    name = "table-functions-without-browsable-table"
+    category = Category.STRUCTURE
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = (
+        "A worker with table functions but no browsable table/view makes an agent "
+        "guess arguments before it can see any data."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        # Any directly-browsable relation — a plain table or a view, including a
+        # table backing a table function — satisfies this: an agent can SELECT *
+        # from it without knowing arguments.
+        if any(True for _ in cat.iter_table_like()):
+            return
+        tf_count = sum(1 for f in cat.iter_all_functions() if f.kind is ObjectKind.TABLE_FUNCTION)
+        if tf_count == 0:
+            return
+        yield self.finding(
+            ctx,
+            cat.id,
+            f"worker exposes {tf_count} table function(s) but no browsable table or view",
+            "an agent must know a function's arguments before it can retrieve any "
+            "data. If a browsable entry point is feasible, expose a plain table or a "
+            "no-required-argument (table-backed) function that returns a sensible "
+            "default slice. If arguments are genuinely required (per-key lookups, "
+            "unbounded/rate-limited upstreams), make discovery cheap instead: strong "
+            "vgi.example_queries and argument choices/defaults",
+        )
