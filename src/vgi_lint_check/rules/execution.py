@@ -835,25 +835,48 @@ class ResultSchemaMatches(Rule):
 _BATCHES_RE = re.compile(
     r"(?P<count>\d+)\s*\(\s*rows:\s*min\s*(?P<min>\d+),\s*avg\s*(?P<avg>\d+),\s*max\s*(?P<max>\d+)"
 )
-_BYTES_RE = re.compile(r"^\s*([0-9]*\.?[0-9]+)\s*([A-Za-z]+)\s*$")
-_BYTE_UNITS = {
-    "b": 1,
-    "byte": 1,
-    "bytes": 1,
-    "kib": 1024,
-    "mib": 1024**2,
-    "gib": 1024**3,
-    "tib": 1024**4,
-}
+# `Batch Bytes` is DuckDB's StringUtil::BytesToHumanReadableString(bytes) — the
+# same formatter as the SQL `format_bytes()`. Its algorithm (string_util.cpp),
+# with multiplier 1024:
+#
+#     "<N> bytes"        when N < 1024   (and "1 byte", singular)
+#     "<V>.<F> <UNIT>"   otherwise, where V is the count in UNIT *modulo 1024*
+#                        and F = (next_lower_unit_value * 10) // 1024
+#
+# Both V and F are **truncated**, never rounded, so the string names an interval
+# of byte counts, not a value. We return the interval's *lower bound* — the
+# smallest count that formats to this string — so a `>` threshold comparison can
+# never fire on a scan that is actually under it. Reversing F needs the smallest
+# lower-unit value with that digit, i.e. ceil(F * 1024 / 10).
+#
+# Verified by fuzzing against format_bytes() over 6k values: exact round-trip,
+# never over-reports, always minimal. A malformed or unknown-unit string yields
+# None, which simply means "no byte finding" rather than a crash.
+_BYTES_RE = re.compile(r"^\s*(?P<whole>\d+)(?:\.(?P<frac>\d))?\s*(?P<unit>[A-Za-z]+)\s*$")
+_BYTE_MULTIPLIER = 1024
+# Exponent of the multiplier for each unit the formatter can emit.
+_BYTE_UNIT_POW = {"kib": 1, "mib": 2, "gib": 3, "tib": 4, "pib": 5}
 
 
 def _parse_bytes(text: Any) -> int | None:
-    """Decode the extension's human-readable byte string (``"390.6 KiB"``)."""
+    """Smallest byte count that ``BytesToHumanReadableString`` renders as ``text``."""
     m = _BYTES_RE.match(str(text or ""))
     if not m:
         return None
-    unit = _BYTE_UNITS.get(m.group(2).lower())
-    return None if unit is None else int(float(m.group(1)) * unit)
+    whole, frac, unit = m.group("whole"), m.group("frac"), m.group("unit").lower()
+    if unit in ("byte", "bytes"):
+        # The sub-1024 branch is exact; a fraction there is not something the
+        # formatter can produce.
+        return None if frac is not None else int(whole)
+    power = _BYTE_UNIT_POW.get(unit)
+    if power is None or frac is None:
+        return None
+    mult = _BYTE_MULTIPLIER
+    # Lowest lower-unit value whose truncated tenths digit is `frac`.
+    tenths = (int(frac) * mult + 9) // 10  # == ceil(frac * mult / 10)
+    # `power >= 1`, so both scales are exact ints (mypy widens int**int to Any).
+    scale = int(mult**power)
+    return int(whole) * scale + tenths * (scale // mult)
 
 
 def _fmt_bytes(n: int) -> str:

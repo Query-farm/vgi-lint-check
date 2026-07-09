@@ -99,8 +99,8 @@ def test_parse_batches_string():
     )
     assert (shape.function, shape.batches) == ("streamed", 4)
     assert (shape.rows_min, shape.rows_avg, shape.rows_max) == (1000, 2500, 3000)
-    assert shape.bytes_total == int(78.1 * 1024)
-    assert shape.avg_bytes == int(78.1 * 1024) // 4
+    assert shape.bytes_total == 79975  # exact minimum for "78.1 KiB"
+    assert shape.avg_bytes == 79975 // 4
 
 
 def test_non_vgi_scan_has_no_shape():
@@ -112,15 +112,41 @@ def test_non_vgi_scan_has_no_shape():
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("390.6 KiB", 399974),
-        ("12 bytes", 12),
+        # Values below are the exact minima, cross-checked against DuckDB's own
+        # format_bytes() (the same StringUtil::BytesToHumanReadableString).
+        ("390.6 KiB", 399975),
+        ("78.1 KiB", 79975),
+        ("1.0 MiB", 1024**2),
         ("1.5 MiB", 1572864),
+        ("1.0 KiB", 1024),
+        ("12 bytes", 12),
+        ("0 bytes", 0),
+        ("1 byte", 1),  # the formatter's singular case
+        ("2.0 PiB", 2 * 1024**5),  # the largest unit it can emit
+        # Not producible by the formatter -> no byte finding, rather than a guess.
+        ("1.5 bytes", None),
+        ("1.23 KiB", None),  # only ever one fractional digit
+        ("5 KiB", None),  # the fraction is never omitted above 1024
+        ("1.0 ZiB", None),  # unknown unit
         ("nonsense", None),
+        ("", None),
         (None, None),
     ],
 )
 def test_parse_bytes(text, expected):
     assert _parse_bytes(text) == expected
+
+
+def test_parse_bytes_never_over_reports():
+    """A `>` threshold must never fire on a scan that is actually under it.
+
+    The formatter truncates, so each string names an interval of byte counts;
+    _parse_bytes returns its lower bound.
+    """
+    # 390.6 KiB is produced by every count in [399975, 400076].
+    low = _parse_bytes("390.6 KiB")
+    assert low == 399975
+    assert low <= 400000  # the real value that produced the sample string
 
 
 @pytest.mark.parametrize(
