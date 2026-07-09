@@ -75,6 +75,7 @@ skipped unless `--execute` is passed.
 | `VGI176` | warning | listing-doc-multi-paragraph | Catalog/schema vgi.doc_md should be multiple paragraphs, not a single block. |  |
 | `VGI177` | warning | code-fence-declares-language | Fenced code blocks in descriptions should declare a language (```sql, ```json, …). |  |
 | `VGI178` | error | description-repeats-title | vgi.doc_md must not open with a heading that just repeats the short description. |  |
+| `VGI179` | warning | description-sql-is-example | A complete runnable query in a description ```sql fence belongs in vgi.example_queries, where it is executed and coverage-checked. |  |
 | `VGI180` | warning | doc-quality-review | An object's docs should pass an LLM quality review (accuracy/clarity/completeness). |  |
 
 ## Descriptions (VGI1xx)
@@ -113,7 +114,7 @@ skipped unless `--execute` is passed.
 | `VGI304` | info | function-description-quality | A function description should be substantive, not a stub or echo. |  |
 | `VGI305` | warning | function-arguments-named | All function/macro arguments should be named, not positional. |  |
 | `VGI306` | warning | function-example | Scalar/aggregate functions should ship an example query. |  |
-| `VGI307` | warning | table-function-columns-documented | A table function with a dynamic schema (no backing table) must document its returned columns in a 'vgi.result_columns_md' tag. |  |
+| `VGI307` | warning | table-function-result-schema-documented | A table function (with no backing table) must declare its result schema: 'vgi.result_columns_schema' when static, or 'vgi.result_dynamic_columns_md' when it varies by argument — exactly one. |  |
 | `VGI308` | warning | all-scalar-functions-volatile | Every scalar function being VOLATILE usually means stability was never set. |  |
 | `VGI309` | warning | volatile-scalar-function | Flag each VOLATILE scalar/aggregate function for a stability audit. |  |
 | `VGI310` | warning | function-overuses-any | A function whose every parameter is typed ANY usually means types weren't declared. |  |
@@ -127,6 +128,11 @@ skipped unless `--execute` is passed.
 | `VGI318` | error | default-violates-constraint | An argument's declared default must satisfy its own constraints — be a member of choices, inside the numeric range, and match the pattern. Needs a vgi extension exposing vgi_function_arguments(); silent on older ones. |  |
 | `VGI319` | warning | invalid-constraint | A declared constraint must be well-formed: the pattern must be a valid regex and the numeric range must be non-empty. Needs a vgi extension exposing vgi_function_arguments(). |  |
 | `VGI320` | info | degenerate-choices | A choices set should offer a real choice — 0 or 1 allowed value is pointless (drop it, or use a fixed value). Needs a vgi extension exposing vgi_function_arguments(). |  |
+| `VGI321` | warning | result-schema-valid | 'vgi.result_columns_schema' must be a JSON array of {name, type, description}. |  |
+| `VGI322` | warning | result-column-type-valid | Every declared result-column type must be a real DuckDB type. |  |
+| `VGI323` | warning | result-column-described | Every declared result column should carry a non-blank description. |  |
+| `VGI324` | warning | result-schema-matches-backing-table | A declared static result schema must match the backing table's real columns (name and type). |  |
+| `VGI326` | warning | result-dynamic-schema-valid | 'vgi.result_dynamic_columns_md' must contain one or more Name|Type|Description column tables (one per variant). |  |
 
 ## Tags (VGI4xx)
 
@@ -145,6 +151,7 @@ skipped unless `--execute` is passed.
 | `VGI411` | warning | category-coverage | Objects in a schema that declares categories should each carry a vgi.category. |  |
 | `VGI412` | error | category-empty | A category declared in vgi.categories must contain at least one member object. |  |
 | `VGI413` | warning | schema-categories-required | Every schema with objects must declare a 'vgi.categories' registry (navigation/SEO). |  |
+| `VGI414` | error | retired-tag-key | Retired tag keys must be migrated — they are no longer recognized. |  |
 
 ## Example queries (VGI5xx)
 
@@ -231,6 +238,7 @@ skipped unless `--execute` is passed.
 | `VGI906` | error | executable-examples-execute | Every vgi.executable_examples statement must run against the worker. | requires `--execute` |
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
+| `VGI910` | warning | result-schema-matches | A table function's declared result schema must match what it returns (via DESCRIBE). | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
 ## Tutorials (VGI13xx)
@@ -268,4 +276,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_178 rules._
+_186 rules._

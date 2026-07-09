@@ -287,6 +287,43 @@ class DeprecatedTagKey(Rule):
                 )
 
 
+@register
+class RetiredTagKey(Rule):
+    code = "VGI414"
+    name = "retired-tag-key"
+    category = TAGS
+    default_severity = Severity.ERROR
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "Retired tag keys must be migrated — they are no longer recognized."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        objects: list[tuple[ObjectId, TagSet]] = [(cat.id, cat.tags)]
+        for s in cat.iter_schemas():
+            objects.append((s.id, s.tags))
+        for t in cat.iter_table_like():
+            objects.append((t.id, t.tags))
+        for f in cat.iter_all_functions():
+            objects.append((f.id, f.tags))
+        for oid, tags in objects:
+            for old, hint in tags.retired_keys().items():
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"tag {old!r} is retired and no longer read",
+                    hint,
+                )
+
+
 # --- VGI408-412: the vgi.category / vgi.categories navigation layer ---------
 #
 # These are opt-in: a schema that neither declares a vgi.categories registry nor

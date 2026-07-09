@@ -30,12 +30,13 @@ back to the regex heuristics rather than dropping a finding.
 
 from __future__ import annotations
 
+import copy
 import json
 import threading
 from dataclasses import dataclass
 from typing import Any
 
-__all__ = ["Ref", "ParsedRefs", "parse_refs"]
+__all__ = ["Ref", "ParsedRefs", "parse_refs", "canonical_type", "select_star_call_sql"]
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,40 @@ def _connection() -> Any | None:
                     _conn_broken = True
                     return None
     return _conn
+
+
+def canonical_type(type_str: str | None) -> tuple[str | None, str | None]:
+    """Canonicalize a declared SQL type via DuckDB, offline.
+
+    Runs ``typeof(NULL::<type>)`` on the private in-memory connection so aliases
+    and parameterized/nested forms collapse to DuckDB's canonical printed form
+    (``INT`` -> ``INTEGER``, ``timestamptz`` -> ``TIMESTAMP WITH TIME ZONE``,
+    ``decimal(18,3)`` -> ``DECIMAL(18,3)``).
+
+    Returns ``(canonical, None)`` for a valid type; ``(None, "<reason>")`` for a
+    structurally invalid one (a parser error, e.g. ``DECIMAL(x)``); and
+    ``(None, None)`` when it cannot be decided offline — an unknown type *name*
+    (which may be a worker-defined type available only post-attach) or no
+    connection. Never raises, and a ``;``/comment in the string short-circuits to
+    invalid so nothing but a bare type is ever interpolated.
+    """
+    con = _connection()
+    if con is None:
+        return None, None
+    t = (type_str or "").strip()
+    if not t:
+        return None, "empty type"
+    if any(bad in t for bad in (";", "--", "/*", "\n", "\r")):
+        return None, "malformed type string"
+    try:
+        with _conn_lock:
+            row = con.execute("SELECT typeof(NULL::" + t + ")").fetchone()
+    except Exception as e:  # noqa: BLE001 - classify, never propagate
+        if "Catalog" in type(e).__name__:  # unknown type name -> undecidable offline
+            return None, None
+        detail = str(e).splitlines()[0] if str(e).strip() else type(e).__name__
+        return None, detail
+    return (str(row[0]) if row and row[0] is not None else None), None
 
 
 def _serialize(sql: str) -> dict[str, Any] | None:
@@ -208,3 +243,71 @@ def parse_refs(sql: str) -> ParsedRefs | None:
     tables: list[Ref] = []
     _walk(doc, cte_names, funcs, tables)
     return ParsedRefs(functions=tuple(funcs), tables=tuple(tables))
+
+
+_star_select_list_cache: list[Any] | None = None
+
+
+def _star_select_list() -> list[Any] | None:
+    """A serialized ``*`` projection node (cached), or None if unavailable."""
+    global _star_select_list_cache
+    if _star_select_list_cache is None:
+        doc = _serialize("SELECT * FROM (SELECT 1 AS x) t")
+        try:
+            _star_select_list_cache = doc["statements"][0]["node"]["select_list"]  # type: ignore[index]
+        except (TypeError, KeyError, IndexError):
+            return None
+    return copy.deepcopy(_star_select_list_cache)
+
+
+def _deserialize(doc: dict[str, Any]) -> str | None:
+    """Round-trip a serialized statement tree back to SQL, or None on failure."""
+    con = _connection()
+    if con is None:
+        return None
+    try:
+        with _conn_lock:
+            row = con.execute("SELECT json_deserialize_sql(?)", [json.dumps(doc)]).fetchone()
+    except Exception:  # noqa: BLE001 - defensive, mirrors _serialize
+        return None
+    if not row or not row[0]:
+        return None
+    return str(row[0])
+
+
+def select_star_call_sql(sql: str, function_name: str | None = None) -> str | None:
+    """Rewrite a SELECT over a single table function into ``SELECT * FROM fn(...)``.
+
+    Serializes ``sql``, requires its FROM to be exactly one ``TABLE_FUNCTION`` (so
+    joins, subqueries and base-table sources are rejected — they would pollute the
+    ``*`` projection), swaps the projection for ``*`` and drops ORDER/LIMIT while
+    keeping any WHERE (a filter never changes the result schema), then serializes
+    back. When ``function_name`` is given, the call must be to that function.
+
+    Returns the rewritten SQL, or ``None`` when the statement is not a single
+    table-function scan or cannot be round-tripped. Never raises — the caller
+    falls back or skips.
+    """
+    doc = _serialize(sql)
+    if doc is None:
+        return None
+    stmts = doc.get("statements")
+    if not isinstance(stmts, list) or len(stmts) != 1 or not isinstance(stmts[0], dict):
+        return None
+    node = stmts[0].get("node")
+    if not isinstance(node, dict) or node.get("type") != "SELECT_NODE":
+        return None
+    from_table = node.get("from_table")
+    if not isinstance(from_table, dict) or from_table.get("type") != "TABLE_FUNCTION":
+        return None
+    if function_name is not None:
+        fn = from_table.get("function")
+        fname = fn.get("function_name") if isinstance(fn, dict) else None
+        if not (isinstance(fname, str) and fname.lower() == function_name.lower()):
+            return None
+    star = _star_select_list()
+    if star is None:
+        return None
+    node["select_list"] = star
+    node["modifiers"] = []
+    return _deserialize(doc)

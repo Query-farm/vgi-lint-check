@@ -15,7 +15,15 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..findings import Category, Finding, Severity
-from ..model import TAG_DOC_LLM, TAG_DOC_MD, TAG_RESULT_COLUMNS_MD, ObjectKind
+from ..model import (
+    TAG_DOC_LLM,
+    TAG_DOC_MD,
+    TAG_RESULT_COLUMNS_SCHEMA,
+    TAG_RESULT_DYNAMIC_COLUMNS_MD,
+    Function,
+    ObjectKind,
+)
+from ..sql_parse import canonical_type
 from ._util import base_type as _base_type
 from ._util import blank, is_trivial_echo
 from .base import Rule, RuleContext
@@ -150,36 +158,237 @@ class FunctionExample(Rule):
                 )
 
 
+def _iter_table_functions(ctx: RuleContext) -> Iterator[Function]:
+    """Every table function in the catalog."""
+    for f in ctx.catalog.iter_all_functions():
+        if f.kind is ObjectKind.TABLE_FUNCTION:
+            yield f
+
+
+def _col_label(name: str | None) -> str:
+    """A display name for a result column that may be unnamed."""
+    return repr(name) if name else "(unnamed)"
+
+
 @register
 class TableFunctionColumnsDocumented(Rule):
     code = "VGI307"
-    name = "table-function-columns-documented"
+    name = "table-function-result-schema-documented"
     category = FUNC
     default_severity = Severity.WARNING
     targets = (ObjectKind.TABLE_FUNCTION,)
     summary = (
-        "A table function with a dynamic schema (no backing table) must document "
-        "its returned columns in a 'vgi.result_columns_md' tag."
+        "A table function (with no backing table) must declare its result schema: "
+        "'vgi.result_columns_schema' when static, or 'vgi.result_dynamic_columns_md' "
+        "when it varies by argument — exactly one."
     )
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         cat = ctx.catalog
-        for f in cat.iter_all_functions():
-            if f.kind is not ObjectKind.TABLE_FUNCTION:
-                continue
-            # A table function backed by a static table already has its columns
-            # documented via that table's column comments.
+        for f in _iter_table_functions(ctx):
+            # A table function backed by a static table already exposes its columns
+            # (and their types) through that table — no tag required.
             if cat.find_table_like(f.name, f.schema):
                 continue
-            if not f.tags.has(TAG_RESULT_COLUMNS_MD):
+            has_static = f.tags.has(TAG_RESULT_COLUMNS_SCHEMA)
+            has_dynamic = f.tags.has(TAG_RESULT_DYNAMIC_COLUMNS_MD)
+            if has_static and has_dynamic:
                 yield self.finding(
                     ctx,
                     f.id,
-                    f"table function has no documented return columns ('{TAG_RESULT_COLUMNS_MD}')",
-                    "DuckDB can't expose a dynamic table-function schema — add a "
-                    "'vgi.result_columns_md' tag with a Markdown table of the returned "
-                    "columns (note any columns that vary by argument)",
+                    "table function declares both a static ('vgi.result_columns_schema') "
+                    "and a dynamic ('vgi.result_dynamic_columns_md') result schema",
+                    "pick one: a fixed result shape uses the JSON schema tag; a shape that "
+                    "varies by argument uses the dynamic Markdown tag",
                 )
+            elif not has_static and not has_dynamic:
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    "table function does not declare its result schema",
+                    "add 'vgi.result_columns_schema' (a JSON array of "
+                    "{name, type, description}) for a fixed schema, or "
+                    "'vgi.result_dynamic_columns_md' (one Name|Type|Description table per "
+                    "variant) when the columns vary by argument",
+                )
+
+
+@register
+class ResultSchemaValid(Rule):
+    code = "VGI321"
+    name = "result-schema-valid"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE_FUNCTION,)
+    summary = "'vgi.result_columns_schema' must be a JSON array of {name, type, description}."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for f in _iter_table_functions(ctx):
+            if f.result_columns_parse_error:
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    f"vgi.result_columns_schema is not valid: {f.result_columns_parse_error}",
+                    'use a JSON array of {"name", "type", "description"} objects',
+                )
+                continue
+            for i, col in enumerate(f.result_columns):
+                if not (col.name or "").strip():
+                    yield self.finding(
+                        ctx,
+                        f.id,
+                        f"vgi.result_columns_schema entry #{i} has no 'name'",
+                        "every result column needs a name matching what the function returns",
+                    )
+
+
+@register
+class ResultDynamicSchemaValid(Rule):
+    code = "VGI326"
+    name = "result-dynamic-schema-valid"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE_FUNCTION,)
+    summary = (
+        "'vgi.result_dynamic_columns_md' must contain one or more "
+        "Name|Type|Description column tables (one per variant)."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for f in _iter_table_functions(ctx):
+            if not f.tags.has(TAG_RESULT_DYNAMIC_COLUMNS_MD):
+                continue
+            if not f.result_dynamic_tables:
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    "vgi.result_dynamic_columns_md contains no result-column table",
+                    "describe how the schema varies, then give one Markdown table per "
+                    "variant with a 'Name | Type | Description' header",
+                )
+                continue
+            for table in f.result_dynamic_tables:
+                where = f" (variant {table.caption!r})" if table.caption else ""
+                if not table.columns:
+                    yield self.finding(
+                        ctx,
+                        f.id,
+                        f"vgi.result_dynamic_columns_md has a variant table with no columns{where}",
+                        "give each variant table at least one Name|Type|Description row",
+                    )
+                for col in table.columns:
+                    if not (col.name or "").strip():
+                        yield self.finding(
+                            ctx,
+                            f.id,
+                            f"vgi.result_dynamic_columns_md has a column with no name{where}",
+                            "every row needs a column name in the first cell",
+                        )
+
+
+@register
+class ResultColumnTypeValid(Rule):
+    code = "VGI322"
+    name = "result-column-type-valid"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE_FUNCTION,)
+    summary = "Every declared result-column type must be a real DuckDB type."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for f in _iter_table_functions(ctx):
+            for col in f.all_result_columns():
+                declared = (col.type or "").strip()
+                if not declared:
+                    yield self.finding(
+                        ctx,
+                        f.id,
+                        f"result column {_col_label(col.name)} has no declared type",
+                        "give every result column a DuckDB type, e.g. VARCHAR / BIGINT / DOUBLE",
+                    )
+                    continue
+                # (None, None) means undecidable offline (an unknown type name that
+                # may be worker-defined) — defer to the live check, don't flag here.
+                _canonical, err = canonical_type(declared)
+                if err:
+                    yield self.finding(
+                        ctx,
+                        f.id,
+                        f"result column {_col_label(col.name)} declares an invalid type "
+                        f"{declared!r}: {err}",
+                        "use a real DuckDB type (e.g. VARCHAR, BIGINT, DOUBLE, DECIMAL(18,3))",
+                    )
+
+
+@register
+class ResultColumnDescribed(Rule):
+    code = "VGI323"
+    name = "result-column-described"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE_FUNCTION,)
+    summary = "Every declared result column should carry a non-blank description."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for f in _iter_table_functions(ctx):
+            for col in f.all_result_columns():
+                if not col.documented:
+                    yield self.finding(
+                        ctx,
+                        f.id,
+                        f"result column {_col_label(col.name)} has no description",
+                        "describe what the column holds so an agent knows how to use it",
+                    )
+
+
+@register
+class ResultSchemaMatchesBackingTable(Rule):
+    code = "VGI324"
+    name = "result-schema-matches-backing-table"
+    category = FUNC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE_FUNCTION,)
+    summary = (
+        "A declared static result schema must match the backing table's real columns "
+        "(name and type)."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        for f in _iter_table_functions(ctx):
+            if not f.result_columns:
+                continue
+            matches = cat.find_table_like(f.name, f.schema)
+            if not matches:
+                continue
+            table = matches[0]
+            actual = {c.name: c.data_type for c in table.columns}
+            for col in f.result_columns:
+                name = (col.name or "").strip()
+                if not name:
+                    continue  # nameless entries are VGI321's concern
+                if name not in actual:
+                    yield self.finding(
+                        ctx,
+                        f.id,
+                        f"result column {name!r} is not a column of the backing table "
+                        f"{table.name!r}",
+                        "align the declared schema with the table the function returns "
+                        "(fix the name or remove the column)",
+                    )
+                    continue
+                declared_canon, derr = canonical_type(col.type or "")
+                if derr or declared_canon is None:
+                    continue  # invalid/undecidable type -> VGI322, can't compare here
+                actual_canon, _ = canonical_type(actual[name] or "")
+                if actual_canon is not None and declared_canon != actual_canon:
+                    yield self.finding(
+                        ctx,
+                        f.id,
+                        f"result column {name!r} is declared {declared_canon} but the backing "
+                        f"table has {actual_canon}",
+                        "fix the declared type to match the backing table",
+                    )
 
 
 @register

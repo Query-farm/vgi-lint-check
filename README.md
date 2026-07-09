@@ -376,7 +376,8 @@ table below is a quick index:
 | `vgi.category` | The object's single **primary category** — a `name` defined in its schema's `vgi.categories` registry (on tables/views/functions; **VGI409**) |
 | `vgi.categories` | Schema-level **ordered registry** of `{"name","description"?,"title"?}` category objects — the navigation sections a schema groups its objects into (**VGI408**) |
 | `vgi.classification_tags` | JSON array of cross-cutting facet labels for search — on any object **except the catalog** (was `vgi.category_tags`) |
-| `vgi.result_columns_md` | Markdown doc of a table function's returned columns (for dynamic schemas DuckDB can't expose) |
+| `vgi.result_columns_schema` | A table function's **static** result schema — JSON `[{name, type, description}]` (types validated, matched against the live output under `--execute`) |
+| `vgi.result_dynamic_columns_md` | A table function's **dynamic** result schema — Markdown with one `Name\|Type\|Description` table per argument-dependent variant |
 | `vgi.source_url` | Link to where the object is implemented (repo/file) |
 | `vgi.author` | Author / maintainer attribution (catalog) |
 | `vgi.copyright` | Copyright notice (catalog) |
@@ -385,10 +386,14 @@ table below is a quick index:
 | `vgi.support_policy_url` | Link to the support / SLA policy (catalog) |
 | `vgi.icon_url` | Link to a browser-displayable icon/logo image for the catalog — validated for format & resolution under `--check-links` (catalog) |
 
-> **Renamed:** `vgi.doc_llm`/`vgi.doc_md` (was `vgi.description_llm`/`_md`),
-> `vgi.result_columns_md` (was `vgi.columns_md`), and `vgi.classification_tags`
-> (was `vgi.category_tags`). The old keys still work (dual recognition) but
-> **VGI405** nudges you to migrate; they'll stop being recognized in **v1.0**.
+> **Renamed:** `vgi.doc_llm`/`vgi.doc_md` (was `vgi.description_llm`/`_md`) and
+> `vgi.classification_tags` (was `vgi.category_tags`). The old keys still work (dual
+> recognition) but **VGI405** nudges you to migrate; they'll stop being recognized
+> in **v1.0**.
+>
+> **Retired:** `vgi.result_columns_md` / `vgi.columns_md` (free-form, unvalidated)
+> are no longer read — **VGI414** errors and points you to
+> `vgi.result_columns_schema` (static) or `vgi.result_dynamic_columns_md` (dynamic).
 
 > **Categories** (`vgi.category` + `vgi.categories`) are **required** — they
 > drive navigation, listing sections, and SEO descriptions. Every schema with

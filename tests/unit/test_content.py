@@ -169,6 +169,34 @@ def test_bare_keyword_in_inline_span_passes():
     assert "VGI174" not in _sql_codes("Bring calendar math into DuckDB with just a `SELECT`.")
 
 
+# --- VGI179 description-sql-is-example --------------------------------------
+def test_complete_sql_fence_flagged_as_example():
+    # A full SELECT…FROM in a ```sql fence belongs in vgi.example_queries.
+    codes_ = _sql_codes(
+        "## products\n\n```sql\nSELECT ticker, net_assets FROM ish.main.products() "
+        "ORDER BY net_assets DESC;\n```\n"
+    )
+    assert "VGI179" in codes_
+    assert "VGI174" not in codes_  # well-formed ```sql fence — VGI174 stays quiet
+
+
+def test_snippet_sql_fence_not_flagged_as_example():
+    # A scalar call with no FROM is an illustrative snippet, not an example query.
+    assert "VGI179" not in _sql_codes("Example:\n\n```sql\nSELECT easter(2026)\n```\n")
+
+
+def test_signature_fence_not_flagged_as_example():
+    # A bare signature / fragment (no SELECT…FROM pairing) is fine.
+    assert "VGI179" not in _sql_codes("Call it as:\n\n```sql\nproducts(ticker := 'IVV')\n```\n")
+
+
+def test_unlabeled_sql_fence_not_double_reported_by_vgi179():
+    # An unlabeled SQL fence is VGI174's concern; VGI179 only takes ```sql fences.
+    codes_ = _sql_codes("Example:\n\n```\nSELECT date FROM t.main.days\n```\n")
+    assert "VGI174" in codes_
+    assert "VGI179" not in codes_
+
+
 # --- VGI177 code-fence-declares-language -----------------------------------
 def test_unlabeled_non_sql_fence_flagged():
     # A JSON snippet in a bare fence -> VGI177 (declare a language).

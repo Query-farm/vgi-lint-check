@@ -35,6 +35,8 @@ from .tags import (
     decode_categories,
     decode_example_queries,
     decode_executable_examples,
+    decode_result_columns_schema,
+    decode_result_dynamic_columns_md,
     to_tagset,
 )
 
@@ -247,6 +249,8 @@ def build_catalog(
         # Meta.examples are exercised by --execute, not just tag-carried ones.
         examples = _merge_examples(examples, _native_examples(r.get("examples")))
         exec_ex, exec_err = decode_executable_examples(tags)
+        result_cols, result_cols_err = decode_result_columns_schema(tags)
+        dyn_tables, dyn_err = decode_result_dynamic_columns_md(tags)
         fn = Function(
             id=ObjectId(alias, _function_objectkind(ftype), schema=sname, name=fname),
             schema=sname,
@@ -261,6 +265,10 @@ def build_catalog(
             examples_parse_error=err,
             executable_examples=exec_ex,
             executable_examples_parse_error=exec_err,
+            result_columns=result_cols,
+            result_columns_parse_error=result_cols_err,
+            result_dynamic_tables=dyn_tables,
+            result_dynamic_parse_error=dyn_err,
             macro_definition=r.get("macro_definition"),
             stability=r.get("stability"),
             arguments=args_by_key.get((sname, fname), []),

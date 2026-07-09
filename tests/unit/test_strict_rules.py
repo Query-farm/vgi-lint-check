@@ -219,18 +219,15 @@ def test_vgi405_names_the_new_key():
     assert any("vgi.description_md" in m for m in msgs)
 
 
-def test_result_columns_md_rename_dual_recognition():
-    from vgi_lint_check.model import TagSet
-
-    # old key resolves to the new canonical key
-    assert TagSet({"vgi.columns_md": "## cols"}).has("vgi.result_columns_md")
-    assert TagSet({"vgi.columns_md": "## cols"}).get("vgi.result_columns_md") == "## cols"
-    # VGI307 (table fn columns) is satisfied by either key; VGI405 nudges migration
-    tf = F.func("main", "scan", "table", description="d", tags={"vgi.columns_md": "## a | b"})
-    s = F.schema("main", comment="c", tags=_TAGS, functions=[tf])
-    codes = _codes(F.catalog(s))
-    assert "VGI307" not in codes  # columns documented via the old key
-    assert "VGI405" in codes  # ...but flagged as deprecated
+def test_result_columns_md_retired():
+    # The old free-form result-columns tags are RETIRED: a hard error (VGI414) that
+    # does NOT satisfy the result-schema requirement (VGI307 still fires).
+    for old_key in ("vgi.result_columns_md", "vgi.columns_md"):
+        tf = F.func("main", "scan", "table", description="d", tags={old_key: "## a | b"})
+        s = F.schema("main", comment="c", tags=_TAGS, functions=[tf])
+        codes = _codes(F.catalog(s))
+        assert "VGI414" in codes  # retired -> hard error
+        assert "VGI307" in codes  # ...and it does not count as a declared schema
 
 
 def test_vgi172_doc_links():

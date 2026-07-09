@@ -24,7 +24,11 @@ TAG_KEYWORDS = "vgi.keywords"  # JSON array of search keywords / synonyms
 TAG_CATEGORY = "vgi.category"  # single primary category an object belongs to (a registry name)
 TAG_CATEGORIES = "vgi.categories"  # schema-level registry: ordered array of category objects
 TAG_CLASSIFICATION_TAGS = "vgi.classification_tags"  # JSON array of cross-cutting facet labels
-TAG_RESULT_COLUMNS_MD = "vgi.result_columns_md"  # Markdown doc of a table fn's result columns
+TAG_RESULT_COLUMNS_SCHEMA = "vgi.result_columns_schema"  # JSON [{name,type,description}] (static)
+TAG_RESULT_DYNAMIC_COLUMNS_MD = "vgi.result_dynamic_columns_md"  # Markdown w/ per-variant tables
+TAG_RESULT_COLUMNS_MD = (
+    "vgi.result_columns_md"  # RETIRED: use result_columns_schema / _dynamic_columns_md
+)
 TAG_SOURCE_URL = "vgi.source_url"  # link to where this object is implemented (repo/file)
 TAG_AUTHOR = "vgi.author"  # author / maintainer attribution
 TAG_COPYRIGHT = "vgi.copyright"  # copyright notice
@@ -36,18 +40,31 @@ TAG_ICON_URL = "vgi.icon_url"  # link to a browser-displayable icon/logo image f
 # Deprecated tag keys kept working for back-compat (old key -> canonical key).
 TAG_DESCRIPTION_LLM = "vgi.description_llm"  # deprecated: use vgi.doc_llm
 TAG_DESCRIPTION_MD = "vgi.description_md"  # deprecated: use vgi.doc_md
-TAG_COLUMNS_MD = "vgi.columns_md"  # deprecated: use vgi.result_columns_md
+TAG_COLUMNS_MD = "vgi.columns_md"  # RETIRED (was: use vgi.result_columns_md)
 TAG_CATEGORY_TAGS = "vgi.category_tags"  # deprecated: use vgi.classification_tags
 DEPRECATED_TAG_ALIASES = {
     TAG_DESCRIPTION_LLM: TAG_DOC_LLM,
     TAG_DESCRIPTION_MD: TAG_DOC_MD,
-    TAG_COLUMNS_MD: TAG_RESULT_COLUMNS_MD,
     TAG_CATEGORY_TAGS: TAG_CLASSIFICATION_TAGS,
 }
 # canonical key -> tuple of deprecated keys that resolve to it
 _ALIASES_OF: dict[str, tuple[str, ...]] = {}
 for _old, _new in DEPRECATED_TAG_ALIASES.items():
     _ALIASES_OF[_new] = (*_ALIASES_OF.get(_new, ()), _old)
+
+# Retired tag keys: still recognized (so VGI404 doesn't guess a typo) but a hard
+# error via VGI414, which points the author at the replacement. Unlike a
+# deprecated alias, there is no transparent fallback — the shape changed.
+_RESULT_COLUMNS_MIGRATION = (
+    "replace with 'vgi.result_columns_schema' (a JSON array of "
+    "{name, type, description} for a static result schema) or "
+    "'vgi.result_dynamic_columns_md' (Markdown with one Name|Type|Description "
+    "table per variant for a schema that varies by argument)"
+)
+RETIRED_TAG_KEYS: dict[str, str] = {
+    TAG_RESULT_COLUMNS_MD: _RESULT_COLUMNS_MIGRATION,
+    TAG_COLUMNS_MD: _RESULT_COLUMNS_MIGRATION,
+}
 
 RESERVED_TAG_KEYS = frozenset(
     {
@@ -62,7 +79,10 @@ RESERVED_TAG_KEYS = frozenset(
         TAG_CATEGORY,
         TAG_CATEGORIES,
         TAG_CLASSIFICATION_TAGS,
+        TAG_RESULT_COLUMNS_SCHEMA,
+        TAG_RESULT_DYNAMIC_COLUMNS_MD,
         TAG_RESULT_COLUMNS_MD,
+        TAG_COLUMNS_MD,
         TAG_SOURCE_URL,
         TAG_AUTHOR,
         TAG_COPYRIGHT,
@@ -151,6 +171,10 @@ class TagSet:
         """Present deprecated tag keys mapped to their canonical replacement."""
         return {k: DEPRECATED_TAG_ALIASES[k] for k in self.raw if k in DEPRECATED_TAG_ALIASES}
 
+    def retired_keys(self) -> dict[str, str]:
+        """Present retired tag keys mapped to their migration hint (no fallback)."""
+        return {k: RETIRED_TAG_KEYS[k] for k in self.raw if k in RETIRED_TAG_KEYS}
+
     @property
     def plain(self) -> dict[str, str]:
         """Non-reserved tags (the user-facing key/value tags)."""
@@ -165,6 +189,37 @@ class ExampleQuery:
     description: str | None
     sql: str | None
     raw: object = None
+
+
+@dataclass(frozen=True)
+class ResultColumn:
+    """One declared result column of a table function.
+
+    Sourced from ``vgi.result_columns_schema`` (static) or a variant table in
+    ``vgi.result_dynamic_columns_md`` (dynamic).
+    """
+
+    name: str | None
+    type: str | None
+    description: str | None
+    raw: object = None
+
+    @property
+    def documented(self) -> bool:
+        """True when the column carries a non-blank description."""
+        return bool((self.description or "").strip())
+
+
+@dataclass(frozen=True)
+class ResultColumnTable:
+    """One variant schema parsed from ``vgi.result_dynamic_columns_md``.
+
+    ``caption`` is the Markdown heading immediately above the table, if any (the
+    author's label for *when* this variant applies); ``columns`` are its rows.
+    """
+
+    caption: str | None
+    columns: list[ResultColumn]
 
 
 @dataclass(frozen=True)
@@ -348,6 +403,14 @@ class Function:
     examples_parse_error: str | None = None
     executable_examples: list[ExecutableExample] = field(default_factory=list)
     executable_examples_parse_error: str | None = None
+    # Declared result schema of a table function. ``result_columns`` is the static
+    # ``vgi.result_columns_schema``; ``result_dynamic_tables`` are the per-variant
+    # tables parsed from ``vgi.result_dynamic_columns_md``. Only table functions
+    # read these.
+    result_columns: list[ResultColumn] = field(default_factory=list)
+    result_columns_parse_error: str | None = None
+    result_dynamic_tables: list[ResultColumnTable] = field(default_factory=list)
+    result_dynamic_parse_error: str | None = None
     macro_definition: str | None = None
     # Per-argument metadata from vgi_function_arguments() (empty on older vgi
     # extensions that don't expose it — the rule then emits nothing).
@@ -380,6 +443,17 @@ class Function:
     def is_pragma(self) -> bool:
         """True for pragma functions."""
         return self.kind is ObjectKind.PRAGMA
+
+    def all_result_columns(self) -> list[ResultColumn]:
+        """Every declared result column: the static schema plus every dynamic variant.
+
+        Lets column-level checks (type validity, descriptions) iterate one source
+        regardless of whether the schema was declared statically or per-variant.
+        """
+        cols = list(self.result_columns)
+        for table in self.result_dynamic_tables:
+            cols.extend(table.columns)
+        return cols
 
 
 @dataclass(frozen=True)

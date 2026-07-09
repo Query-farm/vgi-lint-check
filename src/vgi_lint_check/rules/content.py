@@ -12,7 +12,7 @@ from ..linkcheck import is_broken
 from ..model import (
     TAG_DOC_LLM,
     TAG_DOC_MD,
-    TAG_RESULT_COLUMNS_MD,
+    TAG_RESULT_DYNAMIC_COLUMNS_MD,
     TAG_SOURCE_URL,
     TAG_SUPPORT_CONTACT,
     TAG_SUPPORT_POLICY_URL,
@@ -90,7 +90,7 @@ def _iter_md(ctx: RuleContext) -> Iterator[tuple[ObjectId, str]]:
         if not blank(md):
             yield t.id, md or ""
     for f in ctx.catalog.iter_all_functions():
-        for md in (f.tags.get(TAG_DOC_MD), f.tags.get(TAG_RESULT_COLUMNS_MD)):
+        for md in (f.tags.get(TAG_DOC_MD), f.tags.get(TAG_RESULT_DYNAMIC_COLUMNS_MD)):
             if not blank(md):
                 yield f.id, md or ""
 
@@ -190,9 +190,9 @@ def _iter_urls(ctx: RuleContext) -> Iterator[tuple[ObjectId, str, str]]:
             if url.startswith(("http://", "https://")):
                 yield oid, url, f"vgi.doc_md {kind}"
     for f in cat.iter_all_functions():
-        for kind, url in _md_targets(f.tags.get(TAG_RESULT_COLUMNS_MD) or ""):
+        for kind, url in _md_targets(f.tags.get(TAG_RESULT_DYNAMIC_COLUMNS_MD) or ""):
             if url.startswith(("http://", "https://")):
-                yield f.id, url, f"vgi.result_columns_md {kind}"
+                yield f.id, url, f"vgi.result_dynamic_columns_md {kind}"
     # vgi.doc_links URLs are resolved too (only well-formed http(s) ones).
     for oid, links, err in _iter_doc_links(ctx):
         if err:
@@ -411,6 +411,54 @@ class DescriptionSqlFenced(Rule):
                     f"{label} has a SQL statement in {count} (e.g. `{sample}`), not a ```sql fence",
                     "move runnable SQL into a ```sql code fence — or, better, an "
                     "executable example (VGI5xx) so it is tested, not just shown",
+                )
+
+
+def _first_nonblank_line(body: str | None) -> str:
+    """The first non-empty line of a code block (for a short sample)."""
+    for line in (body or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+@register
+class DescriptionSqlIsExample(Rule):
+    code = "VGI179"
+    name = "description-sql-is-example"
+    category = CONTENT
+    default_severity = Severity.WARNING
+    targets = _DOC_TARGET_KINDS
+    summary = (
+        "A complete runnable query in a description ```sql fence belongs in "
+        "vgi.example_queries, where it is executed and coverage-checked."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        # VGI174 handles unfenced / mislabeled SQL; this rule takes the ```sql
+        # fences it deliberately allows and flags the ones that are complete,
+        # runnable statements (SELECT…FROM, WITH…AS(, PRAGMA/EXPLAIN) rather than
+        # an illustrative signature or fragment. Such a query is an example: it
+        # belongs in vgi.example_queries where it is executed and coverage-checked
+        # (VGI5xx), not shown as inert prose that can silently drift.
+        for oid, label, text in _iter_prose(ctx):
+            for tok in _MD.parse(text):
+                if tok.type != "fence":
+                    continue
+                lang = (tok.info or "").strip().split(" ")[0].lower() if tok.info else ""
+                if lang != "sql":
+                    continue
+                if not _SQL_IN_PROSE.search(tok.content or ""):
+                    continue
+                sample = " ".join(_first_nonblank_line(tok.content).split())
+                sample = sample[:47] + "…" if len(sample) > 48 else sample
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"{label} embeds a complete runnable query in a ```sql fence (`{sample}`)",
+                    "move the query into a 'vgi.example_queries' entry (VGI5xx) so it is "
+                    "executed and coverage-checked, not shown as inert prose that can "
+                    "drift from the worker",
                 )
 
 

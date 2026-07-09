@@ -21,7 +21,11 @@ from vgi_lint_check.model import (
     TagSet,
     View,
 )
-from vgi_lint_check.tags import decode_categories
+from vgi_lint_check.tags import (
+    decode_categories,
+    decode_result_columns_schema,
+    decode_result_dynamic_columns_md,
+)
 
 
 def exec_example(index, description, statements, *, name=None):
@@ -119,7 +123,16 @@ def func(
     executable_examples=(),
     exec_parse_error=None,
     arguments=(),
+    result_columns=(),
+    result_columns_parse_error=None,
+    result_dynamic_tables=(),
+    result_dynamic_parse_error=None,
 ):
+    tagset = TagSet(dict(tags or {}))
+    # Mirror the loader: decode the result-schema tags into fields unless the test
+    # passes them explicitly.
+    decoded_cols, decoded_cols_err = decode_result_columns_schema(tagset)
+    decoded_dyn, decoded_dyn_err = decode_result_dynamic_columns_md(tagset)
     return Function(
         id=ObjectId("v", ObjectKind.SCALAR_FUNCTION, schema=schema, name=name),
         schema=schema,
@@ -127,13 +140,17 @@ def func(
         function_type=ftype,
         description=description,
         comment=comment,
-        tags=TagSet(dict(tags or {})),
+        tags=tagset,
         parameters=list(parameters),
         examples=list(examples),
         stability=stability,
         executable_examples=list(executable_examples),
         executable_examples_parse_error=exec_parse_error,
         arguments=list(arguments),
+        result_columns=list(result_columns) or decoded_cols,
+        result_columns_parse_error=result_columns_parse_error or decoded_cols_err,
+        result_dynamic_tables=list(result_dynamic_tables) or decoded_dyn,
+        result_dynamic_parse_error=result_dynamic_parse_error or decoded_dyn_err,
     )
 
 

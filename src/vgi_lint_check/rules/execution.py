@@ -16,6 +16,7 @@ from typing import Any
 from ..connection import ALIAS_RE, sql_str
 from ..findings import Category, Finding, Severity
 from ..model import AttachOption, Catalog, Function, ObjectKind, Table, View
+from ..sql_parse import select_star_call_sql
 from ._util import blank, is_bind_error, is_filter_policy_error, map_queries, run_with_timeout
 from .base import Rule, RuleContext
 from .registry import register
@@ -640,3 +641,165 @@ class ExecutableExampleSlow(Rule):
                         "full scans) — slow examples run on every lint and bloat CI; "
                         "raise options.slow_example_seconds if this is expected",
                     )
+
+
+def _star_from_example(f: Function) -> str | None:
+    """A ``SELECT * FROM f(...)`` derived from one of ``f``'s own example queries.
+
+    Reuses a known-good, binding call (its literal args) from the function's
+    examples and rewrites the projection to ``*`` so DESCRIBE sees the full result
+    schema, not just the columns the example happened to project.
+    """
+    for ex in f.examples:
+        if blank(ex.sql):
+            continue
+        star = select_star_call_sql(ex.sql or "", f.name)
+        if star:
+            return star
+    return None
+
+
+def _canon_live(cur: Any, type_str: str | None, timeout: float) -> str | None:
+    """Canonicalize a declared type via the live worker (so worker types resolve)."""
+    t = (type_str or "").strip()
+    if not t or any(bad in t for bad in (";", "--", "/*", "\n", "\r")):
+        return None
+    try:
+        res = run_with_timeout(cur, lambda: cur.execute("SELECT typeof(NULL::" + t + ")"), timeout)
+        row = run_with_timeout(cur, lambda r=res: r.fetchone(), timeout)
+    except Exception:  # noqa: BLE001 - unknown/invalid type -> can't canonicalize
+        return None
+    return str(row[0]) if row and row[0] is not None else None
+
+
+@register
+class ResultSchemaMatches(Rule):
+    code = "VGI910"
+    name = "result-schema-matches"
+    category = EXEC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.TABLE_FUNCTION,)
+    requires_connection = True
+    summary = "A table function's declared result schema must match what it returns (via DESCRIBE)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        con = ctx.connection
+        if con is None:
+            return
+        cat = ctx.catalog
+        timeout = ctx.config.execute_timeout
+        # Only table functions that declare a schema and are not backed by a static
+        # table (whose real columns VGI324 already cross-checks).
+        targets = [
+            f
+            for f in cat.iter_all_functions()
+            if f.kind is ObjectKind.TABLE_FUNCTION
+            and not cat.find_table_like(f.name, f.schema)
+            and (f.result_columns or f.result_dynamic_tables)
+        ]
+
+        def work(f: Function, cur: Any) -> list[Finding]:
+            return self._check_one(ctx, cur, f, timeout)
+
+        for result in map_queries(con, targets, work, ctx.config.execute_concurrency):
+            yield from result
+
+    def _check_one(self, ctx: RuleContext, cur: Any, f: Function, timeout: float) -> list[Finding]:
+        star = _star_from_example(f)
+        if star is None:
+            return []  # no example calls this function -> nothing to describe
+        try:
+            res = run_with_timeout(cur, lambda q=star: cur.execute("DESCRIBE " + q), timeout)
+            rows = run_with_timeout(cur, lambda r=res: r.fetchall(), timeout)
+        except Exception:  # noqa: BLE001 - execution failures are VGI901's concern, not this rule's
+            return []
+        actual = [(str(r[0]), str(r[1])) for r in (rows or []) if r and r[0] is not None]
+        if f.result_columns:
+            return self._compare_static(ctx, cur, f, actual, timeout)
+        return self._compare_dynamic(ctx, f, actual)
+
+    def _compare_static(
+        self, ctx: RuleContext, cur: Any, f: Function, actual: list[tuple[str, str]], timeout: float
+    ) -> list[Finding]:
+        out: list[Finding] = []
+        actual_types = dict(actual)
+        actual_names = [n for n, _ in actual]
+        declared = [
+            ((c.name or "").strip(), c.type) for c in f.result_columns if (c.name or "").strip()
+        ]
+        declared_names = [n for n, _ in declared]
+        aset, dset = set(actual_names), set(declared_names)
+        for name in declared_names:
+            if name not in aset:
+                out.append(
+                    self.finding(
+                        ctx,
+                        f.id,
+                        f"result schema declares column {name!r} that the function does not return",
+                        "remove the column or fix its name to match the function's output",
+                    )
+                )
+        for name in actual_names:
+            if name not in dset:
+                out.append(
+                    self.finding(
+                        ctx,
+                        f.id,
+                        f"the function returns column {name!r} not in vgi.result_columns_schema",
+                        "add the column to the declared schema",
+                    )
+                )
+        for name, dtype in declared:
+            acanon = actual_types.get(name)
+            if acanon is None:
+                continue
+            dcanon = _canon_live(cur, dtype, timeout)
+            if dcanon is None:  # invalid/unknown declared type -> VGI322, can't compare
+                continue
+            if dcanon != acanon and dcanon.upper() != acanon.upper():
+                out.append(
+                    self.finding(
+                        ctx,
+                        f.id,
+                        f"result column {name!r} is declared {dcanon} but the "
+                        f"function returns {acanon}",
+                        "fix the declared type to match the function's output",
+                    )
+                )
+        if dset == aset and declared_names != actual_names:
+            out.append(
+                Finding(
+                    code=self.code,
+                    severity=min(ctx.severity, Severity.INFO),
+                    category=self.category,
+                    object_id=f.id,
+                    message="declared result-column order does not match the function's output",
+                    hint="reorder vgi.result_columns_schema to match the returned columns",
+                )
+            )
+        return out
+
+    def _compare_dynamic(
+        self, ctx: RuleContext, f: Function, actual: list[tuple[str, str]]
+    ) -> list[Finding]:
+        # The example exercises one variant, so a declared column being absent is
+        # expected; only a returned column declared by NO variant is a defect.
+        declared_names = {
+            (c.name or "").strip()
+            for table in f.result_dynamic_tables
+            for c in table.columns
+            if (c.name or "").strip()
+        }
+        out: list[Finding] = []
+        for name, _atype in actual:
+            if name not in declared_names:
+                out.append(
+                    self.finding(
+                        ctx,
+                        f.id,
+                        f"the function returns column {name!r} not declared in any "
+                        "vgi.result_dynamic_columns_md variant",
+                        "add the column to the appropriate variant table",
+                    )
+                )
+        return out

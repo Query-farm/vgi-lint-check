@@ -56,7 +56,8 @@ columns/returns, caveats, and examples.
 | `vgi.doc_llm` | ● req | ● req | ● req* | ● req* |
 | `vgi.doc_md` | ● req | ● req | ● req* | ● req* |
 | `vgi.doc_links` | ◦ | ◦ | ◦ | ◦ |
-| `vgi.result_columns_md` | | | | ● table_function |
+| `vgi.result_columns_schema` | | | | ● table_function |
+| `vgi.result_dynamic_columns_md` | | | | ● table_function |
 | `vgi.title` | ● req | ● req | ◦ | |
 | `vgi.keywords` | ◦ | ◦ | ◦ | |
 | `vgi.category` | | | ● req | ● req |
@@ -110,15 +111,36 @@ columns/returns, caveats, and examples.
 - **Validated by:** VGI172 (must be a JSON array of http(s) URLs / objects —
   *error*), VGI171 (each URL resolves).
 
-### `vgi.result_columns_md`
-- **Applies to:** table functions (relevant where the result schema is dynamic and
-  DuckDB cannot expose columns up front).
-- **Value:** Markdown documenting the returned columns (name, type, meaning).
-- **Required:** a dynamic-schema table function with **no backing table** must set
-  it (VGI307).
-- **Used for:** giving agents/humans the result shape a table function returns when
-  it can't be introspected.
-- **Validated by:** VGI307, plus VGI170/VGI171 (Markdown validity / link resolution).
+### `vgi.result_columns_schema`
+- **Applies to:** table functions whose result schema is **static** (the same
+  columns regardless of arguments).
+- **Value:** a JSON array of `{name, type, description}` objects — one per returned
+  column. `type` must be a real DuckDB type; `description` must be non-blank.
+- **Required:** a table function with **no backing table** must declare its result
+  schema — this tag (static) *or* `vgi.result_dynamic_columns_md` (dynamic), exactly
+  one (VGI307).
+- **Used for:** giving agents/humans (and the linter) the exact result shape when
+  DuckDB can't expose it up front.
+- **Validated by:** VGI307 (declared / not both), VGI321 (JSON shape), VGI322 (types
+  are real), VGI323 (every column described), VGI324 (matches a backing table when
+  present), VGI910 (matches what the function actually returns, under `--execute`).
+
+### `vgi.result_dynamic_columns_md`
+- **Applies to:** table functions whose result schema **varies by argument**.
+- **Value:** Markdown that describes *how* the schema varies **and** contains one or
+  more `Name | Type | Description` tables — one per variant (the Markdown rendering
+  of a `vgi.result_columns_schema`). A section heading above a table is an optional
+  label for when that variant applies.
+- **Required:** the dynamic alternative to `vgi.result_columns_schema` (VGI307).
+- **Used for:** documenting each argument-dependent result shape in a structured,
+  lintable form.
+- **Validated by:** VGI307, VGI326 (≥1 well-formed variant table), VGI322/VGI323
+  (each variant column's type is real and described), VGI170/VGI171 (Markdown /
+  links), VGI910 (returned columns are covered by some variant, under `--execute`).
+
+> **Retired:** `vgi.result_columns_md` (and its old alias `vgi.columns_md`) are no
+> longer read — they were free-form Markdown with no type/description validation.
+> VGI414 errors on either; migrate to the two structured tags above.
 
 ---
 
@@ -281,8 +303,14 @@ The old key keeps working (it transparently resolves to the canonical key) but
 | --- | --- |
 | `vgi.description_llm` | `vgi.doc_llm` |
 | `vgi.description_md` | `vgi.doc_md` |
-| `vgi.columns_md` | `vgi.result_columns_md` |
 | `vgi.category_tags` | `vgi.classification_tags` |
+
+**Retired keys** (no transparent fallback — the shape changed; **VGI414** errors):
+
+| Retired key | Replacement |
+| --- | --- |
+| `vgi.result_columns_md` | `vgi.result_columns_schema` (static) / `vgi.result_dynamic_columns_md` (dynamic) |
+| `vgi.columns_md` | `vgi.result_columns_schema` (static) / `vgi.result_dynamic_columns_md` (dynamic) |
 
 ---
 

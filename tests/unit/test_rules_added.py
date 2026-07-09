@@ -116,23 +116,61 @@ def test_pk_missing_column_flagged():
 
 
 def test_table_function_columns_documented():
-    # un-backed dynamic table function (no table of the same name) -> flagged
+    import json
+
+    # un-backed table function that declares no result schema -> flagged
     tf = F.func("main", "read_thing", ftype="table", description="reads things dynamically")
     s = F.schema("main", comment="c", functions=[tf])
     assert "VGI307" in set(codes(F.catalog(s)))
 
-    # documenting columns in vgi.columns_md clears it
+    # declaring a static vgi.result_columns_schema clears it
     tf2 = F.func(
         "main",
         "read_thing",
         ftype="table",
         description="reads things dynamically",
-        tags={"vgi.columns_md": "| col | type |\n| --- | --- |\n| id | INT |"},
+        tags={
+            "vgi.result_columns_schema": json.dumps(
+                [{"name": "id", "type": "INTEGER", "description": "row id"}]
+            )
+        },
     )
     assert "VGI307" not in set(codes(F.catalog(F.schema("main", comment="c", functions=[tf2]))))
 
+    # so does a dynamic vgi.result_dynamic_columns_md
+    tf3 = F.func(
+        "main",
+        "read_thing",
+        ftype="table",
+        description="reads things dynamically",
+        tags={
+            "vgi.result_dynamic_columns_md": (
+                "Varies by mode.\n\n| Name | Type | Description |\n"
+                "| --- | --- | --- |\n| id | INTEGER | row id |\n"
+            )
+        },
+    )
+    assert "VGI307" not in set(codes(F.catalog(F.schema("main", comment="c", functions=[tf3]))))
+
+    # declaring BOTH is a contradiction -> flagged
+    tf4 = F.func(
+        "main",
+        "read_thing",
+        ftype="table",
+        description="reads things dynamically",
+        tags={
+            "vgi.result_columns_schema": json.dumps(
+                [{"name": "id", "type": "INTEGER", "description": "row id"}]
+            ),
+            "vgi.result_dynamic_columns_md": (
+                "| Name | Type | Description |\n| --- | --- | --- |\n| id | INTEGER | row id |\n"
+            ),
+        },
+    )
+    assert "VGI307" in set(codes(F.catalog(F.schema("main", comment="c", functions=[tf4]))))
+
     # a table function backed by a same-named table is covered by the table's
-    # column comments -> not flagged
+    # columns -> not flagged
     backed = F.func("main", "animals", ftype="table", description="scan animals")
     tbl = F.table("main", "animals", comment="Animals table for testing backed table funcs")
     s3 = F.schema("main", comment="c", tables=[tbl], functions=[backed])

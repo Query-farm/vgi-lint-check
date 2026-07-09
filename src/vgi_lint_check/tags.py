@@ -9,6 +9,7 @@ string (a list of ``{"description", "sql"}`` objects) that we decode defensively
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -18,12 +19,16 @@ from .model import (
     TAG_DOC_LINKS,
     TAG_EXAMPLE_QUERIES,
     TAG_EXECUTABLE_EXAMPLES,
+    TAG_RESULT_COLUMNS_SCHEMA,
+    TAG_RESULT_DYNAMIC_COLUMNS_MD,
     AgentTask,
     Category,
     DocLink,
     ExampleQuery,
     ExampleStatement,
     ExecutableExample,
+    ResultColumn,
+    ResultColumnTable,
     TagSet,
 )
 
@@ -290,6 +295,140 @@ def _opt_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def decode_result_columns_schema(tags: TagSet) -> tuple[list[ResultColumn], str | None]:
+    """Decode ``vgi.result_columns_schema`` into (columns, parse_error).
+
+    The tag is a JSON array of ``{name, type, description}`` objects describing a
+    table function's static result schema. Returns ([], None) when the tag is
+    absent; ([], "<reason>") on malformed JSON or an unexpected shape so a rule
+    (VGI321) can flag it rather than crash.
+    """
+    raw = tags.get(TAG_RESULT_COLUMNS_SCHEMA)
+    if raw is None or not str(raw).strip():
+        return [], None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        return [], f"invalid JSON: {e}"
+    if not isinstance(data, list):
+        return [], f"expected a JSON array of column objects, got {type(data).__name__}"
+    cols: list[ResultColumn] = []
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            return [], f"entry #{i} is not an object ({type(item).__name__})"
+        cols.append(
+            ResultColumn(
+                name=_opt_str(item.get("name")),
+                type=_opt_str(item.get("type")),
+                description=_opt_str(item.get("description")),
+                raw=item,
+            )
+        )
+    return cols, None
+
+
+# --- vgi.result_dynamic_columns_md: Markdown with per-variant column tables ---
+# A tolerant GFM pipe-table extractor (never raises). We don't depend on the
+# commonmark ``markdown_it`` instance having the table rule enabled; the format is
+# rigid enough (header + separator + rows) that a small hand parser is clearer and
+# lets us attach the preceding heading as the variant caption.
+_SEP_CELL = re.compile(r"^:?-+:?$")
+_RESULT_COLUMN_HEADERS = ("name", "type", "description")
+
+
+def _split_pipe_row(line: str) -> list[str] | None:
+    """Split a Markdown table row into trimmed cells, or None if it is not one."""
+    s = line.strip()
+    if "|" not in s:
+        return None
+    s = s.removeprefix("|").removesuffix("|")
+    return [c.strip() for c in s.split("|")]
+
+
+def _is_separator_row(cells: list[str]) -> bool:
+    """True when every cell is a `---`/`:--:` alignment marker."""
+    return bool(cells) and all(_SEP_CELL.match(c.replace(" ", "")) for c in cells)
+
+
+def _header_index(cells: list[str]) -> dict[str, int] | None:
+    """Map each required header to its column position, or None if any is missing."""
+    lower = [c.strip().lower() for c in cells]
+    idx: dict[str, int] = {}
+    for key in _RESULT_COLUMN_HEADERS:
+        if key not in lower:
+            return None
+        idx[key] = lower.index(key)
+    return idx
+
+
+def _clean_cell(text: str) -> str:
+    """Strip surrounding backticks/whitespace from a name or type cell."""
+    return text.strip().strip("`").strip()
+
+
+def _extract_column_tables(md: str) -> list[ResultColumnTable]:
+    """Extract every ``Name | Type | Description`` pipe table from Markdown.
+
+    Tolerant: a table with the wrong header is skipped, ragged rows are read by
+    position (missing cells become blank). The nearest preceding Markdown heading
+    becomes the table's caption. Never raises.
+    """
+    lines = (md or "").splitlines()
+    tables: list[ResultColumnTable] = []
+    caption: str | None = None
+    i, n = 0, len(lines)
+    while i < n:
+        header = _split_pipe_row(lines[i])
+        sep = _split_pipe_row(lines[i + 1]) if i + 1 < n else None
+        if header and sep and _is_separator_row(sep):
+            idx = _header_index(header)
+            if idx is not None:
+                cols: list[ResultColumn] = []
+                j = i + 2
+                while j < n:
+                    cells = _split_pipe_row(lines[j])
+                    if cells is None:
+                        break
+
+                    def _cell(
+                        key: str, _cells: list[str] = cells, _idx: dict[str, int] = idx
+                    ) -> str:
+                        k = _idx[key]
+                        return _cells[k] if k < len(_cells) else ""
+
+                    cols.append(
+                        ResultColumn(
+                            name=_clean_cell(_cell("name")) or None,
+                            type=_clean_cell(_cell("type")) or None,
+                            description=_cell("description").strip() or None,
+                        )
+                    )
+                    j += 1
+                tables.append(ResultColumnTable(caption=caption, columns=cols))
+                caption = None
+                i = j
+                continue
+        stripped = lines[i].strip()
+        if stripped.startswith("#"):
+            caption = stripped.lstrip("#").strip() or None
+        i += 1
+    return tables
+
+
+def decode_result_dynamic_columns_md(tags: TagSet) -> tuple[list[ResultColumnTable], str | None]:
+    """Decode ``vgi.result_dynamic_columns_md`` into (variant tables, parse_error).
+
+    Each ``Name | Type | Description`` table describes one result-schema variant of
+    a table function whose schema varies by argument. Returns ([], None) when the
+    tag is absent. A present-but-tableless value is not a parse error here — VGI326
+    flags "no variant table". Never raises.
+    """
+    raw = tags.get(TAG_RESULT_DYNAMIC_COLUMNS_MD)
+    if raw is None or not str(raw).strip():
+        return [], None
+    return _extract_column_tables(str(raw)), None
 
 
 def decode_agent_test_tasks(tags: TagSet) -> tuple[list[AgentTask], str | None]:
