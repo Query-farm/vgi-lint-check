@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -40,6 +41,46 @@ _PERSISTENT_PREFIXES = ("http://", "https://", "unix://", "launch:")
 def is_subprocess_location(location: str) -> bool:
     """Return True when LOCATION spawns a child per process (not a persistent endpoint)."""
     return not location.strip().lower().startswith(_PERSISTENT_PREFIXES)
+
+
+# How long to wait for con.close() before abandoning it (seconds).
+CLOSE_TIMEOUT = 5.0
+
+
+def close_quietly(con: Any, timeout: float = CLOSE_TIMEOUT) -> bool:
+    """Close ``con``, giving up after ``timeout`` instead of blocking forever.
+
+    ``close()`` waits for every cursor's in-flight query. A worker scan wedged
+    inside its first batch cannot be cancelled (``interrupt()`` only lands between
+    batch emissions), so the cursor VGI911 abandoned keeps that query "running"
+    and a plain ``close()`` never returns — one hanging table function would hang
+    the whole lint. Abandoning the close is safe: the connection is in-memory, and
+    the OS reaps the connection and the worker child at process exit.
+
+    Args:
+        con: The haybarn connection to close.
+        timeout: Seconds to wait before abandoning the close.
+
+    Returns:
+        True if the connection closed, False if the close was abandoned.
+    """
+    done = threading.Event()
+
+    def _close() -> None:
+        with contextlib.suppress(Exception):
+            con.close()
+        done.set()
+
+    thread = threading.Thread(target=_close, daemon=True)
+    thread.start()
+    if done.wait(timeout):
+        return True
+    log.warning(
+        "connection close timed out after %gs — a worker scan is wedged and cannot be "
+        "cancelled; abandoning the connection (see VGI911)",
+        timeout,
+    )
+    return False
 
 
 class WorkerConnectionError(RuntimeError):

@@ -1,23 +1,37 @@
-"""VGI9xx — opt-in execution of example queries against the live worker.
+"""VGI9xx — opt-in execution against the live worker.
 
-These rules require a connection and only run when ``--execute`` is set. Modes:
-``explain`` (default, cheapest — validates binding without fetching data),
-``limit`` (runs wrapped in a LIMIT), or ``run`` (executes as written).
+These rules require a connection and only run when ``--execute`` is set. Example
+queries (VGI901-908, VGI910) run in one of three modes: ``explain`` (default,
+cheapest — validates binding without fetching data), ``limit`` (runs wrapped in a
+LIMIT), or ``run`` (executes as written).
+
+VGI911/VGI912 instead probe each relation directly with ``SELECT * ... LIMIT n``
+to check that a scan responds promptly and chunks its output sanely.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
+import re
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 
 from ..connection import ALIAS_RE, sql_str
 from ..findings import Category, Finding, Severity
 from ..model import AttachOption, Catalog, Function, ObjectKind, Table, View
 from ..sql_parse import select_star_call_sql
-from ._util import blank, is_bind_error, is_filter_policy_error, map_queries, run_with_timeout
+from ._util import (
+    QueryTimeout,
+    blank,
+    is_bind_error,
+    is_filter_policy_error,
+    map_isolated_queries,
+    map_queries,
+    run_with_timeout,
+)
 from .base import Rule, RuleContext
 from .registry import register
 
@@ -803,3 +817,290 @@ class ResultSchemaMatches(Rule):
                     )
                 )
         return out
+
+
+# --- scan probes (VGI911 / VGI912) -------------------------------------------
+#
+# The vgi extension reports the shape of the batches a worker put on the wire as
+# `extra_info` on its TABLE_SCAN operator, e.g.
+#
+#     Batches:     "4 (rows: min 1000, avg 2500, max 3000)"
+#     Batch Bytes: "78.1 KiB"
+#
+# These count RecordBatches as they arrived, *before* DuckDB re-slices them to
+# STANDARD_VECTOR_SIZE, so they are the only view of the worker's own chunking.
+# We read them from `get_profiling_information()` rather than the EXPLAIN ANALYZE
+# text, whose fixed-width box wraps the value across lines.
+
+_BATCHES_RE = re.compile(
+    r"(?P<count>\d+)\s*\(\s*rows:\s*min\s*(?P<min>\d+),\s*avg\s*(?P<avg>\d+),\s*max\s*(?P<max>\d+)"
+)
+_BYTES_RE = re.compile(r"^\s*([0-9]*\.?[0-9]+)\s*([A-Za-z]+)\s*$")
+_BYTE_UNITS = {
+    "b": 1,
+    "byte": 1,
+    "bytes": 1,
+    "kib": 1024,
+    "mib": 1024**2,
+    "gib": 1024**3,
+    "tib": 1024**4,
+}
+
+
+def _parse_bytes(text: Any) -> int | None:
+    """Decode the extension's human-readable byte string (``"390.6 KiB"``)."""
+    m = _BYTES_RE.match(str(text or ""))
+    if not m:
+        return None
+    unit = _BYTE_UNITS.get(m.group(2).lower())
+    return None if unit is None else int(float(m.group(1)) * unit)
+
+
+def _fmt_bytes(n: int) -> str:
+    size = float(n)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size < 1024 or unit == "GiB":
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GiB"  # pragma: no cover - unreachable, GiB exits above
+
+
+@dataclass(frozen=True)
+class BatchShape:
+    """How one worker scan chunked its result onto the wire."""
+
+    function: str | None
+    batches: int
+    rows_min: int
+    rows_avg: int
+    rows_max: int
+    bytes_total: int | None
+
+    @property
+    def avg_bytes(self) -> int | None:
+        """Mean bytes per batch, or None when the extension reported no size."""
+        if self.bytes_total is None or self.batches <= 0:
+            return None
+        return self.bytes_total // self.batches
+
+
+@dataclass(frozen=True)
+class ScanProbe:
+    """Outcome of one ``SELECT * FROM <obj> LIMIT n`` against the live worker."""
+
+    sql: str
+    elapsed: float = 0.0
+    shapes: tuple[BatchShape, ...] = ()
+    timed_out: bool = False
+    error: str | None = None
+    skipped: bool = False  # a mandatory-filter policy rejected the bare scan
+
+
+def _shape_from_extra(extra: dict[str, Any]) -> BatchShape | None:
+    m = _BATCHES_RE.search(str(extra.get("Batches") or ""))
+    if not m:
+        return None
+    name = extra.get("Function") or extra.get("Table")
+    return BatchShape(
+        function=str(name) if name else None,
+        batches=int(m.group("count")),
+        rows_min=int(m.group("min")),
+        rows_avg=int(m.group("avg")),
+        rows_max=int(m.group("max")),
+        bytes_total=_parse_bytes(extra.get("Batch Bytes")),
+    )
+
+
+def _scan_shapes(cur: Any) -> tuple[BatchShape, ...]:
+    """Every worker scan's batch shape in the last profiled query on ``cur``.
+
+    Only the vgi extension sets a ``Batches`` key, so non-VGI scans (``range``,
+    a local table) are skipped without needing to match on operator type.
+    """
+    try:
+        info = cur.get_profiling_information()
+    except Exception:  # noqa: BLE001 - profiling unsupported / disabled -> no shapes
+        return ()
+    if isinstance(info, str):
+        try:
+            info = json.loads(info)
+        except ValueError:
+            return ()
+    out: list[BatchShape] = []
+
+    def walk(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        extra = node.get("extra_info")
+        if isinstance(extra, dict):
+            shape = _shape_from_extra(extra)
+            if shape is not None:
+                out.append(shape)
+        children = node.get("children")
+        if isinstance(children, list):
+            for child in children:
+                walk(child)
+
+    walk(info)
+    return tuple(out)
+
+
+def _run_probe(cur: Any, sql: str, timeout: float) -> ScanProbe:
+    """Scan ``sql`` on a disposable cursor, capturing timing and batch shape."""
+    start = time.perf_counter()
+
+    def elapsed() -> float:
+        return time.perf_counter() - start
+
+    try:
+        run_with_timeout(cur, lambda: cur.execute("SET enable_profiling='no_output'"), timeout)
+        res = run_with_timeout(cur, lambda: cur.execute(sql), timeout)
+        run_with_timeout(cur, lambda r=res: r.fetchall(), timeout)
+    except QueryTimeout:
+        return ScanProbe(sql=sql, elapsed=elapsed(), timed_out=True)
+    except Exception as e:  # noqa: BLE001 - classified below
+        if is_filter_policy_error(e):
+            return ScanProbe(sql=sql, elapsed=elapsed(), skipped=True)
+        if is_bind_error(e):
+            # An unbindable probe means a broken example/definition, which
+            # VGI901/VGI903/VGI906 already report — don't double-count it here.
+            return ScanProbe(sql=sql, elapsed=elapsed(), skipped=True)
+        return ScanProbe(sql=sql, elapsed=elapsed(), error=f"{type(e).__name__}: {e}")
+    return ScanProbe(sql=sql, elapsed=elapsed(), shapes=_scan_shapes(cur))
+
+
+def _scan_targets(ctx: RuleContext) -> list[tuple[Any, str, str]]:
+    """(object id, display name, probe SQL) for every scannable worker relation.
+
+    Tables and views scan directly. A table function needs a binding call, so it
+    is probed only when one of its own examples supplies one — and only when no
+    static table already exposes it (that table is probed instead).
+    """
+    cat = ctx.catalog
+    qualifier = cat.qualifier
+    limit = int(ctx.config.scan_limit)
+    out: list[tuple[Any, str, str]] = []
+    for obj in cat.iter_table_like():
+        relation = f'"{qualifier}"."{obj.schema}"."{obj.name}"'
+        out.append((obj.id, obj.name, f"SELECT * FROM {relation} LIMIT {limit}"))
+    for f in cat.iter_all_functions():
+        if f.kind is not ObjectKind.TABLE_FUNCTION or cat.find_table_like(f.name, f.schema):
+            continue
+        star = _star_from_example(f)
+        if star:
+            out.append((f.id, f.name, f"SELECT * FROM ({star}) AS _vgi_probe LIMIT {limit}"))
+    return out
+
+
+def scan_probes(ctx: RuleContext) -> list[tuple[Any, str, ScanProbe]]:
+    """Probe every scannable relation once per run (memoized on the context)."""
+    if ctx._scan_probes is not None:
+        return ctx._scan_probes  # type: ignore[no-any-return]
+    con = ctx.connection
+    targets = _scan_targets(ctx) if con is not None else []
+    if not targets:
+        ctx._scan_probes = []
+        return ctx._scan_probes  # type: ignore[no-any-return]
+    timeout = ctx.config.scan_timeout or ctx.config.execute_timeout
+
+    def work(item: tuple[Any, str, str], cur: Any) -> ScanProbe:
+        return _run_probe(cur, item[2], timeout)
+
+    # Isolated cursors: a wedged scan must not poison the rest of the run. The
+    # probe swallows QueryTimeout into `timed_out`, so say so explicitly —
+    # otherwise the wedged cursor would be close()d, and close() blocks on it.
+    results = map_isolated_queries(
+        con,
+        targets,
+        work,
+        ctx.config.execute_concurrency,
+        wedged=lambda p: p.timed_out,
+    )
+    ctx._scan_probes = [(t[0], t[1], p) for t, p in zip(targets, results, strict=True)]
+    return ctx._scan_probes  # type: ignore[no-any-return]
+
+
+_SCAN_TARGETS = (ObjectKind.TABLE, ObjectKind.VIEW, ObjectKind.TABLE_FUNCTION)
+
+
+@register
+class ScanResponds(Rule):
+    code = "VGI911"
+    name = "scan-responds"
+    category = EXEC
+    default_severity = Severity.ERROR
+    targets = _SCAN_TARGETS
+    requires_connection = True
+    summary = "Every table, view, and table function must yield its first rows promptly."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        limit = int(ctx.config.scan_limit)
+        timeout = ctx.config.scan_timeout or ctx.config.execute_timeout
+        for obj_id, name, probe in scan_probes(ctx):
+            if probe.timed_out:
+                yield self.finding(
+                    ctx,
+                    obj_id,
+                    f"SELECT * FROM {name} LIMIT {limit} did not return within {timeout:g}s",
+                    "the worker scan is hanging or unbounded — emit a first batch promptly "
+                    "from next_batch(); a scan blocked inside its first batch cannot be "
+                    "cancelled, so it wedges any client that touches it",
+                )
+            elif probe.error:
+                yield self.finding(
+                    ctx,
+                    obj_id,
+                    f"SELECT * FROM {name} LIMIT {limit} failed: {probe.error}",
+                    "make the relation scannable — a bare LIMIT read is the first thing "
+                    "any client (and any agent) will try",
+                )
+
+
+@register
+class ScanBatchShape(Rule):
+    code = "VGI912"
+    name = "scan-batch-shape"
+    category = EXEC
+    default_severity = Severity.WARNING
+    targets = _SCAN_TARGETS
+    requires_connection = True
+    summary = "A worker scan should emit bounded batches, not one oversized batch."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cfg = ctx.config
+        for obj_id, name, probe in scan_probes(ctx):
+            for shape in probe.shapes:
+                reason = self._verdict(shape, cfg)
+                if reason is None:
+                    continue
+                scan = (
+                    name
+                    if not shape.function or shape.function == name
+                    else f"{name} (scan of {shape.function})"
+                )
+                size = "" if shape.avg_bytes is None else f", {_fmt_bytes(shape.avg_bytes)}/batch"
+                yield self.finding(
+                    ctx,
+                    obj_id,
+                    f"{scan} emitted {shape.batches} batch(es) "
+                    f"(rows: min {shape.rows_min}, avg {shape.rows_avg}, "
+                    f"max {shape.rows_max}{size}) — {reason}",
+                    "return bounded batches from next_batch() and let the framework call it "
+                    "again — one oversized batch defeats LIMIT push-down (the scan cannot stop "
+                    "early) and forces the HTTP transport to buffer the whole result set",
+                )
+
+    @staticmethod
+    def _verdict(shape: BatchShape, cfg: Any) -> str | None:
+        """The first threshold this shape breaches, or None when it is well-behaved."""
+        if shape.batches == 1 and shape.rows_max > cfg.single_batch_max_rows:
+            return (
+                f"the entire result arrived as one batch of {shape.rows_max} rows "
+                f"(> {cfg.single_batch_max_rows})"
+            )
+        if shape.rows_avg > cfg.avg_batch_max_rows:
+            return f"mean batch is {shape.rows_avg} rows (> {cfg.avg_batch_max_rows})"
+        avg_bytes = shape.avg_bytes
+        if avg_bytes is not None and avg_bytes > cfg.max_batch_bytes:
+            return f"mean batch is {_fmt_bytes(avg_bytes)} (> {_fmt_bytes(cfg.max_batch_bytes)})"
+        return None

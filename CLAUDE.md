@@ -38,6 +38,9 @@ Pipeline: **connect → load → model → rules/engine → reporting.**
   …)`), keep the connection open where needed (`with_attached_catalog`), DETACH/close.
   v1 supports **local subprocess** and **no-auth HTTP** workers only; `LOCATION`
   is executed as a command — a documented trust boundary, never attacker-controlled.
+  Teardown goes through **`close_quietly`**, never a bare `con.close()`: a worker
+  scan wedged inside its first batch is uncancellable, and `close()` blocks on it
+  forever (see the VGI911 note below).
 - `loader.py` — reads DuckDB system tables + decodes reserved `vgi.*` tags into the model.
 - `model.py` — the immutable `Catalog`/`Schema`/`Table`/`Column`/`Function`/… graph
   plus `iter_*` accessors. Reserved tag keys live here (`TAG_*` constants +
@@ -90,6 +93,37 @@ VGI7xx pragmas, VGI8xx constraints, VGI9xx execution, VGI10xx attach options,
 VGI11x structure, **VGI13xx tutorials** (see below — a *separate* registry). The
 profile is **strict by default**; users opt out via `[tool.vgi-lint-check]`
 `ignore`/`severity`.
+
+## Scan probes (VGI911 / VGI912)
+
+`SELECT * FROM <relation> LIMIT n` against every table, view, and (via an example's
+binding call) table function. One probe per relation, memoized on `RuleContext`
+and shared by both rules — `execution.scan_probes(ctx)`.
+
+- **VGI911 scan-responds** (error) — the scan must return within
+  `execution.scan_timeout`. Catches a hanging/unbounded producer.
+- **VGI912 scan-batch-shape** (warning) — reads the vgi extension's `Batches` /
+  `Batch Bytes` `extra_info` off the `TABLE_SCAN` node of
+  `get_profiling_information()`. These count RecordBatches **as they came off the
+  wire**, before DuckDB re-slices to `STANDARD_VECTOR_SIZE`, so they are the only
+  view of the worker's own chunking. Parse `extra_info`, never the `EXPLAIN
+  ANALYZE` text — its fixed-width box wraps the value across lines. Requires the
+  extension at ≥ `f38b138`; a missing `Batches` key just means no finding.
+
+**Two hard constraints, both verified against a live worker:**
+
+1. `con.interrupt()` only takes effect **between** a scan's batch emissions. A
+   worker blocked inside its first batch cannot be cancelled at all, and the
+   cursor running it is unusable forever — `cur.close()` on it *blocks*.
+2. Therefore probes run through `_util.map_isolated_queries`, which gives each
+   item a **fresh, disposable cursor** and abandons (never closes) a wedged one.
+   `_run_probe` swallows `QueryTimeout` into `ScanProbe.timed_out`, so it must
+   report that back via the `wedged=` predicate or the cursor gets closed and the
+   run hangs. Never probe on the parent connection (`map_queries` does when
+   `concurrency <= 1`) — a wedge there poisons every later rule.
+
+Thresholds (`[execution]`): `scan_limit`, `scan_timeout`, `single_batch_max_rows`
+(fires only when `batches == 1`), `avg_batch_max_rows`, `max_batch_bytes`.
 
 **Tutorial rules are different:** they subclass `TutorialRule` in `rules/tutorials.py`,
 register via `@register_tutorial` into a dedicated `TUTORIAL_REGISTRY` (so they never

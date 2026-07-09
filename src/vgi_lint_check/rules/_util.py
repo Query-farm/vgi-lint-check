@@ -35,6 +35,56 @@ def map_queries(
         return list(ex.map(run, work))
 
 
+def map_isolated_queries(
+    con: Any,
+    items: Iterable[Any],
+    fn: Callable[[Any, Any], Any],
+    concurrency: int,
+    *,
+    wedged: Callable[[Any], bool] | None = None,
+) -> list[Any]:
+    """Like :func:`map_queries`, but a *fresh, disposable* cursor per item.
+
+    For probes that may wedge. ``con.interrupt()`` only takes effect between a
+    scan's chunk emissions, so a worker that blocks inside its first batch cannot
+    be cancelled: the cursor running it is unusable forever. Reusing a cursor
+    across items — or running on ``con`` itself, as :func:`map_queries` does when
+    ``concurrency <= 1`` — would spread that wedge to every later query in the run.
+
+    One cursor per item confines it. A cursor is *abandoned* rather than closed
+    when ``fn`` raises :class:`QueryTimeout`, or when ``wedged(result)`` says so —
+    ``close()`` blocks on the stuck query, so a caller that swallows the timeout
+    into a result object must report it back through ``wedged``. The leaked cursor
+    is reaped at process exit. The pool thread is not held, because
+    ``run_with_timeout`` runs the query on its own daemon thread.
+    """
+    work = list(items)
+    if not work:
+        return []
+
+    def run(it: Any) -> Any:
+        cur = con.cursor()
+        stuck = True  # assume the worst until we know the cursor is safe to close
+        try:
+            result = fn(it, cur)
+            stuck = bool(wedged(result)) if wedged else False
+            return result
+        except QueryTimeout:
+            raise
+        except Exception:
+            stuck = False  # a raised engine error left the cursor usable
+            raise
+        finally:
+            if not stuck:
+                with contextlib.suppress(Exception):
+                    cur.close()
+
+    if concurrency <= 1 or len(work) <= 1:
+        return [run(it) for it in work]
+    with ThreadPoolExecutor(max_workers=concurrency) as ex:
+        return list(ex.map(run, work))
+
+
 def blank(s: Any) -> bool:
     """True when ``s`` is None, empty, or only whitespace."""
     return not (s and str(s).strip())

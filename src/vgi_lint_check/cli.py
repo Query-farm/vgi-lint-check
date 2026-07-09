@@ -15,7 +15,7 @@ import click
 
 from . import reporting
 from .config import Config, load_config
-from .connection import WorkerConnectionError, connect_loaded
+from .connection import WorkerConnectionError, close_quietly, connect_loaded
 from .core import lint_worker
 from .exit_codes import EXIT_CONNECTION, EXIT_FINDINGS, EXIT_TOOL_ERROR
 from .findings import Severity
@@ -392,7 +392,7 @@ def versions_cmd(location: str, install: bool) -> None:
     try:
         catalogs = discover_catalogs(con, location)
     finally:
-        con.close()
+        close_quietly(con)
     for c in catalogs:
         click.echo(
             f"catalog: {c.catalog}  (impl {c.implementation_version or '—'}, "

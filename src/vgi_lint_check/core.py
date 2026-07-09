@@ -21,6 +21,7 @@ from .config import Config
 from .connection import (
     apply_setup_sql,
     attached,
+    close_quietly,
     connect_loaded,
     derive_alias,
     is_subprocess_location,
@@ -122,7 +123,7 @@ def lint_worker(
             for dv in versions
         ]
     finally:
-        con.close()
+        close_quietly(con)
         if tracer is not None:
             tracer.dump()
     _maybe_warn_relaunch(location, meter, config)
@@ -230,7 +231,7 @@ def with_attached_catalogs(
                 )
             return runner(catalogs, con)
     finally:
-        con.close()
+        close_quietly(con)
 
 
 def load_catalog(
@@ -321,7 +322,7 @@ def _load_catalog(
             # is still attached so it can run SQL against the worker.
             return _while_open(catalog, con) if _while_open is not None else catalog
     finally:
-        con.close()
+        close_quietly(con)
 
 
 def _choose(

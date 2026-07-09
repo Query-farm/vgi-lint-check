@@ -43,6 +43,10 @@ class RuleContext:
     # Lazily-computed, run-shared corpus coverage (parse-based). Do not read
     # directly — call ``corpus_coverage()`` so it is parsed at most once per run.
     _corpus: Any = None  # corpus.CorpusCoverage
+    # Lazily-computed scan probes, shared by VGI911 (responsiveness) and VGI912
+    # (batch shape) so each relation is scanned once per run. Populated by
+    # ``rules.execution.scan_probes``; None means "not probed yet".
+    _scan_probes: Any = None  # list[tuple[ObjectId, str, execution.ScanProbe]]
 
     def corpus_coverage(self) -> Any:
         """Parse-based coverage of the worker surface (memoized for the run)."""

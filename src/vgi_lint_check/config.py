@@ -138,6 +138,18 @@ class Config:
     # lower for a rate-limited worker via --execute-concurrency / config.
     execute_concurrency: int = field(default_factory=_default_execute_concurrency)
     slow_example_seconds: float = 5.0  # warn on executable examples slower than this (0 = off)
+    # VGI911/VGI912 scan probe: `SELECT * FROM <obj> LIMIT scan_limit`, run on a
+    # disposable cursor under its own (shorter) cap. A worker wedged inside its
+    # first batch ignores interrupt(), so this timeout is the only backstop.
+    scan_limit: int = 10
+    scan_timeout: float = 10.0
+    # VGI912 batch-shape thresholds, read from the vgi extension's EXPLAIN ANALYZE
+    # `Batches` / `Batch Bytes` extra_info. A producer that returns its whole
+    # result in one batch defeats LIMIT push-down and forces the HTTP transport to
+    # buffer the entire result set.
+    single_batch_max_rows: int = 100_000  # batches == 1 and rows > this
+    avg_batch_max_rows: int = 300_000  # mean rows per batch above this
+    max_batch_bytes: int = 64 * 1024 * 1024  # mean bytes per batch above this
     sample_size: int = 100  # VGI810/VGI811: rows/values sampled per constraint probe
     sample_timeout: float = 10.0  # VGI810/VGI811: per-query cap (shorter than execute_timeout)
     check_links: bool = False  # enable network rules (validate description URLs)
@@ -290,6 +302,11 @@ def from_table(raw: dict[str, Any]) -> Config:
         cfg.execute_timeout = float(ex.get("timeout", cfg.execute_timeout))
         cfg.execute_concurrency = int(ex.get("concurrency", cfg.execute_concurrency))
         cfg.slow_example_seconds = float(ex.get("slow_seconds", cfg.slow_example_seconds))
+        cfg.scan_limit = int(ex.get("scan_limit", cfg.scan_limit))
+        cfg.scan_timeout = float(ex.get("scan_timeout", cfg.scan_timeout))
+        cfg.single_batch_max_rows = int(ex.get("single_batch_max_rows", cfg.single_batch_max_rows))
+        cfg.avg_batch_max_rows = int(ex.get("avg_batch_max_rows", cfg.avg_batch_max_rows))
+        cfg.max_batch_bytes = int(ex.get("max_batch_bytes", cfg.max_batch_bytes))
         cfg.sample_size = int(ex.get("sample_size", cfg.sample_size))
         cfg.sample_timeout = float(ex.get("sample_timeout", cfg.sample_timeout))
     return cfg

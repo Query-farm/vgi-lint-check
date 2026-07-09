@@ -240,6 +240,8 @@ skipped unless `--execute` is passed.
 | `VGI907` | warning | executable-example-result-matches | Each executable-example statement's output should match its expected_result. | requires `--execute` |
 | `VGI908` | warning | executable-example-slow | An executable example slower than options.slow_example_seconds bloats CI. | requires `--execute` |
 | `VGI910` | warning | result-schema-matches | A table function's declared result schema must match what it returns (via DESCRIBE). | requires `--execute` |
+| `VGI911` | error | scan-responds | Every table, view, and table function must yield its first rows promptly. | requires `--execute` |
+| `VGI912` | warning | scan-batch-shape | A worker scan should emit bounded batches, not one oversized batch. | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
 ## Tutorials (VGI13xx)
@@ -277,4 +279,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_187 rules._
+_189 rules._
