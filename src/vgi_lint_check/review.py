@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import uuid
@@ -25,6 +26,11 @@ from typing import Any, Protocol
 from .model import Catalog, ObjectKind
 
 SCORE_KEYS = ("accuracy", "clarity", "completeness", "audience_fit")
+
+# Bump when the rubric, the actor preamble, or the CLI system prompt changes, so
+# cached verdicts produced by the old wording are not silently reused. The backend
+# fingerprint (model + this revision) salts every cache key.
+PROMPT_REVISION = "2"
 _RUBRIC = (
     "You are reviewing the documentation quality of objects exposed by a data "
     "worker, for use by LLM/agent consumers. For EACH object below, judge its "
@@ -83,6 +89,44 @@ class _ResendConversation:
         return reply
 
 
+# The `claude` CLI is an agent, not a completion endpoint: every `claude -p` call
+# loads the full Claude Code system prompt, all built-in tool schemas, the cwd's
+# CLAUDE.md, user settings, and any configured MCP servers. Measured against a live
+# worker that is ~20,600 input tokens *per call*, before a byte of our own prompt —
+# and `--resume` does not amortize it (the harness prompt is re-sent every turn), so
+# a 12-turn `simulate` task paid it twelve times.
+#
+# These flags strip the agent back to a plain completion: no tools, no MCP servers,
+# no settings/CLAUDE.md discovery, and our own system prompt. Set
+# VGI_LINT_AI_INHERIT_CONTEXT=1 to opt back in (e.g. to let a worker repo's CLAUDE.md
+# inform the judge) at ~100x the token cost, and note that doing so makes verdicts
+# depend on the directory the lint happens to run from.
+_PRUNE_FLAGS = [
+    "--tools",
+    "",
+    "--strict-mcp-config",
+    "--mcp-config",
+    '{"mcpServers":{}}',
+    "--setting-sources",
+    "",
+]
+_CLI_SYSTEM_PROMPT = (
+    "You are a precise evaluator working for a metadata linter. Follow the user's "
+    "instructions exactly and return only what they ask for. When they ask for JSON, "
+    "emit only the JSON — no prose, no commentary, no code fences."
+)
+
+# The interactive Claude Code default is whatever the user last selected — often a
+# premium 1M-context Opus tier. Pin a model so the "runs on your subscription" backend
+# does not silently bill an order of magnitude more than the pay-per-token one.
+DEFAULT_CLI_MODEL = "sonnet"
+
+
+def _inherit_context() -> bool:
+    """True when the user opted into the full Claude Code agent context (expensive)."""
+    return os.environ.get("VGI_LINT_AI_INHERIT_CONTEXT", "") not in ("", "0")
+
+
 @dataclass
 class ClaudeCliBackend:
     """Runs the local ``claude`` CLI in headless mode (uses your subscription)."""
@@ -90,24 +134,35 @@ class ClaudeCliBackend:
     model: str | None = None
     timeout: float = 180.0
 
-    def _run(self, args: list[str]) -> str:
-        """Run ``claude -p`` with ``args`` and return stdout (raise on failure)."""
+    def fingerprint(self) -> str:
+        """Identity of the judge, for salting verdict caches."""
+        return f"claude:{self.model or DEFAULT_CLI_MODEL}:{PROMPT_REVISION}"
+
+    def _run(self, args: list[str], prompt: str) -> str:
+        """Run ``claude -p`` with ``args``, feeding ``prompt`` on stdin.
+
+        The prompt goes on stdin, not argv: ``--tools`` is variadic and would swallow a
+        trailing positional prompt, and a batched review prompt can be large.
+        """
         if shutil.which("claude") is None:
             raise RuntimeError(
                 "the 'claude' CLI is not on PATH — install Claude Code and sign in "
                 "with your subscription, or use --review-backend api with an API key"
             )
         cmd = ["claude", "-p", *args]
-        if self.model:
-            cmd += ["--model", self.model]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
+        if not _inherit_context():
+            cmd += [*_PRUNE_FLAGS, "--system-prompt", _CLI_SYSTEM_PROMPT]
+        cmd += ["--model", self.model or DEFAULT_CLI_MODEL]
+        proc = subprocess.run(
+            cmd, input=prompt, capture_output=True, text=True, timeout=self.timeout
+        )
         if proc.returncode != 0:
             raise RuntimeError(f"claude CLI failed: {proc.stderr.strip() or proc.stdout.strip()}")
         return proc.stdout
 
     def complete(self, prompt: str) -> str:
         """Run a single ``claude -p`` call and return its stdout."""
-        return self._run([prompt])
+        return self._run([], prompt)
 
     def conversation(self) -> Conversation:
         """A real ``claude`` session: turn 1 sets a session id, later turns resume it."""
@@ -117,8 +172,9 @@ class ClaudeCliBackend:
 class _ClaudeSession:
     """A ``claude`` CLI session: ``--session-id`` on the first turn, ``--resume`` after.
 
-    Subsequent turns send only the new message; the CLI restores prior context
-    server-side, so the growing transcript isn't re-transmitted each turn.
+    Subsequent turns send only the new message; the CLI restores the prior transcript,
+    so the growing conversation isn't re-transmitted. The fixed system prompt *is* re-sent
+    every turn, which is why keeping it small (see ``_PRUNE_FLAGS``) matters most here.
     """
 
     def __init__(self, backend: ClaudeCliBackend) -> None:
@@ -130,7 +186,7 @@ class _ClaudeSession:
     def send(self, message: str) -> str:
         """Send ``message`` on this session (starting or resuming it)."""
         flag = "--resume" if self._resume else "--session-id"
-        out = self._backend._run([flag, self._session_id, message])
+        out = self._backend._run([flag, self._session_id], message)
         self._resume = True
         return out
 
@@ -139,8 +195,15 @@ class _ClaudeSession:
 class AnthropicApiBackend:
     """Calls the Anthropic API (pay-per-token; needs ANTHROPIC_API_KEY)."""
 
-    model: str = "claude-sonnet-4-6"
-    max_tokens: int = 4096
+    model: str = "claude-sonnet-5"
+    # A doc-review batch is `batch_size` objects x up to 3 suggestions each; 4096 was
+    # tight enough that truncation was routine (hence the salvage path in
+    # `_extract_json_array`, which still covers the tail case).
+    max_tokens: int = 8192
+
+    def fingerprint(self) -> str:
+        """Identity of the judge, for salting verdict caches."""
+        return f"api:{self.model}:{PROMPT_REVISION}"
 
     def _complete_messages(self, messages: list[dict[str, str]]) -> str:
         """Send a full message list to the API and return the text response."""
@@ -197,8 +260,19 @@ def make_backend(name: str, model: str | None = None) -> ReviewBackend:
     if name == "claude":
         return ClaudeCliBackend(model=model)
     if name == "api":
-        return AnthropicApiBackend(model=model or "claude-sonnet-4-6")
+        return AnthropicApiBackend(model=model or "claude-sonnet-5")
     raise ValueError(f"unknown review backend {name!r} (expected 'claude' or 'api')")
+
+
+def backend_fingerprint(backend: ReviewBackend) -> str:
+    """Cache salt identifying the judge (model + prompt revision).
+
+    Verdicts are only comparable across runs that used the same judge, so this salts
+    every cache key. Without it, switching model or editing a prompt silently reuses
+    verdicts produced by a different judge.
+    """
+    fn = getattr(backend, "fingerprint", None)
+    return fn() if callable(fn) else f"{type(backend).__name__}:{PROMPT_REVISION}"
 
 
 # --------------------------------------------------------------------------
@@ -273,9 +347,9 @@ def build_items(catalog: Catalog) -> list[dict[str, Any]]:
     return items
 
 
-def content_hash(item: dict[str, Any]) -> str:
-    """Stable hash of the material judged, for the verdict cache."""
-    blob = json.dumps(item, sort_keys=True, default=str)
+def content_hash(item: dict[str, Any], salt: str = "") -> str:
+    """Stable hash of the material judged (and the judge), for the verdict cache."""
+    blob = json.dumps([salt, item], sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
@@ -445,11 +519,12 @@ def review_catalog(
     the whole pass; the cache is written once on the main thread.
     """
     items = build_items(catalog)
+    salt = backend_fingerprint(backend)
     reviews: list[ObjectReview] = []
     to_judge: list[dict[str, Any]] = []
     cached = 0
     for item in items:
-        hit = cache.get(content_hash(item)) if cache else None
+        hit = cache.get(content_hash(item, salt)) if cache else None
         if hit is not None:
             reviews.append(hit)
             cached += 1
@@ -481,7 +556,7 @@ def review_catalog(
             reviews.append(r)
             judged += 1
             if cache:
-                cache.put(content_hash(item), r)
+                cache.put(content_hash(item, salt), r)
     if cache:
         cache.save()
 

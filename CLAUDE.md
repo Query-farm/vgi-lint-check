@@ -70,6 +70,19 @@ Pipeline: **connect → load → model → rules/engine → reporting.**
 - `review.py` — LLM-as-judge doc review (`ReviewBackend`, `make_backend`,
   `ReviewCache`). Backend is single-shot `complete(prompt) -> str`; default is the
   local `claude -p` CLI (runs on the user's subscription), `api` uses Anthropic API.
+  **`claude -p` is an agent, not a completion endpoint** — left alone it loads Claude
+  Code's tool schemas, MCP servers, settings and the cwd's CLAUDE.md on *every* call
+  (~20.6k input tokens, re-sent on each `--resume` turn too). `ClaudeCliBackend` strips
+  that back to a plain completion (`--tools "" --strict-mcp-config --mcp-config
+  '{"mcpServers":{}}' --setting-sources "" --system-prompt …`) and pins
+  `DEFAULT_CLI_MODEL` (the interactive default is a premium 1M-context tier). Measured
+  on `vgi-units`: `--ai` went 694k → 53k input tokens, $1.67 → $0.29. The prompt rides on
+  **stdin**, never argv — `--tools` is variadic and swallows a positional prompt.
+  `VGI_LINT_AI_INHERIT_CONTEXT=1` opts back into the full agent context (~100x cost, and
+  verdicts then depend on the directory the lint runs from).
+  Verdict caches are salted with `backend_fingerprint()` (model + `PROMPT_REVISION`), so
+  changing model or editing the rubric/actor prompt misses the cache instead of silently
+  reusing another judge's verdicts — **bump `PROMPT_REVISION` when you touch a prompt.**
 - `simulate.py` — agent-suitability testing (see below).
 - `tutorials/` + `rules/tutorials.py` — the **tutorials** subsystem: executable
   `.vgi.md` worker tutorials, linted / executed / rendered / LLM-planned (see below).

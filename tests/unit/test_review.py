@@ -66,6 +66,92 @@ def test_content_hash_changes_with_content():
     assert rv.content_hash(a) == rv.content_hash(dict(a))
 
 
+def test_content_hash_changes_with_judge():
+    # A verdict is only reusable if the same judge produced it: swapping model or
+    # bumping the prompt revision must miss the cache, not silently reuse.
+    item = {"object": "x", "doc_llm": "one"}
+    assert rv.content_hash(item, "claude:sonnet:2") != rv.content_hash(item, "claude:opus:2")
+    assert rv.content_hash(item, "claude:sonnet:2") != rv.content_hash(item, "claude:sonnet:3")
+    assert rv.content_hash(item) != rv.content_hash(item, "claude:sonnet:2")
+
+
+def test_backend_fingerprint_tracks_model_and_revision():
+    assert (
+        rv.backend_fingerprint(rv.make_backend("claude")) == f"claude:sonnet:{rv.PROMPT_REVISION}"
+    )
+    assert rv.backend_fingerprint(rv.make_backend("claude", "opus")).startswith("claude:opus:")
+    assert rv.backend_fingerprint(rv.make_backend("api")).startswith("api:claude-sonnet-5:")
+
+    class Bare:  # a complete()-only backend still yields a stable salt
+        def complete(self, prompt: str) -> str:
+            return ""
+
+    assert rv.backend_fingerprint(Bare()) == f"Bare:{rv.PROMPT_REVISION}"
+
+
+def test_cli_backend_prunes_agent_context_and_pins_model(monkeypatch):
+    # Every `claude -p` call otherwise loads Claude Code's tools, MCP servers, settings
+    # and CLAUDE.md (~20k tokens/call). Guard the flags that strip them, and the pinned
+    # model — the interactive default is a premium tier.
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["input"] = cmd, kw.get("input")
+        return type("P", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(rv.shutil, "which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr(rv.subprocess, "run", fake_run)
+    monkeypatch.delenv("VGI_LINT_AI_INHERIT_CONTEXT", raising=False)
+
+    assert rv.ClaudeCliBackend().complete("JUDGE THIS") == "ok"
+    cmd = seen["cmd"]
+    assert cmd[:2] == ["claude", "-p"]
+    assert "--tools" in cmd and "--strict-mcp-config" in cmd and "--setting-sources" in cmd
+    assert "--system-prompt" in cmd
+    assert cmd[cmd.index("--model") + 1] == rv.DEFAULT_CLI_MODEL
+    # `--tools` is variadic, so the prompt must arrive on stdin or it gets swallowed.
+    assert seen["input"] == "JUDGE THIS"
+    assert "JUDGE THIS" not in cmd
+
+
+def test_cli_backend_inherit_context_escape_hatch(monkeypatch):
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return type("P", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(rv.shutil, "which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr(rv.subprocess, "run", fake_run)
+    monkeypatch.setenv("VGI_LINT_AI_INHERIT_CONTEXT", "1")
+
+    rv.ClaudeCliBackend().complete("hi")
+    assert "--tools" not in seen["cmd"] and "--system-prompt" not in seen["cmd"]
+
+
+def test_cli_session_resumes_with_stdin_message(monkeypatch):
+    calls: list[tuple[list, object]] = []
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd, kw.get("input")))
+        return type("P", (), {"returncode": 0, "stdout": "reply", "stderr": ""})()
+
+    monkeypatch.setattr(rv.shutil, "which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr(rv.subprocess, "run", fake_run)
+    monkeypatch.delenv("VGI_LINT_AI_INHERIT_CONTEXT", raising=False)
+
+    convo = rv.ClaudeCliBackend().conversation()
+    assert convo.send("first") == "reply"
+    convo.send("second")
+
+    assert "--session-id" in calls[0][0] and calls[0][1] == "first"
+    assert "--resume" in calls[1][0] and calls[1][1] == "second"
+    # Same session id across turns, and neither message rides on argv.
+    sid = calls[0][0][calls[0][0].index("--session-id") + 1]
+    assert calls[1][0][calls[1][0].index("--resume") + 1] == sid
+    assert "first" not in calls[0][0] and "second" not in calls[1][0]
+
+
 def test_parse_reviews_extracts_json_amid_prose():
     items = [{"object": "v.main.animals", "kind": "table"}]
     raw = (

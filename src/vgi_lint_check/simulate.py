@@ -26,7 +26,12 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .model import TAG_DOC_LLM, AgentTask, Catalog, Function, ObjectKind, Table
-from .review import ReviewBackend, ReviewCache, make_conversation  # backends + cache + sessions
+from .review import (  # backends + cache + sessions
+    ReviewBackend,
+    ReviewCache,
+    backend_fingerprint,
+    make_conversation,
+)
 from .rules._util import (
     is_bind_error,
     is_filter_policy_error,
@@ -911,8 +916,8 @@ def build_suggestions(run: TaskRun, m: PathMetrics) -> list[str]:
 # --------------------------------------------------------------------------
 # Suite runner + cache
 # --------------------------------------------------------------------------
-def _task_key(overview: str, task: AgentTask, data_version: str | None) -> str:
-    blob = json.dumps([overview, task.raw, data_version], sort_keys=True, default=str)
+def _task_key(overview: str, task: AgentTask, data_version: str | None, salt: str = "") -> str:
+    blob = json.dumps([salt, overview, task.raw, data_version], sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
@@ -933,6 +938,7 @@ def simulate_tasks(
     """
     limits = limits or SimLimits()
     listing = build_listing(catalog)
+    salt = backend_fingerprint(backend)
 
     def judge(task: AgentTask) -> TaskVerdict:
         best: TaskVerdict | None = None
@@ -957,7 +963,7 @@ def simulate_tasks(
     misses: list[tuple[int, AgentTask, str]] = []
     cached = 0
     for i, task in enumerate(catalog.agent_test_tasks):
-        key = _task_key(listing, task, catalog.data_version)
+        key = _task_key(listing, task, catalog.data_version, salt)
         hit = _cache_get(cache, key)
         if hit is not None:
             slots[i] = hit
