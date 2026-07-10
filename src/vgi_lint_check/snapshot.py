@@ -75,3 +75,33 @@ def fetch_function_arguments(con: Any, alias: str) -> list[dict[str, Any]]:
         return []
     names = [d[0] for d in cur.description]
     return [dict(zip(names, row, strict=False)) for row in cur.fetchall()]
+
+
+# Selecting * (rather than just ``handler``) keeps us resilient to column
+# additions/renames; the caller reads the ``handler`` column by name with .get().
+_COPY_FORMATS_SQL = """
+SELECT * FROM vgi_copy_formats()
+WHERE catalog_name = ?
+"""
+
+
+def fetch_copy_handlers(con: Any, alias: str) -> list[dict[str, Any]]:
+    """Copy-format handler rows from ``vgi_copy_formats()``, scoped to ``alias``.
+
+    The ``vgi`` SDK registers each custom ``COPY ... (FORMAT 'x')`` handler as a
+    table function under its handler name, but that function binds *only* inside a
+    COPY statement and hard-errors on direct invocation — and COPY statements can
+    never be serialized by ``json_serialize_sql``, so no example/test SQL can ever
+    both parse (for coverage) and execute. Such handlers are therefore not part of
+    the coverable surface; the caller uses the ``handler`` column to exclude them.
+
+    Returns ``[]`` when the table function is unavailable — it only exists in
+    newer ``vgi`` extensions, so an older extension must degrade silently (the
+    linter then behaves exactly as before), never crash.
+    """
+    try:
+        cur = con.execute(_COPY_FORMATS_SQL, [alias])
+    except Exception:  # noqa: BLE001 - version skew: table function not present
+        return []
+    names = [d[0] for d in cur.description]
+    return [dict(zip(names, row, strict=False)) for row in cur.fetchall()]

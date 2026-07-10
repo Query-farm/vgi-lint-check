@@ -136,6 +136,53 @@ def test_no_suite_means_test_ratio_none():
     assert cov.test_ratio() is None
 
 
+def _copy_catalog():
+    """A worker with a normal table-fn plus a COPY-format handler table-fn.
+
+    The COPY handler binds only inside ``COPY … (FORMAT 'x')`` (which
+    ``json_serialize_sql`` cannot serialize), so it can never be demonstrated or
+    tested — it must not be counted in the coverable surface.
+    """
+    forecast = F.func("main", "forecast", "table")  # normal, undemonstrated
+    copy_fixed = F.func("main", "copy_fixed", "table")  # COPY-FROM handler
+    copy_to_fixed = F.func("main", "copy_to_fixed", "table")  # COPY-TO handler
+    return F.catalog(F.schema("main", functions=[forecast, copy_fixed, copy_to_fixed]))
+
+
+def test_copy_handler_excluded_from_universe():
+    cat = _copy_catalog()
+    cat.copy_handlers = frozenset({"copy_fixed", "copy_to_fixed"})
+    cov = compute_corpus_coverage(cat)
+    # The COPY handlers vanish from the coverable surface; the normal table-fn stays.
+    assert "main.forecast" in cov.universe
+    assert "main.copy_fixed" not in cov.universe
+    assert "main.copy_to_fixed" not in cov.universe
+    undemo = {oid.name for oid in cov.undemonstrated()}
+    assert "forecast" in undemo  # a normal table-fn is still flagged
+    assert "copy_fixed" not in undemo
+    assert "copy_to_fixed" not in undemo
+
+
+def test_non_copy_table_function_still_flagged():
+    # Same surface, but the extension reports no copy handlers (older extension or
+    # a genuinely direct-callable table function): it must remain coverable.
+    cat = _copy_catalog()
+    assert cat.copy_handlers == frozenset()
+    cov = compute_corpus_coverage(cat)
+    assert "main.copy_fixed" in cov.universe
+    undemo = {oid.name for oid in cov.undemonstrated()}
+    assert {"forecast", "copy_fixed", "copy_to_fixed"} <= undemo
+
+
+def test_copy_handler_excluded_from_undemonstrated_rule():
+    cat = _copy_catalog()
+    cat.copy_handlers = frozenset({"copy_fixed", "copy_to_fixed"})
+    flagged = {f.object_id.name for f in ObjectUndemonstrated().check(_ctx(cat))}
+    assert "forecast" in flagged
+    assert "copy_fixed" not in flagged
+    assert "copy_to_fixed" not in flagged
+
+
 # --- rules ----------------------------------------------------------------
 def _ctx(cat):
     return RuleContext(cat, Config())
