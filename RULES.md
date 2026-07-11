@@ -123,7 +123,7 @@ skipped unless `--execute` is passed.
 | `VGI313` | warning | argument-description-states-type | An argument description should not restate the data type (it's a separate field). |  |
 | `VGI314` | warning | function-restates-argument-docs | A function's description shouldn't re-document its arguments (they'd drift). |  |
 | `VGI315` | warning | argument-type-consistent | An argument name should map to one SQL type across all functions (no type drift). |  |
-| `VGI316` | warning | array-argument-could-be-table | A function with a single multi-dimensional-array argument should take a table input. |  |
+| `VGI316` | warning | array-argument-could-be-table | A table function with a single multi-dimensional-array argument should take a table input. |  |
 | `VGI317` | error | constrained-argument-not-discoverable | An argument whose description enumerates allowed values or a numeric range should declare machine-readable constraints (choices / ge / le) so agents discover valid inputs. Needs a vgi extension exposing vgi_function_arguments(); silent on older ones. |  |
 | `VGI318` | error | default-violates-constraint | An argument's declared default must satisfy its own constraints — be a member of choices, inside the numeric range, and match the pattern. Needs a vgi extension exposing vgi_function_arguments(); silent on older ones. |  |
 | `VGI319` | warning | invalid-constraint | A declared constraint must be well-formed: the pattern must be a valid regex and the numeric range must be non-empty. Needs a vgi extension exposing vgi_function_arguments(). |  |
