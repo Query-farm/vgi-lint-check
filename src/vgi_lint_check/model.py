@@ -615,6 +615,12 @@ class Catalog:
     # Catalog-level vgi.agent_test_tasks (the fixed analyst-task suite).
     agent_test_tasks: list[AgentTask] = field(default_factory=list)
     agent_test_tasks_parse_error: str | None = None
+    # Names of table functions registered as COPY-format handlers (from
+    # vgi_copy_formats()). These bind only inside a COPY (FORMAT 'x') statement,
+    # which json_serialize_sql cannot serialize, so they can never be covered by
+    # example/test SQL — corpus coverage excludes them from the surface. Empty on
+    # older extensions that don't expose vgi_copy_formats().
+    copy_handlers: frozenset[str] = field(default_factory=frozenset)
     # Lazily-built {name: [tables/views]} index for FK reference resolution.
     _name_index: dict[str, list[Table | View]] | None = field(
         default=None, init=False, repr=False, compare=False

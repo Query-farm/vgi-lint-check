@@ -105,8 +105,15 @@ def build_catalog(
     attach_options: list[Any] | None = None,
     advertised_catalogs: list[str] | None = None,
     argument_rows: list[dict[str, Any]] | None = None,
+    copy_handler_rows: list[dict[str, Any]] | None = None,
 ) -> Catalog:
     """Build a normalized :class:`Catalog` from a post-attach snapshot."""
+    # COPY-format handler function names (from vgi_copy_formats()). These table
+    # functions bind only inside a COPY (FORMAT 'x') statement, so they can never
+    # be covered by example/test SQL; corpus coverage excludes them.
+    copy_handlers = frozenset(
+        str(r["handler"]) for r in (copy_handler_rows or []) if r.get("handler")
+    )
     # Per-argument metadata (vgi_function_arguments()), grouped by (schema, name).
     # A name with several overloads keeps all its arguments; the rule dedups by
     # name, so a distinct overload's args aren't silently dropped.
@@ -372,6 +379,7 @@ def build_catalog(
         executable_examples_parse_error=catalog_exec_err,
         agent_test_tasks=catalog_tasks,
         agent_test_tasks_parse_error=catalog_tasks_err,
+        copy_handlers=copy_handlers,
     )
 
 

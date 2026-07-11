@@ -35,7 +35,7 @@ from .model import Release
 from .result import Report, VersionResult
 from .rules import run, select_rules
 from .rules.base import RuleContext
-from .snapshot import fetch_function_arguments, take_snapshot
+from .snapshot import fetch_copy_handlers, fetch_function_arguments, take_snapshot
 from .trace import Tracer
 from .versions import CatalogDiscovery, discover_catalogs, resolve_versions
 
@@ -228,6 +228,7 @@ def with_attached_catalogs(
                     attach_options=discovery.attach_options,
                     advertised_catalogs=advertised,
                     argument_rows=fetch_function_arguments(con, local_alias),
+                    copy_handler_rows=fetch_copy_handlers(con, local_alias),
                 )
             return runner(catalogs, con)
     finally:
@@ -317,6 +318,7 @@ def _load_catalog(
                 attach_options=discovery.attach_options,
                 advertised_catalogs=advertised,
                 argument_rows=fetch_function_arguments(con, local_alias),
+                copy_handler_rows=fetch_copy_handlers(con, local_alias),
             )
             # When a runner is given (simulate), execute it while the connection
             # is still attached so it can run SQL against the worker.
@@ -396,6 +398,7 @@ def _lint_one_version(
                 attach_options=discovery.attach_options,
                 advertised_catalogs=advertised,
                 argument_rows=fetch_function_arguments(con, alias),
+                copy_handler_rows=fetch_copy_handlers(con, alias),
             )
         rules = select_rules(config)
         needs_con = any(getattr(r, "requires_connection", False) for r in rules)

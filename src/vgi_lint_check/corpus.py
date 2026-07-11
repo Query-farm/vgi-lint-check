@@ -28,7 +28,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from .model import Catalog, ExampleStatement, ObjectId
+from .model import Catalog, ExampleStatement, ObjectId, ObjectKind
 from .sql_parse import Ref, parse_refs
 
 __all__ = ["Broken", "CorpusCoverage", "compute_corpus_coverage"]
@@ -88,8 +88,16 @@ def _key(schema: str | None, name: str | None, default_schema: str) -> str:
 
 
 def _build_universe(catalog: Catalog, default_schema: str) -> dict[str, ObjectId]:
+    # COPY-format handler table functions (from vgi_copy_formats()) bind only
+    # inside a COPY (FORMAT 'x') statement — they hard-error on direct invocation,
+    # and json_serialize_sql cannot serialize COPY, so no example/test SQL can ever
+    # cover them. They are not part of the coverable surface. Use the extension's
+    # own handler list, never a name-prefix guess.
+    copy_handlers = {h.lower() for h in catalog.copy_handlers}
     universe: dict[str, ObjectId] = {}
     for f in catalog.iter_all_functions():
+        if f.kind is ObjectKind.TABLE_FUNCTION and (f.name or "").lower() in copy_handlers:
+            continue
         universe[_key(f.schema, f.name, default_schema)] = f.id
     for t in catalog.iter_table_like():
         universe.setdefault(_key(t.schema, t.name, default_schema), t.id)
