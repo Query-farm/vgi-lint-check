@@ -711,12 +711,12 @@ def test_vgi152_agent_test_tasks_present_nudge():
 
 
 def test_vgi316_single_array_arg_suggests_table():
-    def codes_for(*args):
-        fn = F.func("main", "solve", description="d", arguments=list(args))
+    def codes_for(*args, ftype="table"):
+        fn = F.func("main", "solve", ftype=ftype, description="d", arguments=list(args))
         s = F.schema("main", comment="c", tags=_TAGS, functions=[fn])
         return {f.code for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))}
 
-    # a single 2-D array argument (a matrix / list of rows) -> fires
+    # a TABLE FUNCTION with a single 2-D array argument (a matrix / list of rows) -> fires
     assert "VGI316" in codes_for(F.arg("distance", "BIGINT[][]", "the distance matrix"))
     # a list-of-struct (typed rows) -> fires
     assert "VGI316" in codes_for(F.arg("rows", "STRUCT(a INTEGER, b INTEGER)[]", "rows"))
@@ -726,6 +726,15 @@ def test_vgi316_single_array_arg_suggests_table():
     )
     # a plain 1-D array (a vector) -> not flagged
     assert "VGI316" not in codes_for(F.arg("v", "BIGINT[]", "a vector of weights"))
+    # a SCALAR function with the same matrix arg -> NOT flagged: a scalar returns one
+    # value per row and has no table-function form, so the remedy is impossible.
+    assert "VGI316" not in codes_for(
+        F.arg("distance", "BIGINT[][]", "the distance matrix"), ftype="scalar"
+    )
+    # likewise an AGGREGATE with a matrix arg -> not flagged.
+    assert "VGI316" not in codes_for(
+        F.arg("distance", "BIGINT[][]", "the distance matrix"), ftype="aggregate"
+    )
 
 
 def test_vgi145_view_wraps_table_function():

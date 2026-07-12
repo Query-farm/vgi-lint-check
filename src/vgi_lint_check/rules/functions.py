@@ -798,16 +798,18 @@ class ArrayArgumentCouldBeTable(Rule):
     name = "array-argument-could-be-table"
     category = FUNC
     default_severity = Severity.WARNING
-    targets = (
-        ObjectKind.SCALAR_FUNCTION,
-        ObjectKind.AGGREGATE,
-        ObjectKind.MACRO,
-        ObjectKind.TABLE_FUNCTION,
+    # Table functions only. The remedy ("expose a table/relation input so callers
+    # pass a subquery FROM …") is only structurally possible for a table function:
+    # a scalar or aggregate function returns one value per row and cannot take a
+    # relation as an argument, and DuckDB macros take scalar expressions, not
+    # relations — flagging any of them is a false positive with no achievable fix.
+    targets = (ObjectKind.TABLE_FUNCTION,)
+    summary = (
+        "A table function with a single multi-dimensional-array argument should take a table input."
     )
-    summary = "A function with a single multi-dimensional-array argument should take a table input."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
-        for f in ctx.catalog.iter_all_functions():
+        for f in _iter_table_functions(ctx):
             array_args = [
                 a
                 for a in f.arguments
