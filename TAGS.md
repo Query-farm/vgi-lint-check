@@ -292,6 +292,23 @@ These are **not** in the `vgi.*` namespace and are configured, not fixed:
 - **Allow-list** — `allowed_tag_keys` config, when set, flags any tag key outside
   it (VGI403).
 
+### Extension-injected tags (`vgi_*`)
+
+The VGI DuckDB extension injects a few reserved **`vgi_`-prefixed** keys (note the
+underscore — distinct from the worker-authored `vgi.` namespace, so VGI404 ignores
+them). Workers do not set these; the extension renders them onto the DuckDB
+catalog at attach time.
+
+- **`vgi_required_filters`** — on tables/views. The extension serializes
+  `Table.required_filters` (an AND of OR-groups of column paths) as a JSON array of
+  arrays, e.g. `[["accession_number"],["ticker","cik"]]`, onto
+  `duckdb_tables().tags`. Lets a caller discover a table's required WHERE-filter
+  groups (via `SELECT tags['vgi_required_filters'] FROM duckdb_tables()`) *before*
+  hitting the bind-time `BinderException`. **Validated by:** VGI415 (well-formed
+  JSON list-of-non-empty-lists-of-strings; also nudges near-miss key spellings).
+- **`vgi_resolved_data_version` / `vgi_resolved_implementation_version`** — on the
+  catalog (`duckdb_databases().tags`); the versions the worker resolved at attach.
+
 ---
 
 ## 8. Deprecated keys & migration

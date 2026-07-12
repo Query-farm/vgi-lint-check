@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import json
 from collections.abc import Iterable, Iterator
 
 from ..findings import Category, Finding, Severity
@@ -11,6 +12,7 @@ from ..model import (
     TAG_CATEGORIES,
     TAG_CATEGORY,
     TAG_CLASSIFICATION_TAGS,
+    TAG_REQUIRED_FILTERS,
     Catalog,
     ObjectId,
     ObjectKind,
@@ -244,6 +246,84 @@ class ClassificationTagsValid(Rule):
                     oid,
                     f"vgi.classification_tags is not valid: {err}",
                     'use a JSON array of strings, e.g. ["geospatial", "timeseries"]',
+                )
+
+
+def _validate_required_filters(value: str | None) -> str | None:
+    """Return an error string if ``value`` is not valid CNF JSON, else None.
+
+    Valid = a list of non-empty lists of non-empty strings (an AND of OR-groups
+    of dotted column paths).
+    """
+    if value is None or not str(value).strip():
+        return None
+    try:
+        data = json.loads(str(value))
+    except (ValueError, TypeError) as e:
+        return f"invalid JSON: {e}"
+    if not isinstance(data, list):
+        return f"expected a JSON array of arrays, got {type(data).__name__}"
+    if not data:
+        return "must not be empty"
+    for group in data:
+        if not isinstance(group, list):
+            return "each group must be a JSON array (an OR-group of column paths)"
+        if not group:
+            return "must not contain empty groups"
+        for path in group:
+            if not isinstance(path, str):
+                return "every path must be a string"
+            if not path.strip():
+                return "must not contain empty strings"
+    return None
+
+
+@register
+class RequiredFiltersTagValid(Rule):
+    code = "VGI415"
+    name = "required-filters-tag-valid"
+    category = TAGS
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = (
+        "The extension-injected vgi_required_filters tag must be a JSON array of "
+        "non-empty arrays of non-empty strings (an AND of OR-groups)."
+    )
+
+    # Common near-miss spellings of the canonical key — a worker that hand-sets
+    # one of these instead of the reserved name gets a nudge.
+    _NEAR_MISS = (
+        "vgi.required_filters",
+        "required_filters",
+        "requiredfilters",
+        "required_field_filter_paths",
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags in _all_objects(ctx.catalog):
+            if oid.kind not in self.targets:
+                continue
+            if not tags.has(TAG_REQUIRED_FILTERS):
+                # Tag-name check: a near-miss key used in place of the canonical one.
+                for miss in self._NEAR_MISS:
+                    if tags.has(miss):
+                        yield self.finding(
+                            ctx,
+                            oid,
+                            f"tag '{miss}' looks like a typo for '{TAG_REQUIRED_FILTERS}'",
+                            f"the required-filter tag is named '{TAG_REQUIRED_FILTERS}'; it is "
+                            "injected by the VGI extension from Table.required_filters — set the "
+                            "declarative field rather than the tag directly",
+                        )
+                continue
+            err = _validate_required_filters(tags.get(TAG_REQUIRED_FILTERS))
+            if err:
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"{TAG_REQUIRED_FILTERS} is not valid: {err}",
+                    "use a JSON array of non-empty arrays of non-empty strings, "
+                    'e.g. [["accession_number"],["ticker","cik"]]',
                 )
 
 

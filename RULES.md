@@ -152,6 +152,7 @@ skipped unless `--execute` is passed.
 | `VGI412` | error | category-empty | A category declared in vgi.categories must contain at least one member object. |  |
 | `VGI413` | warning | schema-categories-required | Every schema with objects must declare a 'vgi.categories' registry (navigation/SEO). |  |
 | `VGI414` | error | retired-tag-key | Retired tag keys must be migrated — they are no longer recognized. |  |
+| `VGI415` | error | required-filters-tag-valid | The extension-injected vgi_required_filters tag must be a JSON array of non-empty arrays of non-empty strings (an AND of OR-groups). |  |
 
 ## Example queries (VGI5xx)
 

@@ -350,6 +350,27 @@ def test_vgi406_accepts_deprecated_category_tags_alias():
     assert "VGI405" in codes  # and flagged as deprecated
 
 
+def test_vgi415_required_filters_tag():
+    def codes_for(tags_extra):
+        t = F.table("main", "t", comment="c", tags={**_TAGS, **tags_extra})
+        return _codes(F.catalog(F.schema("main", comment="c", tags=_TAGS, tables=[t])))
+
+    # valid CNF JSON (AND of OR-groups) -> clean
+    assert "VGI415" not in codes_for({"vgi_required_filters": '[["accession"],["ticker","cik"]]'})
+    # no tag at all -> clean
+    assert "VGI415" not in codes_for({})
+    # non-JSON string -> flagged
+    assert "VGI415" in codes_for({"vgi_required_filters": "ticker or cik"})
+    # list of strings (not list of lists) -> flagged
+    assert "VGI415" in codes_for({"vgi_required_filters": '["ticker","cik"]'})
+    # empty inner OR-group -> flagged
+    assert "VGI415" in codes_for({"vgi_required_filters": "[[]]"})
+    # empty outer list -> flagged
+    assert "VGI415" in codes_for({"vgi_required_filters": "[]"})
+    # near-miss key name instead of the canonical one -> flagged
+    assert "VGI415" in codes_for({"required_filters": '[["ticker","cik"]]'})
+
+
 def test_vgi311_parameterless_table_function():
     # parameterless table function NOT exposed as a table -> flagged
     standalone = F.func("main", "metrics", "table", description="d")

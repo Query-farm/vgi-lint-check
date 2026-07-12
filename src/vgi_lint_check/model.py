@@ -37,6 +37,12 @@ TAG_SUPPORT_CONTACT = "vgi.support_contact"  # where to report issues/bugs (emai
 TAG_SUPPORT_POLICY_URL = "vgi.support_policy_url"  # link to the support/SLA policy
 TAG_ICON_URL = "vgi.icon_url"  # link to a browser-displayable icon/logo image for the catalog
 
+# Extension-injected (NOT worker-authored, so `vgi_`-prefixed and NOT in
+# RESERVED_TAG_KEYS): the VGI DuckDB extension renders Table.required_filters
+# onto duckdb_tables().tags as JSON [["a"],["b","c"]] so a caller can discover a
+# table's required WHERE-filter groups before hitting the bind-time error.
+TAG_REQUIRED_FILTERS = "vgi_required_filters"
+
 # Deprecated tag keys kept working for back-compat (old key -> canonical key).
 TAG_DESCRIPTION_LLM = "vgi.description_llm"  # deprecated: use vgi.doc_llm
 TAG_DESCRIPTION_MD = "vgi.description_md"  # deprecated: use vgi.doc_md
