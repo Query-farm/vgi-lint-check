@@ -9,11 +9,14 @@ from ..findings import Category, Finding, Severity
 from ..model import (
     TAG_EXAMPLE_QUERIES,
     Catalog,
+    ExampleQuery,
     Function,
+    ObjectId,
     ObjectKind,
     Table,
     View,
 )
+from ..tags import decode_example_queries
 from ._util import blank
 from .base import Rule, RuleContext
 from .registry import register
@@ -146,6 +149,66 @@ class ExampleEntriesComplete(Rule):
                         f"example #{ex.index} has no sql",
                         "give every example a non-empty SQL statement",
                     )
+
+
+@register
+class ExampleDescribed(Rule):
+    code = "VGI515"
+    name = "example-described"
+    category = EX
+    default_severity = Severity.ERROR
+    targets = (
+        ObjectKind.SCHEMA,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "Schema- and function-level example queries must each carry a non-empty description."
+
+    # The example-bearing function kinds VGI503 does not reach (it covers macros).
+    _FUNCTION_KINDS = (
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.TABLE_FUNCTION,
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        # Scalar/aggregate/table functions carry decoded examples on the model.
+        for fn in ctx.catalog.iter_all_functions():
+            if fn.kind in self._FUNCTION_KINDS:
+                yield from self._check(ctx, fn.id, fn.examples, fn.examples_parse_error)
+        # Schemas may carry vgi.example_queries too, but the model does not decode
+        # it onto the schema, so decode it here.
+        for s in ctx.catalog.iter_schemas():
+            examples, parse_error = decode_example_queries(s.tags)
+            yield from self._check(ctx, s.id, examples, parse_error)
+
+    def _check(
+        self,
+        ctx: RuleContext,
+        obj_id: ObjectId,
+        examples: list[ExampleQuery],
+        parse_error: str | None,
+    ) -> Iterator[Finding]:
+        # A malformed tag (e.g. a plain SQL string rather than a described list)
+        # carries no verifiable descriptions — flag it so the requirement holds.
+        if parse_error:
+            yield self.finding(
+                ctx,
+                obj_id,
+                f"vgi.example_queries is not a described-example list: {parse_error}",
+                'use a JSON list of {"description": "...", "sql": "..."} objects so '
+                "every example carries a human-readable description",
+            )
+            return
+        for ex in examples:
+            if blank(ex.description):
+                yield self.finding(
+                    ctx,
+                    obj_id,
+                    f"example #{ex.index} has no description",
+                    "give every example a human-readable description",
+                )
 
 
 @register

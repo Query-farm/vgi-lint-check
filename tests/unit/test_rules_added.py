@@ -273,3 +273,52 @@ def test_schema_examples_strict_default():
     assert "VGI506" in set(codes(F.catalog(s)))
     cfg = Config(severity_overrides={"VGI506": Severity.OFF})
     assert "VGI506" not in {f.code for f in findings(F.catalog(s), cfg)}
+
+
+# --- VGI515: every schema/function example must carry a description ---------
+def test_vgi515_schema_plain_string_example_flagged():
+    # A schema whose vgi.example_queries is a bare SQL string (not a described
+    # list of {description, sql}) carries no verifiable descriptions -> flagged.
+    s = F.schema("main", comment="c", tags={"vgi.example_queries": "SELECT v.main.thing();"})
+    assert "VGI515" in set(codes(F.catalog(s)))
+
+
+def test_vgi515_schema_structured_examples_clean():
+    import json
+
+    s = F.schema(
+        "main",
+        comment="c",
+        tags={
+            "vgi.example_queries": json.dumps(
+                [{"description": "count things", "sql": "SELECT count(*) FROM v.main.thing"}]
+            )
+        },
+    )
+    assert "VGI515" not in set(codes(F.catalog(s)))
+
+
+def test_vgi515_function_example_missing_description_flagged():
+    f0 = F.func(
+        "main",
+        "f",
+        "scalar",
+        description="a thorough description here",
+        parameters=["x"],
+        examples=[F.example(0, "", "SELECT v.main.f(1)")],
+    )
+    s = F.schema("main", comment="c", functions=[f0])
+    assert "VGI515" in set(codes(F.catalog(s)))
+
+
+def test_vgi515_function_example_with_description_clean():
+    f0 = F.func(
+        "main",
+        "f",
+        "scalar",
+        description="a thorough description here",
+        parameters=["x"],
+        examples=[F.example(0, "call f on a literal", "SELECT v.main.f(1)")],
+    )
+    s = F.schema("main", comment="c", functions=[f0])
+    assert "VGI515" not in set(codes(F.catalog(s)))

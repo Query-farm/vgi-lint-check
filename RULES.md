@@ -172,6 +172,7 @@ skipped unless `--execute` is passed.
 | `VGI512` | warning | example-reference-resolves | A worker-qualified object called in an example must exist in the catalog. |  |
 | `VGI513` | warning | macro-demonstrated-on-input | A macro's examples should feed it a column/expression, not only literal constants. |  |
 | `VGI514` | warning | example-is-bare-select-star | An example that is a bare 'SELECT *' dump (no projection, filter, or aggregation) is low-effort and teaches an agent nothing about usage. |  |
+| `VGI515` | error | example-described | Schema- and function-level example queries must each carry a non-empty description. |  |
 | `VGI520` | warning | object-untested | Every function/table should be exercised by at least one agent test task. |  |
 | `VGI521` | warning | test-reference-resolves | A worker-qualified object called in an agent test task must exist in the catalog. |  |
 
@@ -280,4 +281,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_189 rules._
+_191 rules._
