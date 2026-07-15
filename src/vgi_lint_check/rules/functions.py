@@ -21,6 +21,7 @@ from ..model import (
     TAG_RESULT_COLUMNS_SCHEMA,
     TAG_RESULT_DYNAMIC_COLUMNS_MD,
     Function,
+    ObjectId,
     ObjectKind,
 )
 from ..sql_parse import canonical_type
@@ -1174,3 +1175,66 @@ class DegenerateChoices(Rule):
                 "drop the choices constraint or give it two or more values — one option "
                 "is not a choice and just adds noise to discovery",
             )
+
+
+# A column set that identifies a view/table cataloguing the worker's own
+# functions (the thing DuckDB's own duckdb_functions() already provides).
+_FUNCTION_NAME_COLS = {"function_name", "function", "func_name"}
+_FUNCTION_DESCRIPTOR_COLS = {
+    "category",
+    "kind",
+    "function_kind",
+    "summary",
+    "signature",
+    "returns",
+    "purpose",
+    "description",
+}
+
+
+def _is_function_catalog(name: str | None, cols: set[str]) -> bool:
+    # A view/table literally named function_registry, or one whose columns are a
+    # function catalogue: a function-name column plus two-plus function
+    # descriptors (category / kind / summary / ...).
+    if (name or "").lower() == "function_registry":
+        return True
+    has_name_col = bool(cols & _FUNCTION_NAME_COLS)
+    return has_name_col and len(cols & _FUNCTION_DESCRIPTOR_COLS) >= 2
+
+
+@register
+class NoFunctionRegistry(Rule):
+    code = "VGI327"
+    name = "no-function-registry"
+    category = FUNC
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.VIEW, ObjectKind.TABLE, ObjectKind.TABLE_FUNCTION)
+    summary = (
+        "A view/table cataloguing the worker's own functions duplicates "
+        "duckdb_functions(); drop it and query duckdb_functions() instead."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        candidates: list[tuple[ObjectId, str | None, set[str]]] = []
+        for v in cat.iter_views():
+            candidates.append((v.id, v.name, {(c.name or "").lower() for c in v.columns}))
+        for t in cat.iter_tables():
+            candidates.append((t.id, t.name, {(c.name or "").lower() for c in t.columns}))
+        for f in cat.iter_all_functions():
+            if f.kind is ObjectKind.TABLE_FUNCTION:
+                cols = {(c.name or "").lower() for c in f.all_result_columns()}
+                candidates.append((f.id, f.name, cols))
+        for obj_id, name, cols in candidates:
+            if _is_function_catalog(name, cols):
+                yield self.finding(
+                    ctx,
+                    obj_id,
+                    f"{name!r} re-catalogues this worker's own functions, "
+                    "duplicating duckdb_functions()",
+                    "remove it and query duckdb_functions() (filtered to this catalog) "
+                    "instead — it is always accurate, whereas a hand-maintained registry "
+                    "drifts as functions change. Put the category/summary on each "
+                    "function's vgi.category / vgi.doc_md tags, which the platform already "
+                    "surfaces for discovery.",
+                )

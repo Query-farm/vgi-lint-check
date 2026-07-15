@@ -322,3 +322,59 @@ def test_vgi515_function_example_with_description_clean():
     )
     s = F.schema("main", comment="c", functions=[f0])
     assert "VGI515" not in set(codes(F.catalog(s)))
+
+
+# --- VGI327: no hand-rolled function registry (use duckdb_functions()) ------
+def _cols(schema, table, names):
+    return [F.col(schema, table, n, "doc") for n in names]
+
+
+def test_vgi327_function_registry_view_flagged():
+    v = F.view(
+        "main",
+        "function_registry",
+        comment="c",
+        columns=_cols(
+            "main", "function_registry", ["function_name", "category", "kind", "summary"]
+        ),
+    )
+    s = F.schema("main", comment="c", views=[v])
+    assert "VGI327" in set(codes(F.catalog(s)))
+
+
+def test_vgi327_named_functions_view_flagged():
+    # not literally 'function_registry', but its columns are a function catalogue.
+    v = F.view(
+        "main",
+        "google_functions",
+        comment="c",
+        columns=_cols("main", "google_functions", ["function_name", "category", "summary"]),
+    )
+    s = F.schema("main", comment="c", views=[v])
+    assert "VGI327" in set(codes(F.catalog(s)))
+
+
+def test_vgi327_domain_view_not_flagged():
+    # A real domain view that happens to have a function_name column but only
+    # one function descriptor is not a function catalogue.
+    v = F.view(
+        "main",
+        "methods",
+        comment="Estimator methods with their identifying assumptions",
+        columns=_cols(
+            "main", "methods", ["function_name", "estimand", "doubly_robust", "description"]
+        ),
+    )
+    s = F.schema("main", comment="c", views=[v])
+    assert "VGI327" not in set(codes(F.catalog(s)))
+
+
+def test_vgi327_ordinary_view_clean():
+    v = F.view(
+        "main",
+        "recent_events",
+        comment="Most recent events",
+        columns=_cols("main", "recent_events", ["id", "name", "occurred_at"]),
+    )
+    s = F.schema("main", comment="c", views=[v])
+    assert "VGI327" not in set(codes(F.catalog(s)))

@@ -133,6 +133,7 @@ skipped unless `--execute` is passed.
 | `VGI323` | warning | result-column-described | Every declared result column should carry a non-blank description. |  |
 | `VGI324` | warning | result-schema-matches-backing-table | A declared static result schema must match the backing table's real columns (name and type). |  |
 | `VGI326` | warning | result-dynamic-schema-valid | 'vgi.result_dynamic_columns_md' must contain one or more Name|Type|Description column tables (one per variant). |  |
+| `VGI327` | error | no-function-registry | A view/table cataloguing the worker's own functions duplicates duckdb_functions(); drop it and query duckdb_functions() instead. |  |
 
 ## Tags (VGI4xx)
 
@@ -281,4 +282,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_191 rules._
+_192 rules._
