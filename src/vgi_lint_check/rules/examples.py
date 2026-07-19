@@ -317,9 +317,9 @@ class WorkerHasExecutableExamples(Rule):
     code = "VGI509"
     name = "worker-has-executable-examples"
     category = EX
-    default_severity = Severity.WARNING
+    default_severity = Severity.ERROR
     targets = (ObjectKind.CATALOG,)
-    summary = "A worker should ship at least one vgi.executable_examples (guaranteed-runnable)."
+    summary = "A worker must ship at least one vgi.executable_examples (guaranteed-runnable)."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         cat = ctx.catalog

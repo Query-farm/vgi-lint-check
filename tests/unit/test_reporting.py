@@ -23,9 +23,11 @@ def sample_catalog():
     t = F.table("main", "bare")
     s = F.schema("main", tables=[t])
     cat = F.catalog(s)
-    # Satisfy the error-level requirements (a test suite) so this fixture trips
-    # only warnings/info — the invariant this module asserts.
+    # Satisfy the error-level requirements (a test suite, and a guaranteed-runnable
+    # example) so this fixture trips only warnings/info — the invariant this
+    # module asserts.
     cat.agent_test_tasks = [AgentTask(name="t", prompt="p")]
+    cat.executable_examples = [F.exec_example(0, "demo", [("s", "SELECT 1")])]
     return cat
 
 

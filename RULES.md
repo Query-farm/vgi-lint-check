@@ -170,7 +170,7 @@ skipped unless `--execute` is passed.
 | `VGI506` | warning | schema-example-queries | Schemas should carry a vgi.example_queries tag (opt-in). |  |
 | `VGI507` | error | executable-examples-well-formed | vgi.executable_examples must be a valid JSON list; each entry needs a description and at least one non-empty SQL statement. |  |
 | `VGI508` | warning | too-many-executable-examples | Warn when one object carries more executable examples than options.max_executable_examples. |  |
-| `VGI509` | warning | worker-has-executable-examples | A worker should ship at least one vgi.executable_examples (guaranteed-runnable). |  |
+| `VGI509` | error | worker-has-executable-examples | A worker must ship at least one vgi.executable_examples (guaranteed-runnable). |  |
 | `VGI510` | warning | executable-example-deterministic | An executable example asserting output should ORDER BY so its rows are stable. |  |
 | `VGI511` | warning | object-undemonstrated | Every function/table should be called by at least one example query. |  |
 | `VGI512` | warning | example-reference-resolves | A worker-qualified object called in an example must exist in the catalog. |  |

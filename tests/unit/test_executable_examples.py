@@ -102,6 +102,15 @@ def test_vgi509_flags_worker_with_no_executable_examples():
     assert "VGI509" not in _lint(F.catalog(s2))
 
 
+def test_vgi509_is_error_severity():
+    # Every worker must ship a guaranteed-runnable example, so this fails a run.
+    fn = F.func("main", "f", description="d")
+    s = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=[fn])
+    cfg = Config()
+    out = [f for f in run(select_rules(cfg), RuleContext(F.catalog(s), cfg)) if f.code == "VGI509"]
+    assert out and out[0].severity.name == "ERROR"
+
+
 def test_vgi508_limits_example_count():
     from vgi_lint_check.config import Options
 
