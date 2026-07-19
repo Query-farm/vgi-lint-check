@@ -78,6 +78,7 @@ skipped unless `--execute` is passed.
 | `VGI179` | warning | description-sql-is-example | A complete runnable query in a description ```sql fence belongs in vgi.example_queries, where it is executed and coverage-checked. |  |
 | `VGI180` | warning | doc-quality-review | An object's docs should pass an LLM quality review (accuracy/clarity/completeness). |  |
 | `VGI181` | error | description-boilerplate | Descriptions must not carry cross-worker boilerplate — filler that reads identically in every worker's docs carries no signal. |  |
+| `VGI182` | warning | description-type-formatting | DuckDB type names in a description must be code-formatted (`BIGINT`, not BIGINT). |  |
 
 ## Descriptions (VGI1xx)
 
@@ -284,4 +285,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_194 rules._
+_195 rules._

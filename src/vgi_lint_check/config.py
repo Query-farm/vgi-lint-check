@@ -55,6 +55,9 @@ class Options:
     # top of the built-in families. Anchor with `[^.]*` rather than `.*` to keep
     # a match inside one sentence. Invalid patterns are skipped, never fatal.
     boilerplate_extra_patterns: list[str] = field(default_factory=list)
+    # VGI182: DuckDB type names to exempt from the "must be backticked" check —
+    # for a worker where a name doubles as domain vocabulary (e.g. MAP, DATE).
+    type_format_ignore_names: list[str] = field(default_factory=list)
     # VGI328: parameterless function names treated as diagnostic scaffolding.
     # Matched whole (case-insensitive); `version`/`build_info` are matched
     # separately as a suffix and aren't listed here. Empty = only version fires.

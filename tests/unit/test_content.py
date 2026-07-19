@@ -394,3 +394,62 @@ def test_embedded_example_pointer_is_not_boilerplate():
 
 def test_standalone_example_pointer_sentence_flagged():
     assert _has_181("Decodes payloads.\n\nSee the examples for full, runnable queries.")
+
+
+# --- VGI182 description-type-formatting -------------------------------------
+def _has_182(doc, **kw):
+    return any(f.code == "VGI182" for f in _bp_findings(doc, **kw))
+
+
+def test_bare_type_names_flagged():
+    for doc in (
+        "Returns a BIGINT count of matched records for the caller.",
+        "Each field decodes to VARCHAR unless the picture clause is numeric.",
+        "Repeating groups become a LIST of STRUCT values in the output row.",
+        "Zoned decimals widen to DOUBLE when precision would be lost.",
+    ):
+        assert _has_182(doc), doc
+
+
+def test_backticked_types_pass():
+    doc = (
+        "Returns a `BIGINT` count; each field decodes to `VARCHAR` unless the "
+        "picture clause is numeric, and repeating groups become "
+        "`LIST(STRUCT(...))` in the output row."
+    )
+    assert not _has_182(doc)
+
+
+def test_types_inside_code_fence_pass():
+    doc = "Decodes copybooks.\n\n```sql\nSELECT CAST(x AS BIGINT) FROM t;\n```\n"
+    assert not _has_182(doc)
+
+
+def test_lowercase_english_words_pass():
+    doc = (
+        "Returns a list of records; the real cost is the copybook parse, and the "
+        "map of field offsets is cached between calls."
+    )
+    assert not _has_182(doc)
+
+
+def test_markdown_table_type_cells_pass():
+    doc = "Result columns:\n\n| name | type |\n| --- | --- |\n| qty | BIGINT |\n"
+    assert not _has_182(doc)
+
+
+def test_type_format_is_warning_severity():
+    out = [f for f in _bp_findings("Returns a BIGINT row count.") if f.code == "VGI182"]
+    assert out and out[0].severity.name == "WARNING"
+
+
+def test_type_format_ignore_names_option():
+    assert not _has_182(
+        "Returns a BIGINT row count.",
+        options=Options(type_format_ignore_names=["bigint"]),
+    )
+
+
+def test_timestamptz_not_reported_as_timestamp():
+    out = [f for f in _bp_findings("Emits a TIMESTAMPTZ per event.") if f.code == "VGI182"]
+    assert out and "TIMESTAMPTZ" in out[0].message and "TIMESTAMP," not in out[0].message

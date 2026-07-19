@@ -834,3 +834,92 @@ class DescriptionBoilerplate(Rule):
                         f"{label} {source} contains {family.label} boilerplate: {snippet!r}",
                         family.hint,
                     )
+
+
+# --- VGI182 type-name-formatting --------------------------------------------
+#
+# A DuckDB type named in prose is code, and should read as code: `BIGINT`, not
+# BIGINT. Backticked/fenced occurrences are stripped before matching, so only
+# bare mentions surface.
+#
+# Matching is *case-sensitive* on the uppercase spelling: "a list of rows" or
+# "the real cost" is English, "a LIST of rows" is a type reference. Names that
+# are common bare words even in caps (JSON, NULL, TEXT, STRING, BIT, UNION,
+# TIME, ANY) are left out — they'd cost more in false positives than they'd buy.
+
+_DUCKDB_TYPE_NAMES: tuple[str, ...] = (
+    "BIGINT",
+    "BLOB",
+    "BOOLEAN",
+    "DATE",
+    "DECIMAL",
+    "DOUBLE",
+    "FLOAT",
+    "HUGEINT",
+    "INTEGER",
+    "INTERVAL",
+    "LIST",
+    "MAP",
+    "NUMERIC",
+    "REAL",
+    "SMALLINT",
+    "STRUCT",
+    "TIMESTAMP",
+    "TIMESTAMPTZ",
+    "TINYINT",
+    "UBIGINT",
+    "UHUGEINT",
+    "UINTEGER",
+    "USMALLINT",
+    "UTINYINT",
+    "UUID",
+    "VARCHAR",
+    "VARINT",
+)
+# Longest-first so TIMESTAMPTZ isn't reported as TIMESTAMP.
+_TYPE_MENTION = re.compile(
+    r"(?<![\w.`])(" + "|".join(sorted(_DUCKDB_TYPE_NAMES, key=len, reverse=True)) + r")(?![\w`])"
+)
+# Markdown table rows carry type cells whose backticks are optional by
+# convention (see tags.py), and headings/table separators are not prose.
+_TABLE_ROW = re.compile(r"^\s*\|")
+_ALL_CAPS_LINE = re.compile(r"^[^a-z]*$")
+
+
+def _bare_type_names(text: str) -> list[str]:
+    """Uppercase DuckDB type names in ``text`` that are not formatted as code."""
+    prose = _INLINE_CODE.sub(" ", _FENCED_BLOCK.sub(" ", text))
+    prose = _BARE_URL.sub(" ", prose)
+    found: list[str] = []
+    for line in prose.splitlines():
+        if _TABLE_ROW.match(line) or _ALL_CAPS_LINE.match(line):
+            continue
+        for name in _TYPE_MENTION.findall(line):
+            if name not in found:
+                found.append(name)
+    return found
+
+
+@register
+class DescriptionTypeFormatting(Rule):
+    code = "VGI182"
+    name = "description-type-formatting"
+    category = CONTENT
+    default_severity = Severity.WARNING
+    targets = _DOC_TARGET_KINDS
+    summary = "DuckDB type names in a description must be code-formatted (`BIGINT`, not BIGINT)."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        ignored = {n.strip().upper() for n in ctx.config.options.type_format_ignore_names}
+        for oid, label, source, text in _iter_doc_text(ctx):
+            names = [n for n in _bare_type_names(text) if n not in ignored]
+            if not names:
+                continue
+            shown = ", ".join(names[:6]) + (", …" if len(names) > 6 else "")
+            yield self.finding(
+                ctx,
+                oid,
+                f"{label} {source} names DuckDB types in plain prose: {shown}",
+                "wrap type names in backticks (`BIGINT`, `LIST(STRUCT(…))`) so they "
+                "render as code and read unambiguously as types rather than words",
+            )
