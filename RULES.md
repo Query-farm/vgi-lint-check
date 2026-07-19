@@ -62,7 +62,7 @@ skipped unless `--execute` is passed.
 | `VGI152` | error | agent-test-tasks-present | A worker must declare vgi.agent_test_tasks so `vgi-lint simulate` can grade it. |  |
 | `VGI160` | info | catalog-attribution | The catalog should declare author, copyright, and license tags. |  |
 
-## Content — Markdown & links (VGI17x)
+## Content — Markdown & links (VGI17x, VGI181)
 
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
@@ -77,6 +77,7 @@ skipped unless `--execute` is passed.
 | `VGI178` | error | description-repeats-title | vgi.doc_md must not open with a heading that just repeats the short description. |  |
 | `VGI179` | warning | description-sql-is-example | A complete runnable query in a description ```sql fence belongs in vgi.example_queries, where it is executed and coverage-checked. |  |
 | `VGI180` | warning | doc-quality-review | An object's docs should pass an LLM quality review (accuracy/clarity/completeness). |  |
+| `VGI181` | error | description-boilerplate | Descriptions must not carry cross-worker boilerplate — filler that reads identically in every worker's docs carries no signal. |  |
 
 ## Descriptions (VGI1xx)
 
@@ -134,6 +135,7 @@ skipped unless `--execute` is passed.
 | `VGI324` | warning | result-schema-matches-backing-table | A declared static result schema must match the backing table's real columns (name and type). |  |
 | `VGI326` | warning | result-dynamic-schema-valid | 'vgi.result_dynamic_columns_md' must contain one or more Name|Type|Description column tables (one per variant). |  |
 | `VGI327` | error | no-function-registry | A view/table cataloguing the worker's own functions duplicates duckdb_functions(); drop it and query duckdb_functions() instead. |  |
+| `VGI328` | error | no-diagnostic-function | A parameterless version()/ping() function duplicates catalog metadata or is smoke-test scaffolding; it spends a slot in the worker's surface on nothing. |  |
 
 ## Tags (VGI4xx)
 
@@ -282,4 +284,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_192 rules._
+_194 rules._

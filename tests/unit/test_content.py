@@ -1,7 +1,7 @@
 """Tests for the content rules: Markdown validity (VGI170) and link resolution (VGI171)."""
 
 from tests import fixtures as F
-from vgi_lint_check.config import Config
+from vgi_lint_check.config import Config, Options
 from vgi_lint_check.rules import run, select_rules
 from vgi_lint_check.rules.base import RuleContext
 from vgi_lint_check.rules.content import DescriptionLinksResolve
@@ -305,3 +305,92 @@ def test_vgi178_no_leading_heading_passes():
         "Volcano & Earthquake Monitoring",
         "Volcano & Earthquake Monitoring is a multi-source dataset.\n\nSecond paragraph.",
     )
+
+
+# --- VGI181 description-boilerplate -----------------------------------------
+def _bp_findings(doc, **kw):
+    cat = F.catalog(F.schema("main", functions=[F.func("main", "f")]), tags={"vgi.doc_llm": doc})
+    return [f for f in run(select_rules(Config(**kw)), RuleContext(cat, Config(**kw)))]
+
+
+def _has_181(doc, **kw):
+    return any(f.code == "VGI181" for f in _bp_findings(doc, **kw))
+
+
+def test_ecosystem_cross_promo_flagged():
+    doc = (
+        "Parses ASN.1 DER structures into typed columns. Part of the "
+        "[Query.Farm](https://query.farm) VGI ecosystem — see the repository for "
+        "the full function catalog and examples."
+    )
+    assert _has_181(doc)
+
+
+def test_ecosystem_variants_flagged():
+    for doc in (
+        "Part of the Query.Farm VGI ecosystem of DuckDB workers.",
+        "Open source, part of the Query.Farm VGI ecosystem — see the source repository.",
+        "Browse Query.Farm for the rest of the VGI worker fleet.",
+    ):
+        assert _has_181(doc), doc
+
+
+def test_list_the_schema_filler_flagged():
+    for doc in (
+        "List the schema to discover the exact functions and their signatures.",
+        "List the schema to see each function and its signature.",
+        "Browse the `main` schema to see the exact functions and their signatures.",
+        "An agent discovers them by listing the schema.",
+    ):
+        assert _has_181(doc), doc
+
+
+def test_version_and_example_pointer_filler_flagged():
+    assert _has_181("Useful for diagnostics and confirming which build is attached.")
+    assert _has_181("See the example queries for ready-to-run SQL.")
+    assert _has_181("A discovery table function that takes no arguments.")
+
+
+def test_boilerplate_is_error_severity():
+    out = [f for f in _bp_findings("Part of the VGI ecosystem.") if f.code == "VGI181"]
+    assert out and out[0].severity.name == "ERROR"
+
+
+def test_specific_prose_is_not_boilerplate():
+    doc = (
+        "Decodes ASN.1 DER and BER into typed DuckDB columns, so certificate and "
+        "telecom payload analysis stays in SQL. Handles indefinite-length encodings "
+        "and preserves tag numbers, which regex-based extraction loses."
+    )
+    assert not _has_181(doc)
+
+
+def test_legitimate_schema_mention_is_not_boilerplate():
+    # Names a schema without telling the reader to go list it.
+    assert not _has_181("Every function lives in the `main` schema of this catalog.")
+
+
+def test_extra_pattern_from_config_flagged():
+    doc = "Blazingly fast and enterprise-grade parsing of payloads."
+    assert not _has_181(doc)
+    assert _has_181(doc, options=Options(boilerplate_extra_patterns=[r"\bblazingly fast\b"]))
+
+
+def test_invalid_extra_pattern_is_skipped_not_fatal():
+    assert not _has_181(
+        "Plain specific prose about payload decoding.",
+        options=Options(boilerplate_extra_patterns=["(unclosed"]),
+    )
+
+
+def test_embedded_example_pointer_is_not_boilerplate():
+    # A pointer inside a substantive sentence is useful prose, not filler.
+    doc = (
+        "Read alert rows (`_row_kind = 'alert'`) and take the next cursor from the "
+        "single marker row's `_watermark_next` (see the examples)."
+    )
+    assert not _has_181(doc)
+
+
+def test_standalone_example_pointer_sentence_flagged():
+    assert _has_181("Decodes payloads.\n\nSee the examples for full, runnable queries.")

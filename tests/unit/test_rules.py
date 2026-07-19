@@ -433,3 +433,57 @@ def test_vgi142_disabled_when_no_prefixes():
     tbl = F.table("main", "list_holidays", comment="Holidays for a year")
     s = F.schema("main", comment="c", tables=[tbl])
     assert "VGI142" not in codes(F.catalog(s), options=Options(redundant_name_prefixes=[]))
+
+
+# --- VGI328 no-diagnostic-function ------------------------------------------
+def _fn_codes(*funcs, **kw):
+    cfg = Config(**kw)
+    cat = F.catalog(F.schema("main", functions=list(funcs)))
+    return [f.code for f in run(select_rules(cfg), RuleContext(cat, cfg))]
+
+
+def test_parameterless_version_function_is_error():
+    cfg = Config()
+    cat = F.catalog(F.schema("main", functions=[F.func("main", "version")]))
+    out = [f for f in run(select_rules(cfg), RuleContext(cat, cfg)) if f.code == "VGI328"]
+    assert out and out[0].severity.name == "ERROR"
+
+
+def test_prefixed_version_function_flagged():
+    for name in ("asn1_version", "barcode_version", "saxon_version", "build_info", "buildinfo"):
+        assert "VGI328" in _fn_codes(F.func("main", name)), name
+
+
+def test_smoke_test_functions_flagged():
+    for name in ("ping", "health", "heartbeat", "echo", "noop", "hello", "debug"):
+        assert "VGI328" in _fn_codes(F.func("main", name)), name
+
+
+def test_version_function_with_arguments_is_not_flagged():
+    # parse_version('1.2.3') is a real utility, not diagnostic scaffolding.
+    assert "VGI328" not in _fn_codes(F.func("main", "parse_version", parameters=("v",)))
+
+
+def test_useful_parameterless_scalar_is_not_flagged():
+    # A non-constant zero-arg scalar (uuid(), now()) is legitimately useful —
+    # the rule matches on name, never on "parameterless" alone.
+    for name in ("uuid", "now", "random_molecule"):
+        assert "VGI328" not in _fn_codes(F.func("main", name)), name
+
+
+def test_info_suffix_is_not_treated_as_diagnostic():
+    # `_info` must not match as a suffix or audio_info()/track_info() would be hit.
+    assert "VGI328" not in _fn_codes(F.func("main", "audio_info"))
+
+
+def test_diagnostic_names_are_configurable():
+    assert "VGI328" not in _fn_codes(F.func("main", "whoami"))
+    assert "VGI328" in _fn_codes(
+        F.func("main", "whoami"), options=Options(diagnostic_function_names=["whoami"])
+    )
+
+
+def test_version_still_fires_when_diagnostic_names_emptied():
+    opts = Options(diagnostic_function_names=[])
+    assert "VGI328" in _fn_codes(F.func("main", "version"), options=opts)
+    assert "VGI328" not in _fn_codes(F.func("main", "ping"), options=opts)

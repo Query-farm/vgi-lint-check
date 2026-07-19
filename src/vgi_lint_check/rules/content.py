@@ -664,3 +664,173 @@ class ListingDocMultiParagraph(Rule):
                     f"break the {label} description into multiple paragraphs (blank-line "
                     "separated) — e.g. what it is, key concepts, and when to use it",
                 )
+
+
+# --- VGI181 description-boilerplate -----------------------------------------
+#
+# Boilerplate is the filler that propagates across a worker fleet by copy-paste:
+# sentences that would read identically in any worker's docs, so they carry zero
+# worker-specific signal. Each pattern is anchored with `[^.]*` rather than `.*`
+# so a match stays inside one sentence and can't span unrelated prose.
+
+
+_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+class _Boilerplate:
+    """One boilerplate family: a label, its sentence patterns, and the fix.
+
+    ``standalone`` families only fire when the phrase *is* the whole sentence.
+    A pointer embedded in an otherwise substantive sentence ("take the cursor
+    from the marker row (see the examples)") is useful prose, not filler — only
+    a sentence that exists solely to point somewhere else is boilerplate.
+    """
+
+    def __init__(
+        self, label: str, patterns: tuple[str, ...], hint: str, standalone: bool = False
+    ) -> None:
+        self.label = label
+        self.patterns = tuple(re.compile(p, re.IGNORECASE) for p in patterns)
+        self.hint = hint
+        self.standalone = standalone
+
+    def search(self, text: str) -> str | None:
+        """The matched snippet, or None when this family doesn't appear."""
+        if self.standalone:
+            return self._search_standalone(text)
+        for pat in self.patterns:
+            m = pat.search(text)
+            if m:
+                return " ".join(m.group(0).split())[:80]
+        return None
+
+    def _search_standalone(self, text: str) -> str | None:
+        """Match only sentences that consist of nothing but the pointer phrase."""
+        for raw in _SENTENCE.split(text):
+            sentence = raw.strip().lstrip("-*# ").strip()
+            # Backticked code means the sentence carries concrete detail.
+            if not sentence or "`" in sentence:
+                continue
+            for pat in self.patterns:
+                m = pat.match(sentence)
+                if m and len(m.group(0)) >= len(sentence.rstrip(".!?")) - 1:
+                    return " ".join(sentence.split())[:80]
+        return None
+
+
+_BOILERPLATE: tuple[_Boilerplate, ...] = (
+    _Boilerplate(
+        "schema-listing",
+        (
+            r"\b(?:list|browse|explore)\w*\s+(?:the\s+)?(?:`?\w+`?\s+)?schema\b"
+            r"[^.]*\b(?:discover|see|find|view|exact|signature|argument)\w*\b",
+            r"\b(?:discover|see|find|view)\w*\b[^.]*\b(?:by\s+)?"
+            r"(?:list|browse|explor)\w*\s+(?:the\s+)?(?:`?\w+`?\s+)?schema\b",
+        ),
+        "drop it — an agent already discovers functions and signatures by listing "
+        "the schema. Spend the description on what the worker is for, its key "
+        "concepts, and when to reach for it",
+    ),
+    _Boilerplate(
+        "cross-promo",
+        (
+            r"\bpart of the\b[^.]*\becosystem\b",
+            r"\bVGI ecosystem\b",
+            r"\b(?:VGI\s+)?worker fleet\b",
+        ),
+        "drop the ecosystem/marketing line — it reads identically in every "
+        "worker's docs and tells a caller nothing about this one. Put project "
+        "links in vgi.doc_links or vgi.source_url instead",
+    ),
+    _Boilerplate(
+        "see-the-examples",
+        (
+            r"(?:see|check out|refer to|consult)\s+the\b[^.]*\bexamples?\b[^.]*",
+            r"\bexample queries\b[^.]*\bready[- ]to[- ]run\b[^.]*",
+        ),
+        "drop the pointer — examples in vgi.example_queries are already surfaced "
+        "to callers and coverage-checked. Describe the behaviour instead",
+        standalone=True,
+    ),
+    _Boilerplate(
+        "version-diagnostics",
+        (
+            r"\buseful for diagnostics\b",
+            r"\bconfirming which build is attached\b",
+        ),
+        "drop the stock version() blurb — say what the version string actually "
+        "identifies (binary, data snapshot, upstream ruleset) and when it changes",
+    ),
+    _Boilerplate(
+        "restates-signature",
+        (
+            r"\bdiscovery table function\b[^.]*\btakes no (?:arguments|parameters)\b",
+            r"\btakes no (?:arguments|parameters)\b[^.]*\bdiscovery table function\b",
+        ),
+        "drop it — the signature already says there are no arguments. Describe "
+        "what the rows are and what a caller does with them",
+    ),
+)
+
+
+def _extra_boilerplate(patterns: list[str]) -> tuple[_Boilerplate, ...]:
+    """Compile user-supplied patterns, skipping (never raising on) invalid regex."""
+    out: list[_Boilerplate] = []
+    for p in patterns:
+        try:
+            out.append(
+                _Boilerplate(
+                    "configured",
+                    (p,),
+                    "this phrase is listed in options.boilerplate_extra_patterns — "
+                    "replace it with worker-specific detail",
+                )
+            )
+        except re.error:
+            continue
+    return tuple(out)
+
+
+def _iter_doc_text(ctx: RuleContext) -> Iterator[tuple[ObjectId, str, str, str]]:
+    """(id, kind label, source label, text) for every documentation string."""
+    cat = ctx.catalog
+    objects: list[tuple[ObjectId, str, str | None, TagSet]] = [
+        (cat.id, "catalog", cat.comment, cat.tags)
+    ]
+    objects += [(s.id, "schema", s.comment, s.tags) for s in cat.iter_schemas()]
+    objects += [(t.id, t.id.kind.value, t.comment, t.tags) for t in cat.iter_table_like()]
+    objects += [(f.id, f.id.kind.value, f.comment, f.tags) for f in cat.iter_all_functions()]
+    for oid, label, comment, tags in objects:
+        for source, value in (
+            ("comment", comment),
+            (TAG_DOC_LLM, tags.get(TAG_DOC_LLM)),
+            (TAG_DOC_MD, tags.get(TAG_DOC_MD)),
+        ):
+            if not blank(value):
+                yield oid, label, source, value or ""
+
+
+@register
+class DescriptionBoilerplate(Rule):
+    code = "VGI181"
+    name = "description-boilerplate"
+    category = CONTENT
+    default_severity = Severity.ERROR
+    targets = _DOC_TARGET_KINDS
+    summary = (
+        "Descriptions must not carry cross-worker boilerplate — filler that reads "
+        "identically in every worker's docs carries no signal."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        families = _BOILERPLATE + _extra_boilerplate(ctx.config.options.boilerplate_extra_patterns)
+        for oid, label, source, text in _iter_doc_text(ctx):
+            for family in families:
+                snippet = family.search(text)
+                if snippet is not None:
+                    yield self.finding(
+                        ctx,
+                        oid,
+                        f"{label} {source} contains {family.label} boilerplate: {snippet!r}",
+                        family.hint,
+                    )

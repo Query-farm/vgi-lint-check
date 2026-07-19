@@ -1238,3 +1238,63 @@ class NoFunctionRegistry(Rule):
                     "function's vgi.category / vgi.doc_md tags, which the platform already "
                     "surfaces for discovery.",
                 )
+
+
+# --- VGI328 no-diagnostic-function ------------------------------------------
+#
+# A zero-argument `version()` returns a constant an agent can already read from
+# catalog metadata (data_version / implementation_version, surfaced by
+# vgi_catalogs() with no query at all), so it spends a slot in the worker's
+# function surface on information the platform already carries — the same
+# duplication VGI327 flags for hand-rolled function registries.
+#
+# Matched on NAME only, never "zero-arg scalar" generally: a parameterless
+# scalar can be legitimately useful when it is non-constant (uuid(), now()).
+# `version`/`build_info` also match a `<prefix>_version` suffix (the fleet's
+# usual shape: asn1_version, barcode_version); the smoke-test names are matched
+# whole so `audio_info(...)`-style names are never caught by an `_info` suffix.
+_VERSION_FN = re.compile(r"(?:^|_)(?:version|build_?info)$", re.IGNORECASE)
+
+
+@register
+class NoDiagnosticFunction(Rule):
+    code = "VGI328"
+    name = "no-diagnostic-function"
+    category = FUNC
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.SCALAR_FUNCTION, ObjectKind.TABLE_FUNCTION, ObjectKind.MACRO)
+    summary = (
+        "A parameterless version()/ping() function duplicates catalog metadata or is "
+        "smoke-test scaffolding; it spends a slot in the worker's surface on nothing."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        smoke = {
+            n.strip().lower() for n in ctx.config.options.diagnostic_function_names if n.strip()
+        }
+        for f in ctx.catalog.iter_all_functions():
+            # `parameters`, not `arguments` — the latter is empty on vgi extensions
+            # too old to expose vgi_function_arguments(), which would read as
+            # "every function is parameterless" and flag the whole catalog.
+            if f.parameters or f.kind not in self.targets:
+                continue
+            name = f.name.strip().lower()
+            if _VERSION_FN.search(name):
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    f"{f.name}() is a parameterless version function",
+                    "drop it and set the catalog's data_version / implementation_version "
+                    "instead — an agent reads those from vgi_catalogs() without spending "
+                    "a query, and they can't drift from the running build. If it reports "
+                    "an upstream dependency's version, put that in a catalog tag",
+                )
+            elif name in smoke:
+                yield self.finding(
+                    ctx,
+                    f.id,
+                    f"{f.name}() is a parameterless diagnostic/liveness function",
+                    "drop it from the worker's public surface — a caller that can call "
+                    "it has already proved the worker is attached and responding, so it "
+                    "answers a question nobody can still be asking",
+                )

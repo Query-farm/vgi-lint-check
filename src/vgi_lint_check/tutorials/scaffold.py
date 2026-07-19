@@ -57,7 +57,6 @@ fully-qualified (`{worker}.main.fn(...)`) so every block is self-contained.
 
 ## Next steps
 
-- Read the [{worker} reference](https://github.com/Query-farm/vgi-{worker}) for the
-  full function catalog.
-- Browse [Query.Farm](https://query.farm) for the rest of the VGI worker fleet.
+Name two or three concrete follow-on tasks a reader can now attempt, each pointing at
+a specific tutorial or function — not a generic "see the repository" link.
 """

@@ -51,6 +51,28 @@ class Options:
     # treated as a redundant "manifest" — info an agent gets by listing the schema.
     enumeration_min_objects: int = 4
     enumeration_object_fraction: float = 0.5
+    # VGI180: extra boilerplate phrases to flag, as regex (case-insensitive), on
+    # top of the built-in families. Anchor with `[^.]*` rather than `.*` to keep
+    # a match inside one sentence. Invalid patterns are skipped, never fatal.
+    boilerplate_extra_patterns: list[str] = field(default_factory=list)
+    # VGI328: parameterless function names treated as diagnostic scaffolding.
+    # Matched whole (case-insensitive); `version`/`build_info` are matched
+    # separately as a suffix and aren't listed here. Empty = only version fires.
+    diagnostic_function_names: list[str] = field(
+        default_factory=lambda: [
+            "ping",
+            "health",
+            "healthcheck",
+            "health_check",
+            "heartbeat",
+            "echo",
+            "noop",
+            "hello",
+            "about",
+            "debug",
+            "status",
+        ]
+    )
     # Warn on a schema with more than this many objects (0 = disabled).
     max_schema_objects: int = 50
     # Flag a worker advertising more than this many catalogs (0 = disabled).
