@@ -91,6 +91,50 @@ def test_short_and_echo_descriptions():
     assert "VGI122" in found  # echoes name
 
 
+# --- catalog description substance (VGI106 + VGI121/122 on the catalog) ----
+def test_single_word_catalog_description_is_an_error():
+    cat = F.catalog(F.schema("main"), comment="cbor")
+    findings = [f for f in run(select_rules(Config()), RuleContext(cat, Config()))]
+    vgi106 = [f for f in findings if f.code == "VGI106"]
+    assert len(vgi106) == 1
+    assert vgi106[0].severity is Severity.ERROR
+    assert "single word" in vgi106[0].message
+    # the catalog is now in scope for the general description rules too
+    assert "VGI121" in {f.code for f in findings}
+
+
+def test_catalog_description_echoing_the_name_is_flagged():
+    cat = F.catalog(F.schema("main"), comment="v")  # F.catalog() uses database="v"
+    found = set(codes(cat))
+    assert "VGI106" in found
+    assert "VGI122" in found  # echoes the catalog name
+
+
+def test_short_but_multiword_catalog_description_still_flagged():
+    cat = F.catalog(F.schema("main"), comment="Fixed-width codec.")
+    found = set(codes(cat))
+    assert "VGI106" in found
+
+
+def test_descriptive_catalog_description_passes():
+    cat = F.catalog(
+        F.schema("main"),
+        comment="CBOR (RFC 8949) / MessagePack decode & encode for SQL.",
+    )
+    found = set(codes(cat))
+    assert "VGI106" not in found
+    assert "VGI121" not in found
+    assert "VGI122" not in found
+
+
+def test_missing_catalog_description_is_not_vgi106():
+    # Absence is VGI001's business; VGI106 only grades what is present.
+    cat = F.catalog(F.schema("main"), comment=None)
+    found = set(codes(cat))
+    assert "VGI106" not in found
+    assert "VGI001" in found
+
+
 def test_trivial_examples_flagged():
     t = F.table(
         "main",

@@ -146,12 +146,13 @@ class DescriptionTooShort(Rule):
     name = "description-too-short"
     category = DISC
     default_severity = Severity.INFO
-    targets = (ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
     summary = "A description should be substantive enough to index and read well."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         minlen = ctx.config.options.min_meaningful_description_chars
-        objs = [(s.id, s.comment, s.name) for s in ctx.catalog.iter_schemas()]
+        objs = [(ctx.catalog.id, ctx.catalog.comment, ctx.catalog.qualifier)]
+        objs += [(s.id, s.comment, s.name) for s in ctx.catalog.iter_schemas()]
         objs += [(t.id, t.comment, t.name) for t in ctx.catalog.iter_table_like()]
         for oid, comment, _name in objs:
             text = (comment or "").strip()
@@ -170,10 +171,13 @@ class DescriptionEchoesName(Rule):
     name = "description-echoes-name"
     category = DISC
     default_severity = Severity.INFO
-    targets = (ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
     summary = "A description that just restates the name adds no searchable signal."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        if is_trivial_echo(cat.comment, cat.qualifier):
+            yield self._echo(ctx, cat.id, cat.qualifier)
         for s in ctx.catalog.iter_schemas():
             if is_trivial_echo(s.comment, s.name):
                 yield self._echo(ctx, s.id, s.name)

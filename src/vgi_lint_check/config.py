@@ -45,6 +45,9 @@ class Options:
     # Catalog/schema are the worker's listing — their doc_llm/doc_md should be
     # detailed, well above the object-level floor.
     min_catalog_description_chars: int = 300
+    # VGI106: the catalog `comment` (the one-line storefront blurb, distinct from
+    # the long doc_llm/doc_md above) must read as a sentence, not a bare name.
+    min_catalog_comment_chars: int = 40
     min_schema_description_chars: int = 160
     # VGI173: a catalog/schema description that names this many of the worker's
     # own objects (as code tokens) and covers at least this fraction of them is

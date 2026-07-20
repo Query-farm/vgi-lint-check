@@ -206,7 +206,8 @@ def catalog(
     *schemas,
     settings=(),
     pragmas=(),
-    comment="A test catalog of things.",
+    # Descriptive enough to satisfy VGI106 (catalog comment min 40 chars).
+    comment="Animal sounds, attributes, and taxonomy lookups for SQL.",
     tags=None,
     source_url="https://example.com",
     releases=(),

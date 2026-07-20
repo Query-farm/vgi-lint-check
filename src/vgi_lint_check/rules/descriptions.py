@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 
 from ..findings import Category, Finding, Severity
@@ -12,11 +13,52 @@ from ..model import (
     ObjectKind,
     TagSet,
 )
-from ._util import blank
+from ._util import blank, is_trivial_echo
 from .base import Rule, RuleContext
 from .registry import register
 
 DESC = Category.DESCRIPTION
+
+# A "word" for VGI106: a run of letters/digits with internal punctuation kept
+# (so "RFC 8949", "fixed-width", "COMP-3", "s3://" each read as one word).
+_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9./_-]*")
+
+
+@register
+class CatalogDescriptionSubstantive(Rule):
+    code = "VGI106"
+    name = "catalog-description-substantive"
+    category = DESC
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.CATALOG,)
+    summary = (
+        "The catalog comment is the worker's storefront line — it must be a descriptive "
+        "sentence, not a bare name or single word."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        text = (cat.comment or "").strip()
+        if not text:
+            # Absence is VGI103's business; VGI106 only grades what is there.
+            return
+        minlen = ctx.config.options.min_catalog_comment_chars
+        words = _WORD.findall(text)
+        if is_trivial_echo(text, cat.qualifier):
+            reason = f"is just the catalog name ({cat.qualifier!r})"
+        elif len(words) < 2:
+            reason = f"is a single word ({text!r})"
+        elif len(text) < minlen:
+            reason = f"is too short to be descriptive ({len(text)} < {minlen} chars)"
+        else:
+            return
+        yield self.finding(
+            ctx,
+            cat.id,
+            f"catalog description {reason}",
+            "write one descriptive sentence saying what the worker does and for whom, "
+            "e.g. 'CBOR (RFC 8949) / MessagePack decode & encode for SQL.' — not 'cbor'",
+        )
 
 
 @register
