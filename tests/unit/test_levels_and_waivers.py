@@ -540,3 +540,29 @@ def test_sweep_does_not_reverify_when_serial(monkeypatch):
     monkeypatch.setattr(fleet, "lint_one", fake_lint_one)
     fleet.sweep([fleet.WorkerSpec(name="w", location="./w")], jobs=1)
     assert len(calls) == 1
+
+
+def test_execution_waivers_are_unconfirmed_not_dead(monkeypatch):
+    """A quiet execution rule is not evidence that its waiver is dead.
+
+    VGI901/VGI902 verdicts move with session state and ordering — a catalog-level
+    executable example can create a model that a later per-function example then
+    binds against, so the same waiver reads live in one run and dead in the next.
+    Observed on vgi-lightgbm: VGI901 "dead" on predict but live on explain, with
+    an identical rationale. Advising deletion on one observation is how a
+    load-bearing waiver gets deleted.
+    """
+    from vgi_lint_check.rules import engine, registry
+
+    monkeypatch.setattr(registry, "all_rule_classes", lambda: [_Quiet])
+    cfg = from_table({"ignore": ["VGI901", "VGI112"]})
+    cfg.execute = True
+    ctx = RuleContext(catalog=None, config=cfg)
+    usage = {u.waiver.code: u for u in engine.audit_waivers([], ctx)}
+
+    # Execution rule: quiet, but not condemned.
+    assert usage["VGI901"].unconfirmed is True
+    assert usage["VGI901"].dead is False
+    # Static rule: a quiet pass is conclusive.
+    assert usage["VGI112"].unconfirmed is False
+    assert usage["VGI112"].dead is True

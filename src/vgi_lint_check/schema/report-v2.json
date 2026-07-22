@@ -432,6 +432,7 @@
         "suppressed",
         "objects",
         "dead",
+        "unconfirmed",
         "problems"
       ],
       "additionalProperties": false,
@@ -480,6 +481,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "unconfirmed": {
+          "type": "boolean"
         }
       }
     }

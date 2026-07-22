@@ -67,6 +67,7 @@ def _waiver_dict(usage: Any) -> dict[str, Any]:
         "suppressed": usage.suppressed,
         "objects": usage.objects,
         "dead": usage.dead,
+        "unconfirmed": usage.unconfirmed,
         "problems": w.problems(),
     }
 

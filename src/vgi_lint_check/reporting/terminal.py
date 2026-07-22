@@ -209,6 +209,12 @@ def _print_waivers(con: RichConsole, waivers: list[dict[str, Any]]) -> None:
                 f"    [yellow]{w['code']}[/yellow]  [dim]{scope}[/dim]  "
                 f"[yellow]suppresses nothing — delete it[/yellow]"
             )
+        elif w.get("unconfirmed"):
+            con.print(
+                f"    {w['code']}  [dim]{scope} · {w['kind']} · nothing suppressed this "
+                f"run, but an execution rule's verdict moves with session state — "
+                f"re-check before removing[/dim]"
+            )
         else:
             con.print(
                 f"    {w['code']}  [dim]{scope} · {w['kind']} · "

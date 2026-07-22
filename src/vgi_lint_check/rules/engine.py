@@ -82,6 +82,14 @@ def audit_waivers(rules: Iterable[Rule], ctx: RuleContext) -> list[WaiverUsage]:
             if config.is_object_ignored(f.object_id, f.code):
                 _credit(usage, by_code, f, scope_match=f.object_id.qualified())
 
+    # A quiet execution rule proves nothing (see WaiverUsage.dead): its verdict
+    # moves with session state and ordering, so flag rather than condemn.
+    from ..levels import tier_of
+
+    for u in usage.values():
+        if u.suppressed == 0 and tier_of(u.waiver.code) == "behavioral":
+            u.unconfirmed = True
+
     return [usage[id(w)] for w in config.waivers]
 
 

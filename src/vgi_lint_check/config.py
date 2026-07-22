@@ -206,11 +206,24 @@ class WaiverUsage:
     waiver: Waiver
     suppressed: int = 0
     objects: list[str] = field(default_factory=list)
+    # True when the waived rule's outcome depends on live session state (an
+    # execution rule), so a single quiet pass is not evidence of anything.
+    unconfirmed: bool = False
 
     @property
     def dead(self) -> bool:
-        """True when the waiver suppressed nothing — it can be deleted."""
-        return self.suppressed == 0
+        """True when the waiver demonstrably suppressed nothing — it can be deleted.
+
+        Deliberately conservative. An execution rule's verdict depends on session
+        state, ordering and timing — a catalog-level executable example can create
+        a model that a later per-function example then binds against, so the same
+        waiver looks live in one run and dead in the next. One quiet observation
+        cannot tell "the rule no longer applies" from "this run happened to pass",
+        and advising deletion on that basis deletes load-bearing waivers.
+
+        So those are reported ``unconfirmed`` instead, and never counted as dead.
+        """
+        return self.suppressed == 0 and not self.unconfirmed
 
 
 def _parse_waivers(raw: Any, scope: str | None = None) -> tuple[list[str], list[Waiver]]:
