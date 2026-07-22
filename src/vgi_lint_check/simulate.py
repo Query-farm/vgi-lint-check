@@ -206,6 +206,32 @@ class SimReport:
 # Bounded orientation listing (the preamble — names + one-liners, never columns
 # or the solution). The analyst drills in via the discovery tools below.
 # --------------------------------------------------------------------------
+def _listing_signature(obj: Function) -> str:
+    """Compact call signature for the orientation listing.
+
+    Shows the CALLING CONVENTION, not just parameter names: a named-only
+    argument renders as ``name := …``. A bare comma-joined name list reads as a
+    positional signature, so an analyst writes the positional call it implies and
+    eats a bind error — measured against a worker whose regression functions take
+    named-only ``formula``/``family``, that one line cost a bind error on 5 of 7
+    tasks and failed one outright, with the analyst reporting that positional
+    arguments failed "despite matching the documented signature".
+
+    ``describe_function`` already reports ``calling`` per argument and a ``usage``
+    template; the listing must not contradict them. Falls back to the bare
+    parameter names when a worker exposes no argument metadata.
+    """
+    args = list(getattr(obj, "arguments", None) or ())
+    if not args:
+        return ", ".join(obj.parameters) if obj.parameters else ""
+    parts: list[str] = []
+    for a in args:
+        # Table inputs and positional args are already written as bare values;
+        # only a named arg needs its `:=` spelled out.
+        parts.append(f"{a.name} := …" if a.is_named and not a.is_table_input else a.name)
+    return ", ".join(parts)
+
+
 def _listing_line(catalog: Catalog, schema: str, obj: Table | Function, indent: str) -> str | None:
     """One indented orientation line for a table/view/function (None to skip)."""
     qual = catalog.qualifier
@@ -214,7 +240,7 @@ def _listing_line(catalog: Catalog, schema: str, obj: Table | Function, indent: 
         return f"{indent}{obj.kind} {qual}.{schema}.{obj.name}" + (f" — {td[:160]}" if td else "")
     if obj.kind is ObjectKind.TABLE_FUNCTION and catalog.find_table_like(obj.name, obj.schema):
         return None  # documented via its backing table
-    sig = ", ".join(obj.parameters) if obj.parameters else ""
+    sig = _listing_signature(obj)
     fd = (obj.description or obj.comment or "").strip()
     return f"{indent}{obj.function_type} {qual}.{schema}.{obj.name}({sig})" + (
         f" — {fd[:160]}" if fd else ""
@@ -340,8 +366,23 @@ def tool_list_categories(catalog: Catalog, schema: str) -> dict[str, Any]:
     return {"error": f"no schema {schema!r} — call list_tables to see what exists"}
 
 
+def _resolve_schema(catalog: Catalog, schema: str) -> str:
+    """Accept a bare or catalog-qualified schema name and return the bare one.
+
+    The listing prints fully-qualified names (``catalog.schema.object``), so an
+    analyst reasonably passes ``"statsmodels.main"`` back into a describe tool.
+    Rejecting that as not-found is a self-inflicted dead end: the tool taught the
+    name and then refused it. Strip a leading ``<catalog>.`` so both forms work.
+    """
+    prefix = f"{catalog.qualifier}."
+    if schema.startswith(prefix):
+        return schema[len(prefix) :]
+    return schema
+
+
 def tool_describe_table(catalog: Catalog, schema: str, table: str) -> dict[str, Any]:
     """Columns (name/type/nullable/comment), constraints, and examples for a table."""
+    schema = _resolve_schema(catalog, schema)
     for t in catalog.iter_table_like():
         if t.schema == schema and t.name == table:
             pk = [
@@ -434,6 +475,7 @@ def _usage_hint(catalog: Catalog, schema: str, name: str, arguments: list[Any]) 
 
 def tool_describe_function(catalog: Catalog, schema: str, name: str) -> dict[str, Any]:
     """Signature, description, per-argument docs, and the calling convention."""
+    schema = _resolve_schema(catalog, schema)
     for f in catalog.iter_all_functions():
         if f.schema == schema and f.name == name:
             out = {

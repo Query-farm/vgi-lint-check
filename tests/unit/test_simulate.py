@@ -656,3 +656,85 @@ def test_render_terminal_and_json():
     doc = json.loads(sim.render_json(rep))
     assert doc["tool"] == "vgi-lint simulate" and doc["verdicts"][0]["outcome"] == "pass"
     assert doc["discoverability"] == 100 and doc["verdicts"][0]["path"]["score"] == 100
+
+
+# --------------------------------------------------------------------------
+# Listing signatures spell out the calling convention
+# --------------------------------------------------------------------------
+def test_listing_signature_marks_named_arguments():
+    """A named-only argument must render as ``name := …`` in the listing.
+
+    A bare name list reads as a positional signature, so the analyst writes the
+    positional call it implies and eats a bind error — the listing would be
+    contradicting describe_function's own ``calling``/``usage`` fields.
+    """
+    fn = F.func(
+        "main",
+        "glm",
+        "table",
+        description="Generalized linear model.",
+        parameters=("data", "formula", "family"),
+        arguments=(
+            F.arg("data", type="TABLE", is_table_input=True),
+            F.arg("formula", is_named=True),
+            F.arg("family", is_named=True),
+        ),
+    )
+    listing = sim.build_listing(F.catalog(F.schema("main", functions=(fn,))))
+    assert "glm(data, formula := …, family := …)" in listing
+    # The bare positional-looking rendering must be gone.
+    assert "glm(data, formula, family)" not in listing
+
+
+def test_listing_signature_keeps_positional_args_bare():
+    """A genuinely positional argument stays a bare name (no false ``:=``)."""
+    fn = F.func(
+        "main",
+        "add",
+        "scalar",
+        description="Add two numbers.",
+        parameters=("a", "b"),
+        arguments=(F.arg("a", is_positional=True), F.arg("b", is_positional=True)),
+    )
+    listing = sim.build_listing(F.catalog(F.schema("main", functions=(fn,))))
+    assert "add(a, b)" in listing
+    assert ":=" not in listing
+
+
+def test_listing_signature_falls_back_to_parameter_names():
+    """A worker exposing no argument metadata still gets its parameter names."""
+    fn = F.func(
+        "main",
+        "legacy",
+        "scalar",
+        description="No argument metadata.",
+        parameters=("x", "y"),
+    )
+    listing = sim.build_listing(F.catalog(F.schema("main", functions=(fn,))))
+    assert "legacy(x, y)" in listing
+
+
+# --------------------------------------------------------------------------
+# Describe tools accept the qualified names the listing prints
+# --------------------------------------------------------------------------
+def test_describe_tools_accept_catalog_qualified_schema():
+    """``describe_*`` must accept ``catalog.schema``, the form the listing prints.
+
+    The listing teaches fully-qualified names, so an analyst passes one back;
+    rejecting it as not-found is a dead end the tool created itself.
+    """
+    cat = F.catalog(
+        F.schema(
+            "main",
+            tables=(F.table("main", "t", columns=(F.col("main", "t", "c"),)),),
+            functions=(F.func("main", "f", "scalar", description="A function."),),
+        )
+    )
+    qualified = f"{cat.qualifier}.main"
+    assert sim.tool_describe_table(cat, qualified, "t")["name"] == "t"
+    assert sim.tool_describe_function(cat, qualified, "f")["name"] == "f"
+    # The bare form keeps working.
+    assert sim.tool_describe_table(cat, "main", "t")["name"] == "t"
+    assert sim.tool_describe_function(cat, "main", "f")["name"] == "f"
+    # A genuinely unknown schema still reports not-found.
+    assert "error" in sim.tool_describe_function(cat, "nope", "f")
