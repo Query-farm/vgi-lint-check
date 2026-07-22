@@ -510,6 +510,7 @@ def _run_ai_passes(
                     backend,
                     backend_name=config.ai_backend,
                     cache=_cache(".vgi-sim-cache.json"),
+                    limits=config.sim_limits(),
                 )
         except Exception as e:  # noqa: BLE001
             _warn_ai_pass("agent-check", e)

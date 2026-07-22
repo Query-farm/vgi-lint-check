@@ -301,6 +301,15 @@ class Config:
     max_batch_bytes: int = 64 * 1024 * 1024  # mean bytes per batch above this
     sample_size: int = 100  # VGI810/VGI811: rows/values sampled per constraint probe
     sample_timeout: float = 10.0  # VGI810/VGI811: per-query cap (shorter than execute_timeout)
+    # Agent-suitability run (--agent-check / VGI920). None means "inherit the
+    # execution window": it is the same worker paying the same cold-start cost, so
+    # a repo that already declared it is slow should not have to say so twice —
+    # otherwise a worker configured correctly for L2 fails L3 for a reason that
+    # has nothing to do with agent usability. Set explicitly under [simulate].
+    sim_timeout: float | None = None
+    sim_concurrency: int | None = None
+    sim_attempts: int = 1
+    sim_max_steps: int = 12
     check_links: bool = False  # enable network rules (validate description URLs)
     link_timeout: float = 10.0
     # LLM passes (use the local `claude -p` subscription backend by default).
@@ -375,6 +384,26 @@ class Config:
             return Severity.OFF
         # 4. explicit per-rule override, else the rule default
         return self.severity_overrides.get(rule.code, rule.default_severity)
+
+    def sim_limits(self) -> Any:
+        """Build the ``simulate`` bounds for ``--agent-check`` from this config.
+
+        Timeout and concurrency fall back to the execution window rather than to
+        ``SimLimits``' own defaults, because the agent run drives the same worker
+        through the same cold start as the execution rules do.
+        """
+        from .simulate import SimLimits
+
+        return SimLimits(
+            timeout=self.sim_timeout if self.sim_timeout is not None else self.execute_timeout,
+            concurrency=(
+                self.sim_concurrency
+                if self.sim_concurrency is not None
+                else self.execute_concurrency
+            ),
+            attempts=self.sim_attempts,
+            max_steps=self.sim_max_steps,
+        )
 
     def is_waived(self, rule: Rule | type[Rule]) -> bool:
         """True when this rule is off *only* because a catalog-wide waiver hides it."""
@@ -475,6 +504,14 @@ def from_table(raw: dict[str, Any]) -> Config:
         cfg.max_batch_bytes = int(ex.get("max_batch_bytes", cfg.max_batch_bytes))
         cfg.sample_size = int(ex.get("sample_size", cfg.sample_size))
         cfg.sample_timeout = float(ex.get("sample_timeout", cfg.sample_timeout))
+    if "simulate" in raw and isinstance(raw["simulate"], dict):
+        sim = raw["simulate"]
+        if "timeout" in sim:
+            cfg.sim_timeout = float(sim["timeout"])
+        if "concurrency" in sim:
+            cfg.sim_concurrency = int(sim["concurrency"])
+        cfg.sim_attempts = int(sim.get("attempts", cfg.sim_attempts))
+        cfg.sim_max_steps = int(sim.get("max_steps", cfg.sim_max_steps))
     return cfg
 
 

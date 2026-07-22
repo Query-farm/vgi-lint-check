@@ -499,6 +499,12 @@ A bare string (`ignore = ["VGI113"]`) still works and lands in kind
 `unspecified`. Valid kinds: `domain-exemption`, `timing`, `tooling-bug`,
 `deferred`.
 
+`--agent-check` (the L3 agent run) inherits `[execution]`'s `timeout` and
+`concurrency` — it drives the same worker through the same cold start, so a
+worker that already declared it is slow does not have to say so twice. Override
+under `[tool.vgi-lint-check.simulate]` (`timeout`, `concurrency`, `attempts`,
+`max_steps`) when the agent run genuinely differs.
+
 Precedence: defaults < `pyproject.toml` < `vgi-lint.toml` < CLI flags.
 
 ### Auditing waivers

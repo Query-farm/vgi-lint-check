@@ -566,3 +566,40 @@ def test_execution_waivers_are_unconfirmed_not_dead(monkeypatch):
     # Static rule: a quiet pass is conclusive.
     assert usage["VGI112"].unconfirmed is False
     assert usage["VGI112"].dead is True
+
+
+# --- the agent run inherits the execution window --------------------------
+def test_agent_check_inherits_the_execution_window():
+    """--agent-check drives the same worker through the same cold start.
+
+    A worker that legitimately needs a wide window (a 2GB model load, a slow
+    upstream) declares it once under [execution]. Before this, `simulate` used its
+    own hardcoded 30s, so such a worker failed the agent check for a reason that
+    had nothing to do with agent usability — blocking L3 for exactly the workers
+    careful enough to configure themselves correctly.
+    """
+    cfg = from_table({"execution": {"timeout": 120, "concurrency": 1}})
+    limits = cfg.sim_limits()
+    assert limits.timeout == 120
+    assert limits.concurrency == 1
+
+
+def test_simulate_section_overrides_the_inherited_window():
+    cfg = from_table(
+        {
+            "execution": {"timeout": 120, "concurrency": 1},
+            "simulate": {"timeout": 300, "concurrency": 2, "attempts": 2, "max_steps": 20},
+        }
+    )
+    limits = cfg.sim_limits()
+    assert limits.timeout == 300
+    assert limits.concurrency == 2
+    assert limits.attempts == 2
+    assert limits.max_steps == 20
+
+
+def test_sim_limits_fall_back_to_defaults_with_no_config():
+    cfg = from_table({})
+    limits = cfg.sim_limits()
+    assert limits.timeout == cfg.execute_timeout
+    assert limits.concurrency == cfg.execute_concurrency
