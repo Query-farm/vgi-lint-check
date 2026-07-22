@@ -454,3 +454,89 @@ def test_jvm_worker_located_by_its_shaded_jar(tmp_path):
     loc = fleet._infer_location(repo)
     assert loc.startswith("java -jar ")
     assert loc.endswith("-all.jar")
+
+
+# --- concurrency artifacts must not be reported as worker defects ---------
+def test_timing_sensitive_findings_are_detected():
+    from vgi_lint_check import fleet
+
+    r = fleet.WorkerResult(
+        name="w",
+        status="ok",
+        top_findings=[
+            {"code": "VGI911", "severity": "error"},
+            {"code": "VGI515", "severity": "error"},  # deterministic — not suspect
+            {"code": "VGI908", "severity": "warning"},
+        ],
+    )
+    assert fleet.timing_sensitive_findings(r) == ["VGI908", "VGI911"]
+    clean = fleet.WorkerResult(name="w", status="ok", top_findings=[{"code": "VGI515"}])
+    assert fleet.timing_sensitive_findings(clean) == []
+
+
+def test_sweep_remeasures_timing_findings_serially(monkeypatch):
+    """A scan starved by a concurrent sweep is not an unresponsive scan.
+
+    Heavy workers (scipy, a JVM, a JIT) can starve their neighbours past the scan
+    timeout, so VGI911/VGI908 seen under concurrency may belong to the sweep, not
+    the worker. Those get re-measured with the machine to itself and the serial
+    verdict wins — otherwise the sweep sends people to fix problems they do not
+    have. (Observed for real on vgi-survival: L1 in a 4-way sweep, L2 alone.)
+    """
+    from vgi_lint_check import fleet
+
+    calls = []
+
+    def fake_lint_one(spec, linter=None):
+        calls.append(spec.name)
+        if len(calls) == 1:  # concurrent pass: spurious timeout
+            return fleet.WorkerResult(
+                name=spec.name,
+                status="ok",
+                score=94,
+                level=1,
+                level_label="L1",
+                top_findings=[{"code": "VGI911", "severity": "error"}],
+            )
+        return fleet.WorkerResult(  # serial pass: clean
+            name=spec.name, status="ok", score=100, level=2, level_label="L2"
+        )
+
+    monkeypatch.setattr(fleet, "lint_one", fake_lint_one)
+    spec = fleet.WorkerSpec(name="vgi-heavy", location="./w")
+    (out,) = fleet.sweep([spec], jobs=4)
+    assert out.level == 2 and out.score == 100
+    assert out.reverified == ["VGI911"]
+    assert len(calls) == 2
+
+
+def test_sweep_keeps_a_finding_that_survives_the_serial_rerun(monkeypatch):
+    from vgi_lint_check import fleet
+
+    def fake_lint_one(spec, linter=None):
+        return fleet.WorkerResult(
+            name=spec.name,
+            status="ok",
+            score=86,
+            level=1,
+            level_label="L1",
+            top_findings=[{"code": "VGI911", "severity": "error"}],
+        )
+
+    monkeypatch.setattr(fleet, "lint_one", fake_lint_one)
+    (out,) = fleet.sweep([fleet.WorkerSpec(name="w", location="./w")], jobs=4)
+    assert out.level == 1  # a genuinely unresponsive scan fails both times
+
+
+def test_sweep_does_not_reverify_when_serial(monkeypatch):
+    from vgi_lint_check import fleet
+
+    calls = []
+
+    def fake_lint_one(spec, linter=None):
+        calls.append(spec.name)
+        return fleet.WorkerResult(name=spec.name, status="ok", top_findings=[{"code": "VGI911"}])
+
+    monkeypatch.setattr(fleet, "lint_one", fake_lint_one)
+    fleet.sweep([fleet.WorkerSpec(name="w", location="./w")], jobs=1)
+    assert len(calls) == 1

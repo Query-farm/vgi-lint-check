@@ -97,6 +97,9 @@ class WorkerResult:
     has_tutorials: bool = False
     duration_s: float = 0.0
     detail: str = ""
+    # Rule codes that were re-measured serially because a concurrent sweep can
+    # fail them spuriously; the recorded result is the serial one.
+    reverified: list[str] = field(default_factory=list)
 
 
 def load_manifest(path: str | Path) -> list[WorkerSpec]:
@@ -347,6 +350,45 @@ def lint_one(spec: WorkerSpec, *, linter: list[str] | None = None) -> WorkerResu
     return _distill(base, doc)
 
 
+# Rules whose verdict depends on wall-clock time or a live upstream, and which a
+# busy machine can therefore fail spuriously. Everything else is deterministic.
+_TIMING_SENSITIVE = {"VGI901", "VGI902", "VGI906", "VGI908", "VGI911", "VGI912"}
+
+
+def timing_sensitive_findings(result: WorkerResult) -> list[str]:
+    """Codes in ``result`` whose verdict could be an artifact of a busy machine."""
+    return sorted(
+        {
+            str(f.get("code"))
+            for f in result.top_findings
+            if str(f.get("code")) in _TIMING_SENSITIVE
+        }
+    )
+
+
+def _reverify(spec: WorkerSpec, result: WorkerResult, *, linter: list[str] | None) -> WorkerResult:
+    """Re-lint a worker alone when its findings could be contention artifacts.
+
+    A sweep runs several workers at once, and a worker that loads a heavy runtime
+    (scipy/lifelines, a JVM, a JIT) can starve its neighbours past the scan
+    timeout. That produces VGI911/VGI908 findings which are properties of the
+    *sweep*, not of the worker — they vanish on a serial re-run, and chasing them
+    sends people to fix problems they do not have.
+
+    So: any timing-sensitive finding seen under concurrency is re-measured with
+    the machine to itself, and the serial result is the one that counts. A real
+    unresponsive scan fails both times.
+    """
+    codes = timing_sensitive_findings(result)
+    if not codes:
+        return result
+    second = lint_one(spec, linter=linter)
+    if second.status != "ok":
+        return result  # the retry told us nothing; keep the original verdict
+    second.reverified = codes
+    return second
+
+
 def _parse_json(text: str) -> dict[str, Any] | None:
     """Pull the JSON document out of a lint run's stdout.
 
@@ -423,6 +465,12 @@ def sweep(
     Concurrency is bounded deliberately: each job spawns a real worker process
     (some load multi-gigabyte models), and the fleet's own build notes put the
     practical ceiling around six parallel heavy jobs.
+
+    Timing-sensitive findings (VGI9xx) are then **re-measured serially**, because
+    a worker that loads a heavy runtime can starve its neighbours past the scan
+    timeout — producing findings that belong to the sweep rather than the worker.
+    The serial verdict is the one reported. Set ``jobs=1`` and there is nothing to
+    re-verify.
     """
     results: dict[str, WorkerResult] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
@@ -438,6 +486,16 @@ def sweep(
             results[spec.name] = res
             if on_done is not None:
                 on_done(res)
+
+    if jobs > 1:
+        by_name = {s.name: s for s in specs}
+        suspect = [n for n, r in results.items() if timing_sensitive_findings(r)]
+        for name in suspect:
+            confirmed = _reverify(by_name[name], results[name], linter=linter)
+            results[name] = confirmed
+            if on_done is not None:
+                on_done(confirmed)
+
     return [results[s.name] for s in specs if s.name in results]
 
 
