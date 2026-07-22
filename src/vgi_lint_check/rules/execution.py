@@ -27,6 +27,7 @@ from ._util import (
     QueryTimeout,
     blank,
     is_bind_error,
+    is_credential_error,
     is_filter_policy_error,
     map_isolated_queries,
     map_queries,
@@ -518,6 +519,12 @@ class ExecutableExamplesExecute(Rule):
             try:
                 _run_executable(cur, ex, timeout)
             except Exception as e:  # noqa: BLE001 - surface engine/timeout error
+                if is_credential_error(e):
+                    # The example is fine; the lint host simply has no credential
+                    # for this worker's backend. Pass --setup-sql 'CREATE SECRET …'
+                    # (or --attach-option) to exercise the real path. Failing here
+                    # would only measure the linter's environment, not the worker.
+                    return None
                 return self.finding(
                     ctx,
                     obj_id,
@@ -1069,6 +1076,15 @@ class ScanResponds(Rule):
                     "from next_batch(); a scan blocked inside its first batch cannot be "
                     "cancelled, so it wedges any client that touches it",
                 )
+            elif is_credential_error(probe.error):
+                # A prompt, explicit "attach a <x> secret" refusal is the worker
+                # behaving correctly, and is the opposite of the failure this rule
+                # guards against (a scan that blocks inside its first batch and
+                # cannot be cancelled). Scoring it as an error would say something
+                # untrue and would cap every credentialed connector below the level
+                # its metadata has earned. Lint with --attach-option / --setup-sql
+                # (e.g. a CREATE SECRET) to exercise the real read path.
+                continue
             elif probe.error:
                 yield self.finding(
                     ctx,

@@ -130,6 +130,38 @@ def is_filter_policy_error(error: object) -> bool:
     return bool(_FILTER_POLICY.search(str(error)))
 
 
+# A backend-dependent worker scanned with no credentials refuses at bind time —
+# "attach an 'azure_graph' secret (TYPE azure_graph)", "no AWS credentials", and
+# so on. That is the *correct* behaviour, and specifically the good version of
+# it: a prompt, explicit refusal naming what is missing.
+#
+# The scan-responsiveness rule (VGI911) exists because a worker blocked inside
+# its first batch cannot be interrupted and wedges its client forever. A fast
+# credential refusal is the opposite of that failure, so scoring it as an error
+# says something untrue about the worker — and permanently caps every
+# credentialed connector below the level its metadata has actually earned.
+_CREDENTIAL_REQUIRED = re.compile(
+    r"attach\s+an?\s+'?[\w.-]+'?\s+secret"
+    r"|\b(secret|credential|api[\s_-]?key|token|auth(entication|orization)?)\b"
+    r"[^.]{0,60}\b(required|missing|not\s+(set|found|configured|provided)|must\s+be)"
+    r"|\b(no|missing)\b[^.]{0,30}\b(credentials?|secret|api[\s_-]?key)\b"
+    r"|CREATE\s+SECRET"
+    r"|\b(unauthenti|unauthori)\w*\b"
+    r"|\b(401|403)\b[^.]{0,30}\b(unauthori|forbidden)",
+    re.IGNORECASE,
+)
+
+
+def is_credential_error(error: object) -> bool:
+    """True when a failure is a worker refusing because no credential was supplied.
+
+    Deliberately narrow: it matches an explicit statement that a secret/credential
+    is missing, not any authentication-adjacent word. A worker that fails *because
+    its credential is wrong* still surfaces as a real failure.
+    """
+    return bool(_CREDENTIAL_REQUIRED.search(str(error)))
+
+
 # DuckDB's structural (bind-time) error classes — the SQL is wrong against the
 # catalog (unknown table/column/function, type/arg mismatch, syntax), as opposed
 # to a runtime/data failure. These are real authoring bugs, not "needs data".

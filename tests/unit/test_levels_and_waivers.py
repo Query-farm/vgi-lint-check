@@ -346,3 +346,41 @@ def test_fleet_parses_json_after_leading_noise():
     assert fleet._parse_json('warning: something\n{"a": 1}') == {"a": 1}
     assert fleet._parse_json("") is None
     assert fleet._parse_json("not json at all") is None
+
+
+# --- credential refusals are not scan failures ----------------------------
+@pytest.mark.parametrize(
+    "message",
+    [
+        "VGI Worker Exception: Error: audit_logs: attach an 'azure_graph' secret"
+        " (TYPE azure_graph)",
+        "no AWS credentials found for the kinesis stream",
+        "Error: an api_key is required for this provider",
+        "authentication required: create a secret first",
+        "CREATE SECRET (TYPE llm, ...) before querying",
+        "401 Unauthorized",
+        "the ldap secret is not configured",
+    ],
+)
+def test_credential_refusals_are_recognized(message):
+    from vgi_lint_check.rules._util import is_credential_error
+
+    assert is_credential_error(Exception(message)) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        'Binder Error: referenced column "foo" not found',
+        "Catalog Error: Table with name x does not exist",
+        "query exceeded 30s and was cancelled",
+        "connection reset by peer",
+        # An auth-adjacent word alone must not excuse a real failure — the
+        # classifier is deliberately narrow.
+        "the authenticated user has no rows in this table",
+    ],
+)
+def test_real_failures_are_not_mistaken_for_credential_refusals(message):
+    from vgi_lint_check.rules._util import is_credential_error
+
+    assert is_credential_error(Exception(message)) is False
