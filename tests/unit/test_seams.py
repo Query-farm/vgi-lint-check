@@ -1,5 +1,8 @@
 """Unit coverage for I/O seams and the parsing heuristics flagged in review."""
 
+import itertools
+import threading
+
 import pytest
 
 from vgi_lint_check.config import Config
@@ -276,7 +279,15 @@ def test_is_unnamed(name, unnamed):
 def test_map_queries_sequential_and_parallel():
     from vgi_lint_check.rules._util import map_queries
 
+    # Cursors carry a serial rather than being compared by id(): a short-lived
+    # cursor can be collected and its address reused, so id() is not a stable
+    # identity to assert on.
     class FakeCon:
+        _next = itertools.count()
+
+        def __init__(self):
+            self.serial = next(FakeCon._next)
+
         def cursor(self):
             return FakeCon()
 
@@ -285,6 +296,17 @@ def test_map_queries_sequential_and_parallel():
     # order preserved + correct results, both sequential and parallel
     assert map_queries(con, items, lambda i, cur: i * i, 1) == [i * i for i in items]
     assert map_queries(con, items, lambda i, cur: i * i, 4) == [i * i for i in items]
-    # each parallel worker gets a distinct cursor (not the main connection)
-    seen = map_queries(con, items, lambda i, cur: id(cur), 4)
-    assert len(set(seen)) >= 2 and id(con) not in seen
+
+    # Each parallel worker gets its own cursor, and never the main connection.
+    # A barrier forces all four tasks to be in flight at once — without it the
+    # pool can hand every (trivially fast) task to one thread, which would make
+    # "more than one cursor was created" a race rather than an assertion.
+    gate = threading.Barrier(4, timeout=5)
+
+    def probe(_i, cur):
+        gate.wait()
+        return cur.serial
+
+    seen = map_queries(con, list(range(4)), probe, 4)
+    assert len(set(seen)) == 4
+    assert con.serial not in seen

@@ -80,6 +80,8 @@ def render_terminal(
             f"  [bold]Catalog Quality Score[/bold]  {r['score']} / 100{dim_str}"
             f"     [dim]{_summary_line(r['counts'])}[/dim]"
         )
+        _print_level(con, r.get("level"))
+        _print_waivers(con, r.get("waivers") or [])
 
     if doc.get("comparison"):
         _print_comparison(con, doc["comparison"])
@@ -88,6 +90,13 @@ def render_terminal(
     s = doc["summary"]
     if s["passed"]:
         con.print("  [green]✓ passed[/green]")
+    elif not sum(s["findings"].values()) and s.get("dead_waivers"):
+        # The findings line would read "0 findings" and explain nothing; name the
+        # actual reason the run failed.
+        con.print(
+            f"  [bold red]✗ failed[/bold red] — {s['dead_waivers']} waiver(s) suppress "
+            f"nothing or are malformed (--audit-waivers)"
+        )
     else:
         con.print(
             f"  [bold red]✗ failed[/bold red] — findings ≥ {s['fail_on']} "
@@ -167,6 +176,51 @@ def _print_coverage(con: RichConsole, coverage: dict[str, float | None]) -> None
         con.print("  [bold]Coverage[/bold]")
         for p in parts:
             con.print(f"    {p}")
+
+
+_LEVEL_STYLE = {0: "red", 1: "yellow", 2: "cyan", 3: "green", 4: "bold green"}
+
+
+def _print_level(con: RichConsole, level: dict[str, Any] | None) -> None:
+    """Print the assurance level — how much of the score was actually verified."""
+    if not level:
+        return
+    style = _LEVEL_STYLE.get(int(level["level"]), "white")
+    ran = [name for name, t in level["tiers"].items() if t["ran"]]
+    blocker = f"  [dim]— {level['blocker']}[/dim]" if level.get("blocker") else ""
+    con.print(
+        f"  [bold]Assurance Level[/bold]        "
+        f"[{style}]{level['label']} {level['title']}[/{style}]"
+        f"{blocker}"
+    )
+    con.print(f"    [dim]verified: {', '.join(ran) or 'nothing'}[/dim]")
+
+
+def _print_waivers(con: RichConsole, waivers: list[dict[str, Any]]) -> None:
+    """Print the waiver audit: what each suppression actually bought."""
+    if not waivers:
+        return
+    dead = [w for w in waivers if w["dead"]]
+    con.print(f"  [bold]Waivers[/bold]  [dim]({len(waivers)} declared)[/dim]")
+    for w in waivers:
+        scope = w["scope"] or "catalog-wide"
+        if w["dead"]:
+            con.print(
+                f"    [yellow]{w['code']}[/yellow]  [dim]{scope}[/dim]  "
+                f"[yellow]suppresses nothing — delete it[/yellow]"
+            )
+        else:
+            con.print(
+                f"    {w['code']}  [dim]{scope} · {w['kind']} · "
+                f"hides {w['suppressed']} finding(s) on {len(w['objects'])} object(s)[/dim]"
+            )
+        for problem in w["problems"]:
+            con.print(f"        [yellow]↳ {problem}[/yellow]")
+    if dead:
+        con.print(
+            f"    [yellow]{len(dead)} dead waiver(s): a suppression that hides nothing is a "
+            f"standing claim nobody revisits.[/yellow]"
+        )
 
 
 def _print_comparison(con: RichConsole, comp: dict[str, Any]) -> None:

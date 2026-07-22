@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .config import WaiverUsage
 from .findings import Finding, Severity
+from .levels import LevelReport
 from .scoring import QualityScore
 
 if TYPE_CHECKING:
@@ -15,12 +17,17 @@ if TYPE_CHECKING:
 
 @dataclass
 class VersionResult:
-    """Findings, quality score, and diff summary for one data version."""
+    """Findings, quality score, assurance level, and diff summary for one version."""
 
     catalog: Catalog
     findings: list[Finding]
     quality: QualityScore
     diff_summary: dict[str, int] = field(default_factory=dict)
+    # How much was actually verified (see levels.py). Defaults to "nothing but
+    # the structural tier ran" so a hand-built result is never over-claimed.
+    level: LevelReport = field(default_factory=LevelReport)
+    # Waiver audit, populated only under --audit-waivers.
+    waiver_audit: list[WaiverUsage] = field(default_factory=list)
 
     @property
     def score(self) -> int:
@@ -64,10 +71,28 @@ class Report:
     fail_on: Severity
     has_baseline: bool = False
     comparison: Comparison | None = None
+    # True when --audit-waivers ran; dead/expired waivers then gate the run.
+    audited_waivers: bool = False
+
+    def dead_waivers(self) -> list[WaiverUsage]:
+        """Declared waivers that suppressed nothing, or are themselves malformed.
+
+        Only meaningful once the audit has run — without it every waiver reads as
+        dead, because the rules it silences never executed.
+        """
+        if not self.audited_waivers:
+            return []
+        return [u for r in self.results for u in r.waiver_audit if u.dead or u.waiver.problems()]
 
     def passed(self) -> bool:
-        """True when no version has gating findings (CI passes)."""
-        return not any(r.gating_findings(self.fail_on, self.has_baseline) for r in self.results)
+        """True when no version has gating findings (CI passes).
+
+        Under ``--audit-waivers`` a dead or malformed waiver also fails: the whole
+        point of asking for the audit is to be told about them.
+        """
+        if any(r.gating_findings(self.fail_on, self.has_baseline) for r in self.results):
+            return False
+        return not self.dead_waivers()
 
     def total_counts(self) -> dict[str, int]:
         """Sum finding counts by severity across every version."""

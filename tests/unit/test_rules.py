@@ -360,6 +360,60 @@ def test_vgi146_table_functions_without_browsable_table():
     assert "VGI146" not in set(codes(F.catalog(scalar, advertised_catalogs=["a"])))
 
 
+def test_vgi146_stands_down_when_discovery_is_already_cheap():
+    """The escape hatch VGI146's own fix hint names, now actually honored.
+
+    For an argument-only worker there is no honest browsable slice, and the one
+    object that would satisfy VGI146 — a view cataloguing the worker's functions
+    — is exactly what VGI327 forbids. Firing here left the author no compliant
+    move, so a fully self-describing table function stands the rule down.
+    """
+    documented = F.func(
+        "main",
+        "holdings",
+        ftype="table",
+        description="holdings by ticker",
+        examples=[F.example(0, "list a fund's holdings", "SELECT * FROM a.main.holdings('SCHD')")],
+        arguments=[F.arg("ticker", description="the fund's ticker symbol")],
+    )
+    s = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=[documented])
+    assert "VGI146" not in set(codes(F.catalog(s, advertised_catalogs=["a"])))
+
+    # An undescribed example is not discovery: the rule fires again.
+    undescribed = F.func(
+        "main",
+        "holdings",
+        ftype="table",
+        description="holdings by ticker",
+        examples=[F.example(0, "", "SELECT * FROM a.main.holdings('SCHD')")],
+        arguments=[F.arg("ticker", description="the fund's ticker symbol")],
+    )
+    s2 = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=[undescribed])
+    assert "VGI146" in set(codes(F.catalog(s2, advertised_catalogs=["a"])))
+
+    # ...and so is an undocumented argument.
+    no_arg_doc = F.func(
+        "main",
+        "holdings",
+        ftype="table",
+        description="holdings by ticker",
+        examples=[F.example(0, "list a fund's holdings", "SELECT * FROM a.main.holdings('SCHD')")],
+        arguments=[F.arg("ticker", description=None)],
+    )
+    s3 = F.schema("main", comment="c", tags=_SCHEMA_TAGS, functions=[no_arg_doc])
+    assert "VGI146" in set(codes(F.catalog(s3, advertised_catalogs=["a"])))
+
+    # One undocumented entry point among several is enough — that is the one an
+    # agent will guess wrong about.
+    mixed = F.schema(
+        "main",
+        comment="c",
+        tags=_SCHEMA_TAGS,
+        functions=[documented, F.func("main", "prices", ftype="table", description="prices")],
+    )
+    assert "VGI146" in set(codes(F.catalog(mixed, advertised_catalogs=["a"])))
+
+
 def test_scalar_function_stability():
     vol = [
         F.func("main", "f1", "scalar", description="d", stability="VOLATILE"),

@@ -6,6 +6,7 @@ Root command is ``lint`` (so ``vgi-lint <location>`` just works); ``rules``,
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -137,6 +138,12 @@ def app() -> None:
 @click.option("--severity", "severities", multiple=True, help="CODE=LEVEL override (repeatable).")
 @click.option("--baseline", default=None, help="Baseline file prefix (per-version).")
 @click.option("--update-baseline", is_flag=True, help="Write/refresh the baseline file(s).")
+@click.option(
+    "--audit-waivers",
+    is_flag=True,
+    help="Re-run the rules your ignore/per_object waivers silence, and report which "
+    "waivers suppress nothing (dead waivers fail the run).",
+)
 @click.option("--fail-on", type=click.Choice(["info", "warning", "error", "never"]), default=None)
 @click.option("--format", "fmt", type=click.Choice(list(reporting.FORMATS)), default="terminal")
 @click.option(
@@ -222,6 +229,7 @@ def lint(
     severities: tuple[str, ...],
     baseline: str | None,
     update_baseline: bool,
+    audit_waivers: bool,
     fail_on: str | None,
     fmt: str,
     group_by: str,
@@ -240,6 +248,7 @@ def lint(
     cfg = load_config(config_path)
     if trace_path is not None:
         cfg.trace = trace_path
+    cfg.audit_waivers = audit_waivers
     _apply_cli_overrides(
         cfg,
         worker_idle_timeout=worker_idle_timeout,
@@ -671,6 +680,119 @@ def simulate_cmd(
     else:
         click.echo(text)
     if not advisory and result.verdicts and result.pass_rate < min_pass_rate:
+        ctx.exit(EXIT_FINDINGS)
+
+
+# --------------------------------------------------------------------------
+# fleet
+# --------------------------------------------------------------------------
+@app.group()
+def fleet() -> None:
+    """Lint a whole fleet of workers and publish one quality view."""
+
+
+@fleet.command(name="init")
+@click.argument("root", type=click.Path(exists=True, file_okay=False))
+@click.option("--glob", default="vgi-*", show_default=True, help="Directory glob to scan.")
+@click.option(
+    "--out",
+    "target",
+    type=click.Path(dir_okay=False),
+    default="vgi-fleet-manifest.toml",
+    show_default=True,
+)
+def fleet_init(root: str, glob: str, target: str) -> None:
+    """Scaffold a fleet manifest by scanning ROOT for VGI worker repos."""
+    from . import fleet as _fleet
+
+    specs = _fleet.discover(root, glob=glob)
+    if not specs:
+        raise click.UsageError(f"no worker repos found under {root} matching {glob!r}")
+    Path(target).write_text(_fleet.render_manifest(specs), encoding="utf-8")
+    ready = sum(1 for s in specs if not s.skip)
+    click.echo(
+        f"wrote {target}: {len(specs)} worker repos ({ready} with an inferred location, "
+        f"{len(specs) - ready} need one filled in)"
+    )
+
+
+@fleet.command(name="run")
+@click.argument("manifest", type=click.Path(exists=True, dir_okay=False))
+@click.option("--jobs", "-j", default=None, type=int, help="Workers linted in parallel.")
+@click.option(
+    "--out",
+    "outdir",
+    type=click.Path(file_okay=False),
+    default="fleet-report",
+    show_default=True,
+    help="Directory for fleet.json / fleet.html / fleet.md.",
+)
+@click.option("--only", default=None, help="Comma list of worker names to sweep.")
+@click.option(
+    "--fail-under",
+    type=int,
+    default=None,
+    help="Exit non-zero when any linted worker scores below this.",
+)
+@click.option(
+    "--require-level",
+    type=int,
+    default=None,
+    help="Exit non-zero when any linted worker is below this assurance level (0-4).",
+)
+@click.pass_context
+def fleet_run(
+    ctx: click.Context,
+    manifest: str,
+    jobs: int | None,
+    outdir: str,
+    only: str | None,
+    fail_under: int | None,
+    require_level: int | None,
+) -> None:
+    """Lint every worker in MANIFEST and write the fleet report."""
+    from . import __version__
+    from . import fleet as _fleet
+
+    specs = _fleet.load_manifest(manifest)
+    if only:
+        wanted = {n.strip() for n in only.split(",") if n.strip()}
+        specs = [s for s in specs if s.name in wanted]
+    if not specs:
+        raise click.UsageError("manifest selected no workers")
+
+    total = len(specs)
+    done = 0
+
+    def progress(res: Any) -> None:
+        nonlocal done
+        done += 1
+        mark = {"ok": "✓", "skipped": "·"}.get(res.status, "✗")
+        score = f"{res.score:>3}" if res.score is not None else "  —"
+        click.echo(
+            f"  [{done:>3}/{total}] {mark} {res.name:<26} {res.level_label} {score}"
+            f"  {res.detail or res.blocker}"[:110],
+            err=True,
+        )
+
+    results = _fleet.sweep(specs, jobs=jobs or _fleet.DEFAULT_JOBS, on_done=progress)
+    doc = _fleet.to_document(results, linter_version=__version__)
+
+    out = Path(outdir)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "fleet.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    (out / "fleet.md").write_text(_fleet.render_markdown(doc), encoding="utf-8")
+    (out / "fleet.html").write_text(_fleet.render_html(doc), encoding="utf-8")
+    click.echo(_fleet.render_markdown(doc))
+    click.echo(f"wrote {out}/fleet.json · fleet.md · fleet.html", err=True)
+
+    bad = []
+    if fail_under is not None:
+        bad += [r.name for r in results if r.score is not None and r.score < fail_under]
+    if require_level is not None:
+        bad += [r.name for r in results if r.status == "ok" and r.level < require_level]
+    if bad:
+        click.secho(f"below threshold: {', '.join(sorted(set(bad)))}", fg="red", err=True)
         ctx.exit(EXIT_FINDINGS)
 
 

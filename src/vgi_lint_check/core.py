@@ -16,7 +16,7 @@ from typing import Any
 
 from . import baseline as _baseline
 from . import comparison as _comparison
-from . import scoring
+from . import levels, scoring
 from .config import Config
 from .connection import (
     apply_setup_sql,
@@ -35,6 +35,7 @@ from .model import Release
 from .result import Report, VersionResult
 from .rules import run, select_rules
 from .rules.base import RuleContext
+from .rules.engine import audit_waivers
 from .snapshot import fetch_copy_handlers, fetch_function_arguments, take_snapshot
 from .trace import Tracer
 from .versions import CatalogDiscovery, discover_catalogs, resolve_versions
@@ -137,6 +138,7 @@ def lint_worker(
         fail_on=config.fail_on,
         has_baseline=bool(config.baseline),
         comparison=comp,
+        audited_waivers=config.audit_waivers,
     )
 
 
@@ -418,6 +420,10 @@ def _lint_one_version(
         )
         with _span(tracer, "phase", "run rules"):
             findings = run(rules, ctx)
+        waiver_audit: list[Any] = []
+        if config.audit_waivers and config.waivers:
+            with _span(tracer, "phase", "audit waivers"):
+                waiver_audit = audit_waivers(rules, ctx)
 
     if config.baseline:
         if update_baseline:
@@ -429,8 +435,19 @@ def _lint_one_version(
         quality = scoring.compute(
             catalog, findings, agent_score=agent_score, doc_quality=_doc_quality(review_report)
         )
+    level = levels.compute(
+        findings,
+        executed=config.execute,
+        doc_reviewed=config.doc_review,
+        agent_checked=config.agent_check,
+    )
     return VersionResult(
-        catalog=catalog, findings=findings, quality=quality, diff_summary=diff.summary
+        catalog=catalog,
+        findings=findings,
+        quality=quality,
+        diff_summary=diff.summary,
+        level=level,
+        waiver_audit=waiver_audit,
     )
 
 

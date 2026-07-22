@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Iterator
 
 from ..findings import Category, Finding, Severity
-from ..model import ObjectId, ObjectKind
+from ..model import Function, ObjectId, ObjectKind
 from .base import Rule, RuleContext
 from .registry import register
 
@@ -399,17 +399,47 @@ class TableFunctionsWithoutBrowsableTable(Rule):
         # from it without knowing arguments.
         if any(True for _ in cat.iter_table_like()):
             return
-        tf_count = sum(1 for f in cat.iter_all_functions() if f.kind is ObjectKind.TABLE_FUNCTION)
-        if tf_count == 0:
+        tfs = [f for f in cat.iter_all_functions() if f.kind is ObjectKind.TABLE_FUNCTION]
+        if not tfs:
+            return
+        # The escape hatch this rule's own fix hint names, now actually honored.
+        #
+        # For a worker whose every entry point takes a genuine per-key argument
+        # (a document to parse, an address to look up), there is no honest
+        # browsable slice to expose. The only object that would satisfy this rule
+        # is a view cataloguing the worker's own functions — which VGI327 forbids
+        # as a duplicate of duckdb_functions(). Firing here would leave the author
+        # with no compliant move, so the rule instead accepts the alternative it
+        # already recommends: discovery made cheap on the functions themselves.
+        if _discovery_is_cheap(tfs):
             return
         yield self.finding(
             ctx,
             cat.id,
-            f"worker exposes {tf_count} table function(s) but no browsable table or view",
+            f"worker exposes {len(tfs)} table function(s) with no browsable table or view, "
+            "and its functions are not documented well enough to substitute",
             "an agent must know a function's arguments before it can retrieve any "
             "data. If a browsable entry point is feasible, expose a plain table or a "
             "no-required-argument (table-backed) function that returns a sensible "
             "default slice. If arguments are genuinely required (per-key lookups, "
-            "unbounded/rate-limited upstreams), make discovery cheap instead: strong "
-            "vgi.example_queries and argument choices/defaults",
+            "unbounded/rate-limited upstreams), make discovery cheap instead — give "
+            "every table function a described example query and a description on "
+            "every argument, and this rule stands down",
         )
+
+
+def _discovery_is_cheap(tfs: list[Function]) -> bool:
+    """True when every table function is self-describing enough to browse without one.
+
+    Deliberately strict on *every* function, not a majority: one undocumented
+    entry point is exactly the one an agent will guess wrong about.
+    """
+    for f in tfs:
+        if not any((ex.description or "").strip() for ex in f.examples):
+            return False
+        # Arguments are only readable on a vgi extension new enough to expose
+        # vgi_function_arguments(); when the list is empty we cannot judge, and
+        # VGI312 already gates the documentation itself, so don't double-report.
+        if any(not (a.description or "").strip() for a in f.arguments):
+            return False
+    return True

@@ -141,6 +141,107 @@ class Options:
     tutorial_description_max: int = 200
 
 
+# Waiver taxonomy. A suppression is not one thing, and conflating the four
+# hides the two that are actionable:
+#
+#   domain-exemption  the rule genuinely cannot apply to this worker (a
+#                     passthrough connector whose tables are the user's).
+#                     Permanent and legitimate — review on a rule change.
+#   timing            an execution-window accommodation. Hides no finding;
+#                     usually belongs in [execution], not in `ignore`.
+#   tooling-bug       the rule is wrong / the linter misreports. This is a bug
+#                     report; `vgi-lint fleet` collects these as the linter's
+#                     own backlog instead of leaving them buried in TOML.
+#   deferred          a real defect the author chose not to fix yet. Should
+#                     carry `expires`.
+WAIVER_KINDS = ("domain-exemption", "timing", "tooling-bug", "deferred", "unspecified")
+
+
+@dataclass(frozen=True)
+class Waiver:
+    """One rule suppression, with the reasoning that justified it.
+
+    Waivers are declared either as a bare code (``"VGI146"``) or as a table
+    (``{code = "VGI146", reason = "...", kind = "domain-exemption"}``). The bare
+    form keeps every existing config working and lands in ``unspecified``.
+    """
+
+    code: str
+    reason: str = ""
+    kind: str = "unspecified"
+    expires: str | None = None  # ISO date (YYYY-MM-DD)
+    scope: str | None = None  # None = catalog-wide; else the per-object glob
+
+    @property
+    def where(self) -> str:
+        """Human label for the waiver's scope."""
+        return self.scope or "catalog-wide"
+
+    def problems(self) -> list[str]:
+        """Structural complaints about the waiver itself (not about the rule)."""
+        out = []
+        if self.kind not in WAIVER_KINDS:
+            out.append(f"unknown kind {self.kind!r} (expected one of {', '.join(WAIVER_KINDS)})")
+        if self.kind == "unspecified":
+            out.append("no reason/kind recorded — declare it as a table to keep the rationale")
+        elif not self.reason.strip():
+            out.append("kind declared without a reason")
+        if self.expires:
+            import datetime as _dt
+
+            try:
+                due = _dt.date.fromisoformat(self.expires)
+            except ValueError:
+                out.append(f"expires {self.expires!r} is not an ISO date (YYYY-MM-DD)")
+            else:
+                if due < _dt.date.today():
+                    out.append(f"expired on {self.expires}")
+        return out
+
+
+@dataclass
+class WaiverUsage:
+    """A waiver plus what it actually suppressed this run (the audit result)."""
+
+    waiver: Waiver
+    suppressed: int = 0
+    objects: list[str] = field(default_factory=list)
+
+    @property
+    def dead(self) -> bool:
+        """True when the waiver suppressed nothing — it can be deleted."""
+        return self.suppressed == 0
+
+
+def _parse_waivers(raw: Any, scope: str | None = None) -> tuple[list[str], list[Waiver]]:
+    """Split a mixed ignore list into plain codes plus their Waiver records.
+
+    Returns ``(codes, waivers)``; ``codes`` preserves the existing string-list
+    contract the selection logic already consumes, so behaviour is unchanged.
+    """
+    codes: list[str] = []
+    waivers: list[Waiver] = []
+    for entry in raw or []:
+        if isinstance(entry, dict):
+            code = str(entry.get("code", "")).strip()
+            if not code:
+                continue
+            codes.append(code)
+            waivers.append(
+                Waiver(
+                    code=code,
+                    reason=str(entry.get("reason", "") or ""),
+                    kind=str(entry.get("kind", "") or "unspecified"),
+                    expires=(str(entry["expires"]) if entry.get("expires") else None),
+                    scope=scope,
+                )
+            )
+        else:
+            codes.append(str(entry))
+            waivers.append(Waiver(code=str(entry), scope=scope))
+    return codes, waivers
+
+
 @dataclass
 class Config:
     """Resolved lint configuration: selection, severities, and tuning options."""
@@ -155,6 +256,13 @@ class Config:
     severity_overrides: dict[str, Severity] = field(default_factory=dict)
     per_object: dict[str, list[str]] = field(default_factory=dict)  # glob -> [codes]
     options: Options = field(default_factory=Options)
+    # Every suppression above, with its declared rationale. Parallel to
+    # ignore/extend_ignore/per_object (which still drive selection) — this is the
+    # auditable view: what was waived, why, and by whom.
+    waivers: list[Waiver] = field(default_factory=list)
+    # --audit-waivers: run the waived rules anyway (collecting, not reporting,
+    # their findings) so a waiver that suppresses nothing can be identified.
+    audit_waivers: bool = False
 
     # runtime / behavioural
     execute: bool = True  # run execution rules (VGI9xx); --no-execute opts out
@@ -224,8 +332,16 @@ class Config:
     def _code_matches(self, code: str, patterns: list[str]) -> bool:
         return any(p.upper() == "ALL" or fnmatch.fnmatch(code, p) for p in patterns)
 
-    def effective_severity(self, rule: Rule | type[Rule]) -> Severity:
-        """Resolve a rule's severity per the documented order. OFF = disabled."""
+    def effective_severity(
+        self, rule: Rule | type[Rule], *, lift_waivers: bool = False
+    ) -> Severity:
+        """Resolve a rule's severity per the documented order. OFF = disabled.
+
+        ``lift_waivers`` skips only the ``ignore``/``extend_ignore`` gate — every
+        other reason a rule is off (no connection, no LLM pass, deselected) still
+        applies. The waiver audit uses it to run exactly the rules a waiver
+        silenced, and nothing else.
+        """
         # 1. execution rules need --execute; network rules need --check-links;
         #    LLM rules need --doc-review / --agent-check.
         if getattr(rule, "requires_connection", False) and not self.execute:
@@ -242,10 +358,16 @@ class Config:
         # 3. select / ignore globs (select and extend-select compose)
         if not self._code_matches(rule.code, self._selectors):
             return Severity.OFF
-        if self._code_matches(rule.code, self._ignorers):
+        if not lift_waivers and self._code_matches(rule.code, self._ignorers):
             return Severity.OFF
         # 4. explicit per-rule override, else the rule default
         return self.severity_overrides.get(rule.code, rule.default_severity)
+
+    def is_waived(self, rule: Rule | type[Rule]) -> bool:
+        """True when this rule is off *only* because a catalog-wide waiver hides it."""
+        return self.effective_severity(rule) is Severity.OFF and (
+            self.effective_severity(rule, lift_waivers=True) is not Severity.OFF
+        )
 
     def unknown_selectors(self, known_codes: Iterable[str]) -> list[str]:
         """Selector/ignore globs that match no known rule code (likely typos)."""
@@ -286,11 +408,13 @@ def from_table(raw: dict[str, Any]) -> Config:
     if "select" in raw:
         cfg.select = list(raw["select"])
     if "ignore" in raw:
-        cfg.ignore = list(raw["ignore"])
+        cfg.ignore, waivers = _parse_waivers(raw["ignore"])
+        cfg.waivers.extend(waivers)
     if "extend_select" in raw:
         cfg.extend_select = list(raw["extend_select"])
     if "extend_ignore" in raw:
-        cfg.extend_ignore = list(raw["extend_ignore"])
+        cfg.extend_ignore, waivers = _parse_waivers(raw["extend_ignore"])
+        cfg.waivers.extend(waivers)
     if "categories" in raw:
         cfg.categories = list(raw["categories"])
     if "fail_on" in raw:
@@ -317,9 +441,10 @@ def from_table(raw: dict[str, Any]) -> Config:
             code: Severity.parse(level) for code, level in raw["severity"].items()
         }
     if "per_object" in raw and isinstance(raw["per_object"], dict):
-        cfg.per_object = {
-            glob: list(spec.get("ignore", [])) for glob, spec in raw["per_object"].items()
-        }
+        for glob, spec in raw["per_object"].items():
+            codes, waivers = _parse_waivers(spec.get("ignore", []), scope=glob)
+            cfg.per_object[glob] = codes
+            cfg.waivers.extend(waivers)
     if "options" in raw:
         cfg.options = _coerce_options(raw["options"])
     if "execution" in raw and isinstance(raw["execution"], dict):

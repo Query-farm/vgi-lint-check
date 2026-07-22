@@ -53,6 +53,31 @@ Pipeline: **connect → load → model → rules/engine → reporting.**
   resolves severities from config and runs enabled rules.
 - `reporting/`, `findings.py`, `scoring.py`, `baseline.py` — output formats
   (terminal grouped-by-rule, `agent`, `json`/`jsonl`), scoring, per-data-version baselines.
+  The JSON contract is **`schema_version` 2** (`schema/report-v2.json`, validated in tests);
+  v2 added `level` and `waivers` to every result.
+- `levels.py` — the **assurance level** (L0 unverified → L4 documented), the second axis
+  next to the score: the score says how complete the metadata is, the level says how much
+  of it was actually *checked*. A tier (structural / behavioral / semantic / documented)
+  clears when it ran and emitted no error-or-warning finding; the bar is fixed at WARNING,
+  deliberately **not** the repo's `fail_on`, so levels are comparable fleet-wide. A
+  finding's tier comes from its rule's own gating flags (`requires_connection` →
+  behavioral, `requires_review`/`requires_agent` → semantic) rather than a hand-kept list,
+  so a new rule lands in the right tier the moment it declares how it is gated. L4 needs
+  tutorial evidence `lint` doesn't have — `fleet` supplies it.
+- **Structured waivers + the audit** (`config.Waiver`/`WaiverUsage`, `rules/engine.audit_waivers`).
+  An `ignore` entry may be a bare code (→ kind `unspecified`) or a table
+  `{code, reason, kind, expires?}`; kinds are `domain-exemption` / `timing` /
+  **`tooling-bug`** / `deferred`. The kinds matter because they are not the same thing:
+  a `tooling-bug` waiver is a bug report against *this* linter that would otherwise stay
+  buried in a repo's TOML comment, and `fleet` surfaces them as the linter's own backlog.
+  `--audit-waivers` re-runs exactly the rules a waiver silences and reports which suppress
+  nothing. **Two load-bearing details:** (1) `Config.effective_severity(..., lift_waivers=True)`
+  bypasses *only* the ignore gate — a rule off because `--no-execute` stays off, so the
+  audit never smuggles SQL into a static lint; (2) the catalog-wide pass iterates
+  `all_rule_classes()`, **not** the caller's rule list — `select_rules()` has already
+  dropped every OFF rule, so auditing that list finds nothing to run and reports every
+  catalog-wide waiver as dead. That bug shipped once and deleted a live waiver; there is a
+  named regression test for it.
 - `sql_parse.py` / `corpus.py` — **parse-based coverage.** `sql_parse.parse_refs`
   extracts the objects a SQL statement actually *calls* via DuckDB's built-in
   `json_serialize_sql` (a private in-memory connection — offline, no worker attach, no
@@ -87,9 +112,29 @@ Pipeline: **connect → load → model → rules/engine → reporting.**
 - `tutorials/` + `rules/tutorials.py` — the **tutorials** subsystem: executable
   `.vgi.md` worker tutorials, linted / executed / rendered / LLM-planned (see below).
   File-sourced, so it runs on a **parallel engine**, not the catalog `RuleContext` loop.
+- `fleet.py` + `vgi-lint fleet {init,run}` — the **fleet sweep**: lint N workers from a
+  TOML manifest, aggregate, and emit `fleet.json` / `fleet.md` / a self-contained
+  `fleet.html` dashboard. Two invariants: (1) every worker is linted **in its own
+  subprocess**, cwd'd into its own repo — a wedged worker (uncancellable inside its first
+  batch, see VGI911 below) costs one timeout instead of poisoning the whole sweep, and
+  `vgi-lint.toml` discovery only works from the repo root; (2) each lint runs
+  `--fail-on never`, because gating is one fleet-level decision (`--require-level` /
+  `--fail-under`), not 126 separate exit codes. `fleet init` infers each worker's location
+  in descending confidence — lint config → the repo's own CI workflow (resolving
+  `${{ github.workspace }}`) → a built binary → an interpreted entry point — and only ever
+  returns something that exists, since a manifest full of aspirational paths just buries
+  the real signal under connection errors.
 - `cli.py` — `click` app; subcommands `lint` (default), `review`, `simulate`, `rules`,
-  `explain`, `init`, `versions`, and the `tutorials` group
-  (`lint` / `verify` / `build` / `suggest` / `init`).
+  `explain`, `init`, `versions`, the `fleet` group (`init` / `run`), and the `tutorials`
+  group (`lint` / `verify` / `build` / `suggest` / `init`).
+- `scripts/unpin_fleet_linter.py`, `scripts/migrate_fleet_waivers.py` — fleet-wide repo
+  migrations, dry-run by default.
+  **Fleet policy: workers never pin the linter.** The action's `version` defaults to
+  `>=0.26.0` (resolved at run time), so every worker tracks latest and is held to the
+  current bar; a pin turns the gate into a snapshot of a bar somebody wrote down once.
+  The blast radius of a new rule is measured by sweeping the fleet *before* release
+  (`vgi-lint fleet run`), not by pinning. A repo that truly cannot track latest gets a
+  **baseline** — it still sees every new rule, and only new findings gate.
 
 ## Adding / changing a rule
 

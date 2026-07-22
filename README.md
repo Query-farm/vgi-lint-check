@@ -436,6 +436,34 @@ uv run vgi-lint <location> --baseline vgi-lint-baseline --update-baseline
 uv run vgi-lint <location> --baseline vgi-lint-baseline --fail-on warning
 ```
 
+## Assurance levels — how much was actually verified
+
+The Catalog Quality Score says *how complete the metadata is*. It does not say
+*how much of it was checked*, and those are different questions: a worker linted
+with `--no-execute` and no LLM passes can score 100 while nothing beyond the
+presence of text was ever verified. Every report therefore also carries a level:
+
+| Level | | Attained when |
+| --- | --- | --- |
+| `L0` | unverified | the static rules themselves have errors/warnings |
+| `L1` | structural | static metadata is clean — present, parseable, resolvable |
+| `L2` | behavioral | **+ `--execute`**: examples bind and run, scans respond, schemas match |
+| `L3` | semantic | **+ `--ai`**: docs judged accurate, an agent cleared the worker's own test suite |
+| `L4` | documented | **+ a verified tutorial** (assessed by `vgi-lint fleet`, not by `lint`) |
+
+A tier clears when it ran *and* produced no error/warning finding. The bar is
+fixed at warning — not your `fail_on` — so the level means the same thing in
+every repo. Info findings never hold a level back.
+
+```
+  Catalog Quality Score  100 / 100     0 findings
+  Assurance Level        L1 structural  — --no-execute: example queries never ran
+    verified: structural
+```
+
+Levels are monotonic, so one number says both how far a worker got and where it
+stopped; `blocker` says why.
+
 ## Configuration
 
 `[tool.vgi-lint-check]` in `pyproject.toml` (or a dedicated `vgi-lint.toml`):
@@ -444,14 +472,21 @@ uv run vgi-lint <location> --baseline vgi-lint-baseline --fail-on warning
 [tool.vgi-lint-check]
 location = "uv run worker.py"
 select = ["ALL"]
-ignore = ["VGI113"]
 fail_on = "error"
+
+# A suppression is not one thing. Declaring the kind makes the difference
+# auditable: `tooling-bug` is a report against this linter, `deferred` is a real
+# defect with a deadline, `domain-exemption` is permanent and legitimate.
+ignore = [
+  { code = "VGI146", kind = "domain-exemption",
+    reason = "every entry point needs a per-key argument; no honest default slice to browse" },
+  { code = "VGI113", kind = "deferred", reason = "doc_md pass scheduled", expires = "2026-09-01" },
+]
 
 [tool.vgi-lint-check.severity]
 VGI201 = "error"
 
 [tool.vgi-lint-check.options]
-column_comment_min_ratio = 0.8
 # Required tags are opt-in (empty by default) — set them if your workers have a
 # tagging convention you want enforced:
 # required_schema_tags = ["provider", "domain"]
@@ -460,7 +495,98 @@ column_comment_min_ratio = 0.8
 "volcanos.hans.*" = { ignore = ["VGI112"] }
 ```
 
+A bare string (`ignore = ["VGI113"]`) still works and lands in kind
+`unspecified`. Valid kinds: `domain-exemption`, `timing`, `tooling-bug`,
+`deferred`.
+
 Precedence: defaults < `pyproject.toml` < `vgi-lint.toml` < CLI flags.
+
+### Auditing waivers
+
+A waiver that suppresses nothing is worse than no waiver: it is a standing claim
+that a rule does not apply, which nobody revisits, and which hides the moment the
+rule *starts* applying. There is no way to know without running the rule it
+hides, so it is an explicit pass:
+
+```bash
+uv run vgi-lint <location> --audit-waivers
+```
+
+This re-runs exactly the rules your waivers silence — nothing else; a rule that
+is off because `--no-execute` skipped its tier stays off — and reports what each
+one actually bought. Dead or malformed (unknown kind, missing reason, expired)
+waivers fail the run.
+
+```
+  Waivers  (3 declared)
+    VGI316  catalog-wide · domain-exemption · hides 5 finding(s) on 5 object(s)
+    VGI146  catalog-wide  suppresses nothing — delete it
+    VGI128  catalog-wide  suppresses nothing — delete it
+        ↳ expired on 2025-01-01
+```
+
+## Fleet sweeps (`vgi-lint fleet`)
+
+One worker's result lives in one repo's CI log, where nobody reads it. At fleet
+scale that *is* the problem: 100+ green checkmarks say nothing about whether the
+catalog is getting better, which workers are pinned to a stale rulebook, or where
+the waivers are piling up.
+
+```bash
+uv run vgi-lint fleet init ~/Development --out fleet-manifest.toml   # scaffold
+uv run vgi-lint fleet run fleet-manifest.toml --jobs 6 --out fleet-report
+```
+
+Writes `fleet.json` (full data), `fleet.md` (paste into a status update), and
+`fleet.html` (a self-contained, theme-aware dashboard). Each worker is linted in
+its **own subprocess**, in its own repo directory — a wedged worker costs one
+timeout instead of poisoning the sweep, and `vgi-lint.toml` discovery works. Each
+lint runs at `--fail-on never`; gating is one fleet-level decision:
+
+```bash
+uv run vgi-lint fleet run fleet-manifest.toml --require-level 2 --fail-under 95
+```
+
+The manifest is TOML; `[defaults]` applies to every entry:
+
+```toml
+[defaults]
+execute = true
+audit_waivers = true
+
+[[worker]]
+name = "vgi-units"
+directory = "~/Development/vgi-units"
+location = "target/release/units-worker"
+tags = ["flagship"]
+```
+
+### Workers do not pin the linter
+
+The action's `version` input defaults to `>=0.26.0`, resolved at run time, so an
+unpinned repo adopts every new rule as it ships. That is the intent: the gate
+should hold a worker to the *current* quality bar, and a pin quietly turns it
+into a snapshot of whatever the bar was on the day someone wrote the number down.
+
+The risk a pin is meant to cover — publishing a rule that turns N untouched repos
+red — is handled by sweeping the fleet against the new version **before**
+releasing it, which gives you the blast radius up front with none of the
+staleness:
+
+```bash
+uv run vgi-lint fleet run ~/Development/vgi-fleet-manifest.toml --jobs 6
+```
+
+A repo that genuinely cannot track latest gets a **baseline**, not a pin: it
+still sees every new rule, and only *new* findings gate.
+
+Two helper scripts operate on a whole fleet of repos (dry-run by default):
+
+- `scripts/unpin_fleet_linter.py` — strip `version:` pins fleet-wide, taking the
+  now-false justifying comment with them.
+- `scripts/migrate_fleet_waivers.py` — rewrite bare-string waivers into the table
+  form (lifting the rationale out of the adjacent comment) and drop options that
+  are set to their own default.
 
 ## Exit codes
 

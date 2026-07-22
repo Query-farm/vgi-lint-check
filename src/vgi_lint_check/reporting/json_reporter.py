@@ -16,13 +16,13 @@ if TYPE_CHECKING:
     from ..findings import Finding
     from ..result import Report
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @lru_cache(maxsize=1)
 def report_schema() -> dict[str, Any]:
-    """Return the parsed JSON Schema for the ``schema_version`` 1 report."""
-    text = (files("vgi_lint_check") / "schema" / "report-v1.json").read_text()
+    """Return the parsed JSON Schema for the ``schema_version`` 2 report."""
+    text = (files("vgi_lint_check") / "schema" / "report-v2.json").read_text()
     data: dict[str, Any] = json.loads(text)
     return data
 
@@ -56,6 +56,21 @@ def _finding_dict(f: Finding, summaries: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def _waiver_dict(usage: Any) -> dict[str, Any]:
+    w = usage.waiver
+    return {
+        "code": w.code,
+        "kind": w.kind,
+        "reason": w.reason,
+        "expires": w.expires,
+        "scope": w.scope,
+        "suppressed": usage.suppressed,
+        "objects": usage.objects,
+        "dead": usage.dead,
+        "problems": w.problems(),
+    }
+
+
 def to_dict(report: Report) -> dict[str, Any]:
     """Build the stable JSON-contract document for a report."""
     summaries = _rule_summaries()
@@ -68,10 +83,12 @@ def to_dict(report: Report) -> dict[str, Any]:
                 "static_score": r.quality.static_score,
                 "agent_score": r.quality.agent_score,
                 "doc_quality": r.quality.doc_quality,
+                "level": r.level.to_dict(),
                 "coverage": r.quality.coverage.families,
                 "diff": r.diff_summary,
                 "counts": r.counts(),
                 "findings": [_finding_dict(f, summaries) for f in r.findings],
+                "waivers": [_waiver_dict(u) for u in r.waiver_audit],
             }
         )
     doc = {
@@ -85,7 +102,9 @@ def to_dict(report: Report) -> dict[str, Any]:
         "summary": {
             "versions": [r.data_version for r in report.results],
             "score": report.results[0].score if report.results else None,
+            "level": results[0]["level"] if results else None,
             "findings": report.total_counts(),
+            "dead_waivers": sum(1 for r in report.results for u in r.waiver_audit if u.dead),
             "passed": report.passed(),
             "fail_on": report.fail_on.label,
         },

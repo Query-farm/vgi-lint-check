@@ -44,7 +44,7 @@ def test_json_schema_and_invariants():
     report = build_report(sample_catalog())
     doc = json.loads(reporting.render_json(report))
     assert doc["tool"] == "vgi-lint"
-    assert doc["schema_version"] == 1
+    assert doc["schema_version"] == 2
     assert doc["summary"]["passed"] is True  # only warnings/info, fail_on=error
     findings = doc["results"][0]["findings"]
     assert findings, "expected findings on a bare table"

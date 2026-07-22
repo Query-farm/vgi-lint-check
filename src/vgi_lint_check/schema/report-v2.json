@@ -1,0 +1,487 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://query.farm/vgi-lint-check/report-v2.json",
+  "title": "vgi-lint report",
+  "description": "Stable machine-readable report contract (schema_version 2) emitted by --format json/jsonl/agent. v2 adds `level` (assurance level: how much of the score was actually verified) and `waivers` (the --audit-waivers result).",
+  "type": "object",
+  "required": [
+    "tool",
+    "schema_version",
+    "worker",
+    "summary",
+    "results",
+    "comparison"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "tool": {
+      "const": "vgi-lint"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "worker": {
+      "type": "object",
+      "required": [
+        "location",
+        "alias",
+        "vgi_version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "location": {
+          "type": "string"
+        },
+        "alias": {
+          "type": "string"
+        },
+        "vgi_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "versions",
+        "score",
+        "level",
+        "findings",
+        "dead_waivers",
+        "passed",
+        "fail_on"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "score": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "findings": {
+          "$ref": "#/$defs/counts"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "fail_on": {
+          "type": "string"
+        },
+        "level": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/level"
+            }
+          ]
+        },
+        "dead_waivers": {
+          "type": "integer"
+        }
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/versionResult"
+      }
+    },
+    "comparison": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "rows"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/comparisonRow"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "required": [
+        "error",
+        "warning",
+        "info"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "integer"
+        },
+        "warning": {
+          "type": "integer"
+        },
+        "info": {
+          "type": "integer"
+        }
+      }
+    },
+    "versionResult": {
+      "type": "object",
+      "required": [
+        "data_version",
+        "score",
+        "level",
+        "coverage",
+        "diff",
+        "counts",
+        "findings",
+        "waivers"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "data_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "score": {
+          "type": "integer"
+        },
+        "static_score": {
+          "type": "integer"
+        },
+        "agent_score": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "doc_quality": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "diff": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "counts": {
+          "$ref": "#/$defs/counts"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "level": {
+          "$ref": "#/$defs/level"
+        },
+        "waivers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waiver"
+          }
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "code",
+        "severity",
+        "category",
+        "is_new",
+        "object",
+        "message",
+        "fix",
+        "rule"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ]
+        },
+        "category": {
+          "type": "string"
+        },
+        "is_new": {
+          "type": "boolean"
+        },
+        "object": {
+          "type": "object",
+          "required": [
+            "kind",
+            "qualified",
+            "schema",
+            "name",
+            "column"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": "string"
+            },
+            "qualified": {
+              "type": "string"
+            },
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "column": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "message": {
+          "type": "string"
+        },
+        "fix": {
+          "type": "string"
+        },
+        "rule": {
+          "type": "object",
+          "required": [
+            "summary",
+            "explain"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "summary": {
+              "type": "string"
+            },
+            "explain": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "comparisonRow": {
+      "type": "object",
+      "required": [
+        "data_version",
+        "score",
+        "counts",
+        "delta_score",
+        "added_objects",
+        "removed_objects",
+        "identical_to_prev"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "data_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "score": {
+          "type": "integer"
+        },
+        "counts": {
+          "$ref": "#/$defs/counts"
+        },
+        "delta_score": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "added_objects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "removed_objects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "identical_to_prev": {
+          "type": "boolean"
+        }
+      }
+    },
+    "level": {
+      "type": "object",
+      "required": [
+        "level",
+        "label",
+        "title",
+        "blocker",
+        "tiers"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "label": {
+          "type": "string"
+        },
+        "title": {
+          "enum": [
+            "unverified",
+            "structural",
+            "behavioral",
+            "semantic",
+            "documented"
+          ]
+        },
+        "blocker": {
+          "type": "string"
+        },
+        "tiers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "ran",
+              "clear",
+              "errors",
+              "warnings",
+              "skipped_because"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "ran": {
+                "type": "boolean"
+              },
+              "clear": {
+                "type": "boolean"
+              },
+              "errors": {
+                "type": "integer"
+              },
+              "warnings": {
+                "type": "integer"
+              },
+              "skipped_because": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "waiver": {
+      "type": "object",
+      "required": [
+        "code",
+        "kind",
+        "reason",
+        "expires",
+        "scope",
+        "suppressed",
+        "objects",
+        "dead",
+        "problems"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "domain-exemption",
+            "timing",
+            "tooling-bug",
+            "deferred",
+            "unspecified"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "expires": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suppressed": {
+          "type": "integer"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dead": {
+          "type": "boolean"
+        },
+        "problems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
