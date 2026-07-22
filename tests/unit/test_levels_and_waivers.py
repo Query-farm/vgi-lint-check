@@ -436,3 +436,21 @@ def test_ci_location_skips_unresolvable_templates(tmp_path):
         "        with:\n          location: ${{ env.VGI_TIKA_WORKER }}\n"
     )
     assert fleet._location_from_ci(repo) == ""
+
+
+def test_jvm_worker_located_by_its_shaded_jar(tmp_path):
+    """JVM workers template their CI location through an env var.
+
+    `location: "java -jar ${{ env.VGI_TIKA_WORKER }}"` cannot be resolved from
+    the workflow, so those repos were skipped entirely by the sweep even though
+    the built artifact was sitting in build/libs. Fall back to the newest fat jar.
+    """
+    from vgi_lint_check import fleet
+
+    repo = tmp_path / "vgi-thing"
+    (repo / "build" / "libs").mkdir(parents=True)
+    (repo / "build" / "libs" / "vgi-thing-0.1.0-all.jar").write_bytes(b"x")
+    (repo / "build" / "libs" / "vgi-thing-0.1.0.jar").write_bytes(b"x")  # not shaded
+    loc = fleet._infer_location(repo)
+    assert loc.startswith("java -jar ")
+    assert loc.endswith("-all.jar")

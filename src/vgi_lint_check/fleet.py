@@ -200,7 +200,15 @@ def _infer_location(d: Path) -> str:
         for candidate in sorted(d.glob(pattern)):
             if candidate.is_file() and os.access(candidate, os.X_OK):
                 return str(candidate)
-    # 4. Interpreted workers, which need no build at all.
+    # 4. A JVM worker's shaded ("fat") jar. The CI location for these is usually
+    #    templated through an env var, so it cannot be read back from the
+    #    workflow — but the built artifact is right there and unambiguous.
+    jars = sorted(
+        d.glob("build/libs/*-all.jar"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    if jars:
+        return f"java -jar {shlex.quote(str(jars[0]))}"
+    # 5. Interpreted workers, which need no build at all.
     for candidate in sorted(d.glob("*_worker.py")):
         return f"uv run {candidate.name}"
     if (d / "src" / "worker.ts").is_file() and (d / "node_modules").is_dir():
