@@ -384,3 +384,55 @@ def test_real_failures_are_not_mistaken_for_credential_refusals(message):
     from vgi_lint_check.rules._util import is_credential_error
 
     assert is_credential_error(Exception(message)) is False
+
+
+# --- the sweep must lint what CI lints -----------------------------------
+def test_ci_location_accepts_an_interpreter_plus_script(tmp_path):
+    """A CI location is often a command, not a bare binary.
+
+    Several Python workers lint `.venv/bin/python worker.py` in CI while a naive
+    guess would pick `uv run worker.py` — which resolves a *different* SDK
+    environment, so the sweep reports failures CI never sees. Regression test for
+    that: only the leading token has to exist.
+    """
+    from vgi_lint_check import fleet
+
+    repo = tmp_path / "vgi-thing"
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".venv" / "bin").mkdir(parents=True)
+    (repo / ".venv" / "bin" / "python").write_text("#!/bin/sh\n")
+    (repo / ".venv" / "bin" / "python").chmod(0o755)
+    (repo / "thing_worker.py").write_text("# worker\n")
+    (repo / ".github" / "workflows" / "ci.yml").write_text(
+        "jobs:\n  lint:\n    steps:\n      - uses: Query-farm/vgi-lint-check@v1\n"
+        '        with:\n          location: ".venv/bin/python thing_worker.py"\n'
+    )
+    loc = fleet._location_from_ci(repo)
+    assert loc.endswith("thing_worker.py")
+    assert ".venv/bin/python" in loc
+    # ...and it wins over the `uv run *_worker.py` fallback.
+    assert fleet._infer_location(repo) == loc
+
+
+def test_ci_location_skipped_when_its_artifact_is_absent(tmp_path):
+    from vgi_lint_check import fleet
+
+    repo = tmp_path / "vgi-thing"
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text(
+        "jobs:\n  lint:\n    steps:\n      - uses: Query-farm/vgi-lint-check@v1\n"
+        '        with:\n          location: "target/release/thing-worker"\n'
+    )
+    assert fleet._location_from_ci(repo) == ""
+
+
+def test_ci_location_skips_unresolvable_templates(tmp_path):
+    from vgi_lint_check import fleet
+
+    repo = tmp_path / "vgi-thing"
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text(
+        "jobs:\n  lint:\n    steps:\n      - uses: Query-farm/vgi-lint-check@v1\n"
+        "        with:\n          location: ${{ env.VGI_TIKA_WORKER }}\n"
+    )
+    assert fleet._location_from_ci(repo) == ""

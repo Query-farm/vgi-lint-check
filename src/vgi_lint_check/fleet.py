@@ -228,11 +228,18 @@ _CI_LOCATION = re.compile(r"^\s*location:\s*[\"']?(.+?)[\"']?\s*$", re.MULTILINE
 
 
 def _location_from_ci(d: Path) -> str:
-    """Read the worker path out of the repo's own vgi-lint CI step.
+    """Read the worker location out of the repo's own vgi-lint CI step.
 
-    Workflow values are templated (``${{ github.workspace }}/bin/x``); resolve the
-    workspace to the repo root and drop anything still carrying an unresolvable
-    expression (e.g. ``${{ env.VGI_TIKA_WORKER }}``).
+    This is the authoritative answer and is tried before any guess, because a
+    sweep that lints something *other* than what CI lints produces findings that
+    do not transfer. That is not hypothetical: several Python workers declare
+    their SDK floor in two places (``pyproject.toml`` and a PEP 723 header), so
+    ``uv run worker.py`` and ``.venv/bin/python worker.py`` resolve to different
+    SDK versions — guessing the former reported failures CI would never see.
+
+    Workflow values are templated (``${{ github.workspace }}/bin/x``); the
+    workspace resolves to the repo root, and anything still carrying an
+    unresolvable expression (``${{ env.VGI_TIKA_WORKER }}``) is skipped.
     """
     wf = d / ".github" / "workflows"
     if not wf.is_dir():
@@ -251,9 +258,21 @@ def _location_from_ci(d: Path) -> str:
         raw = m.group(1).replace("${{ github.workspace }}", str(d)).strip()
         if "${{" in raw:
             continue
-        path = Path(raw)
-        if path.is_file() and os.access(path, os.X_OK):
-            return str(path)
+        # A location is either a bare executable or a command (an interpreter
+        # plus a script). Accept both — only the leading token has to exist —
+        # and resolve it against the repo so the sweep can run from anywhere.
+        parts = shlex.split(raw)
+        if not parts:
+            continue
+        head = Path(parts[0]) if Path(parts[0]).is_absolute() else d / parts[0]
+        if not head.exists():
+            continue
+        if len(parts) == 1:
+            if head.is_file() and os.access(head, os.X_OK):
+                return str(head)
+            continue
+        rest = " ".join(shlex.quote(p) for p in parts[1:])
+        return f"{shlex.quote(str(head))} {rest}"
     return ""
 
 
