@@ -206,9 +206,7 @@ def _infer_location(d: Path) -> str:
     # 4. A JVM worker's shaded ("fat") jar. The CI location for these is usually
     #    templated through an env var, so it cannot be read back from the
     #    workflow — but the built artifact is right there and unambiguous.
-    jars = sorted(
-        d.glob("build/libs/*-all.jar"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
+    jars = sorted(d.glob("build/libs/*-all.jar"), key=lambda p: p.stat().st_mtime, reverse=True)
     if jars:
         return f"java -jar {shlex.quote(str(jars[0]))}"
     # 5. Interpreted workers, which need no build at all.
@@ -358,11 +356,7 @@ _TIMING_SENSITIVE = {"VGI901", "VGI902", "VGI906", "VGI908", "VGI911", "VGI912"}
 def timing_sensitive_findings(result: WorkerResult) -> list[str]:
     """Codes in ``result`` whose verdict could be an artifact of a busy machine."""
     return sorted(
-        {
-            str(f.get("code"))
-            for f in result.top_findings
-            if str(f.get("code")) in _TIMING_SENSITIVE
-        }
+        {str(f.get("code")) for f in result.top_findings if str(f.get("code")) in _TIMING_SENSITIVE}
     )
 
 
