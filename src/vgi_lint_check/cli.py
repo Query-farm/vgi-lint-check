@@ -6,6 +6,7 @@ Root command is ``lint`` (so ``vgi-lint <location>`` just works); ``rules``,
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
@@ -534,21 +535,35 @@ def review_cmd(
 )
 @click.option("--no-cache", is_flag=True, help="Always re-run (no verdict cache).")
 @click.option(
-    "--max-steps", type=int, default=12, help="Max analyst turns per task (discovery + queries)."
+    "--max-steps",
+    type=int,
+    default=None,
+    help="Max analyst turns per task (discovery + queries). "
+    "Default: [simulate] max_steps, else 12.",
 )
 @click.option(
     "--max-queries", type=int, default=10, help="Max queries the analyst may run per task."
 )
 @click.option(
-    "--attempts", type=int, default=1, help="Retry a task up to N times; pass if any passes."
+    "--attempts",
+    type=int,
+    default=None,
+    help="Retry a task up to N times; pass if any passes. Default: [simulate] attempts, else 1.",
 )
-@click.option("--query-timeout", type=float, default=30.0, help="Per-query wall-clock seconds.")
+@click.option(
+    "--query-timeout",
+    type=float,
+    default=None,
+    help="Per-query wall-clock seconds. Default: [simulate] timeout, else the "
+    "[execution] window — the same worker pays the same cold start.",
+)
 @click.option("--row-limit", type=int, default=50, help="Row cap on exploration queries.")
 @click.option(
     "--concurrency",
     type=int,
-    default=4,
-    help="Tasks to judge in parallel (each on its own cursor).",
+    default=None,
+    help="Tasks to judge in parallel (each on its own cursor). Default: [simulate] "
+    "concurrency, else the [execution] window.",
 )
 @click.option(
     "--session/--no-session",
@@ -616,18 +631,24 @@ def simulate_cmd(
     from .core import with_attached_catalog
     from .review import ReviewCache, make_backend
 
-    location = location or load_config().location
+    cfg = load_config()
+    location = location or cfg.location
     if not location:
         raise click.UsageError("no worker LOCATION given and none configured")
     backend = make_backend(sim_backend, sim_model)
-    limits = sm.SimLimits(
-        max_steps=max_steps,
+    # Start from the repo's declared window (see Config.sim_limits) so a worker
+    # that already recorded how slow it is — a multi-gigabyte model load, a slow
+    # upstream — does not have to say so again here. Explicit flags still win.
+    base = cfg.sim_limits()
+    limits = dataclasses.replace(
+        base,
+        max_steps=max_steps if max_steps is not None else base.max_steps,
         max_queries=max_queries,
-        attempts=attempts,
-        timeout=query_timeout,
         row_limit=row_limit,
-        concurrency=concurrency,
         sessions=session,
+        attempts=attempts if attempts is not None else base.attempts,
+        timeout=query_timeout if query_timeout is not None else base.timeout,
+        concurrency=concurrency if concurrency is not None else base.concurrency,
     )
 
     def runner(catalog: Any, con: Any) -> Any:

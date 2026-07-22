@@ -603,3 +603,46 @@ def test_sim_limits_fall_back_to_defaults_with_no_config():
     limits = cfg.sim_limits()
     assert limits.timeout == cfg.execute_timeout
     assert limits.concurrency == cfg.execute_concurrency
+
+
+# --- the standalone `simulate` command honours config too -----------------
+def test_simulate_cli_inherits_config_and_lets_flags_win(tmp_path, monkeypatch):
+    """`vgi-lint simulate` must resolve limits the way `--agent-check` does.
+
+    The fix that made --agent-check inherit the [execution] window initially
+    missed this path, so `simulate --verify-references` still used a hardcoded
+    30s and no config could reach it — the exact blocker it was meant to clear.
+    This drives the real CLI, which is also what catches that SimLimits is frozen
+    (the first attempt mutated it and crashed at runtime).
+    """
+    from click.testing import CliRunner
+
+    from vgi_lint_check import cli, core
+
+    (tmp_path / "vgi-lint.toml").write_text(
+        "[tool.vgi-lint-check.execution]\ntimeout = 120\nconcurrency = 1\n"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    captured = {}
+
+    def fake_attach(location, runner, **kw):
+        # `runner` closes over `limits`; grab them from its cell contents.
+        for cell in runner.__closure__ or ():
+            val = cell.cell_contents
+            if type(val).__name__ == "SimLimits":
+                captured["limits"] = val
+        raise SystemExit(0)
+
+    monkeypatch.setattr(core, "with_attached_catalog", fake_attach)
+
+    CliRunner().invoke(cli.app, ["simulate", "./w", "--verify-references"])
+    lim = captured["limits"]
+    assert lim.timeout == 120  # inherited from [execution], not the old 30s
+    assert lim.concurrency == 1
+
+    captured.clear()
+    CliRunner().invoke(
+        cli.app, ["simulate", "./w", "--verify-references", "--query-timeout", "300"]
+    )
+    assert captured["limits"].timeout == 300  # an explicit flag still wins
