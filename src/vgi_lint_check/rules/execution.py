@@ -350,6 +350,32 @@ class AttachOptionsAccepted(Rule):
                 )
 
 
+def _advertised_attach_clause(
+    opts: list[AttachOption], supplied: dict[str, str]
+) -> tuple[str, str | None]:
+    """Build the ATTACH option clause for an advertised catalog.
+
+    Returns ``(clause, unmet)`` where ``unmet`` names a *required* option (one
+    ``vgi_catalogs()`` declares with no default) that the run supplied no value
+    for. Such an option is a documented precondition — an API key, a path — not
+    a worker defect, so the caller skips the probe rather than blaming the
+    worker for refusing an attach it correctly refused. Configured values win;
+    optional ones are left out so the worker applies its own default.
+    """
+    by_lower = {k.lower(): v for k, v in supplied.items()}
+    parts: list[str] = []
+    for opt in opts:
+        name = opt.name or ""
+        if not ALIAS_RE.match(name):
+            continue
+        value = by_lower.get(name.lower())
+        if value is not None:
+            parts.append(f", {name} {sql_str(value)}")
+        elif opt.required:
+            return "", name
+    return "".join(parts), None
+
+
 @register
 class AdvertisedCatalogsAttachable(Rule):
     code = "VGI905"
@@ -370,7 +396,14 @@ class AdvertisedCatalogsAttachable(Rule):
             # The catalog under lint is already proven attachable; skip it.
             if name == cat.qualifier:
                 continue
-            err = _try_attach(con, name, cat.location, "", timeout)
+            clause, unmet = _advertised_attach_clause(
+                cat.advertised_attach_options.get(name, []), ctx.config.attach_options
+            )
+            if unmet is not None:
+                # Gated on a credential/parameter we were not given: unprovable
+                # either way, so stay quiet instead of reporting a false defect.
+                continue
+            err = _try_attach(con, name, cat.location, clause, timeout)
             if err is not None:
                 yield self.finding(
                     ctx,

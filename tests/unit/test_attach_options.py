@@ -17,6 +17,11 @@ from vgi_lint_check.connection import (
     attach_statement,
     render_attach_options,
 )
+from vgi_lint_check.model import AttachOption, ObjectId, ObjectKind
+from vgi_lint_check.rules.base import RuleContext
+from vgi_lint_check.rules.execution import AdvertisedCatalogsAttachable
+
+from .. import fixtures as F
 
 
 def test_render_attach_options_quotes_strings_and_bares_literals():
@@ -127,6 +132,79 @@ def test_cli_overrides_merge_attach_options():
     )
     assert cfg.attach_options == {"provider": "imap", "secret": "lint"}
     assert cfg.setup_sql == ["CREATE SECRET lint (TYPE imap)"]
+
+
+# --- VGI905 vs. catalogs gated on a required attach option ----------------
+def _opt(name, default=None):
+    return AttachOption(
+        id=ObjectId("v", ObjectKind.ATTACH_OPTION, name=name),
+        name=name,
+        type="VARCHAR",
+        default=default,
+    )
+
+
+class _AttachCon:
+    """Records ATTACH statements; refuses any catalog named in ``refuse``."""
+
+    def __init__(self, refuse=()):
+        self.attaches: list[str] = []
+        self._refuse = tuple(refuse)
+
+    def execute(self, sql: str):
+        if sql.startswith("ATTACH"):
+            self.attaches.append(sql)
+            if any(f"ATTACH '{name}'" in sql for name in self._refuse):
+                raise RuntimeError("MissingAttachOptionsError")
+        return self
+
+
+def _vgi905(cat, con, cfg=None):
+    rule = AdvertisedCatalogsAttachable()
+    ctx = RuleContext(cat, cfg or Config(execute=True), connection=con)
+    return list(rule.check(ctx)), con
+
+
+def test_vgi905_skips_a_sibling_gated_on_an_unsupplied_required_option():
+    # 'gated' declares api_key with no default → required. We have no value for
+    # it, so the attach would fail for a documented reason, not a worker defect.
+    cat = F.catalog(
+        advertised_catalogs=["v", "gated"],
+        advertised_attach_options={"gated": [_opt("api_key")]},
+    )
+    findings, con = _vgi905(cat, _AttachCon(refuse=["gated"]))
+    assert findings == []
+    assert con.attaches == []  # never probed at all
+
+
+def test_vgi905_supplies_a_configured_value_for_the_required_option():
+    cat = F.catalog(
+        advertised_catalogs=["v", "gated"],
+        advertised_attach_options={"gated": [_opt("api_key")]},
+    )
+    cfg = Config(execute=True)
+    cfg.attach_options = {"API_KEY": "sekret"}  # matched case-insensitively
+    findings, con = _vgi905(cat, _AttachCon(), cfg)
+    assert findings == []
+    assert ", api_key 'sekret'" in con.attaches[0]
+
+
+def test_vgi905_still_fires_when_a_satisfiable_sibling_refuses():
+    # Every option has a default, so nothing is unmet — a refusal here is real.
+    cat = F.catalog(
+        advertised_catalogs=["v", "broken"],
+        advertised_attach_options={"broken": [_opt("mode", default="fast")]},
+    )
+    findings, _ = _vgi905(cat, _AttachCon(refuse=["broken"]))
+    assert [f.code for f in findings] == ["VGI905"]
+    assert "cannot be attached" in findings[0].message
+
+
+def test_vgi905_probes_siblings_with_no_declared_options():
+    cat = F.catalog(advertised_catalogs=["v", "plain"])
+    findings, con = _vgi905(cat, _AttachCon(refuse=["plain"]))
+    assert [f.code for f in findings] == ["VGI905"]
+    assert con.attaches and "ATTACH 'plain'" in con.attaches[0]
 
 
 def test_cli_overrides_attach_option_requires_kv():

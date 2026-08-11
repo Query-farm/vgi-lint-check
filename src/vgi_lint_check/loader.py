@@ -87,6 +87,31 @@ def _merge_examples(tagged: list[ExampleQuery], native: list[ExampleQuery]) -> l
     return merged
 
 
+def _build_attach_options(alias: str, infos: list[Any] | None) -> list[AttachOption]:
+    """Normalize ``vgi_catalogs()`` attach-option structs into the model type.
+
+    Duck-typed on ``name``/``description``/``type``/``default`` so the discovery
+    dataclass and any equivalent row shape both work; entries without a name are
+    unusable at ATTACH time and are dropped.
+    """
+    out: list[AttachOption] = []
+    info: Any
+    for info in infos or []:
+        name = getattr(info, "name", None)
+        if not name:
+            continue
+        out.append(
+            AttachOption(
+                id=ObjectId(alias, ObjectKind.ATTACH_OPTION, name=name),
+                name=name,
+                description=getattr(info, "description", None),
+                type=getattr(info, "type", None),
+                default=getattr(info, "default", None),
+            )
+        )
+    return out
+
+
 def build_catalog(
     snapshot: Snapshot,
     alias: str,
@@ -104,6 +129,7 @@ def build_catalog(
     pragma_rows: list[dict[str, Any]] | None = None,
     attach_options: list[Any] | None = None,
     advertised_catalogs: list[str] | None = None,
+    advertised_attach_options: dict[str, list[Any]] | None = None,
     argument_rows: list[dict[str, Any]] | None = None,
     copy_handler_rows: list[dict[str, Any]] | None = None,
 ) -> Catalog:
@@ -341,21 +367,11 @@ def build_catalog(
         )
 
     # --- attach options (from vgi_catalogs() discovery; pre-attach) -------
-    opts: list[AttachOption] = []
-    opt_info: Any
-    for opt_info in attach_options or []:
-        opt_name = getattr(opt_info, "name", None)
-        if not opt_name:
-            continue
-        opts.append(
-            AttachOption(
-                id=ObjectId(alias, ObjectKind.ATTACH_OPTION, name=opt_name),
-                name=opt_name,
-                description=getattr(opt_info, "description", None),
-                type=getattr(opt_info, "type", None),
-                default=getattr(opt_info, "default", None),
-            )
-        )
+    opts = _build_attach_options(alias, attach_options)
+    advertised_opts = {
+        name: _build_attach_options(alias, infos)
+        for name, infos in (advertised_attach_options or {}).items()
+    }
 
     return Catalog(
         database=alias,
@@ -375,6 +391,7 @@ def build_catalog(
         pragmas=pragmas,
         attach_options=opts,
         advertised_catalogs=list(advertised_catalogs or []),
+        advertised_attach_options=advertised_opts,
         executable_examples=catalog_exec_ex,
         executable_examples_parse_error=catalog_exec_err,
         agent_test_tasks=catalog_tasks,

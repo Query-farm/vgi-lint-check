@@ -615,6 +615,11 @@ class Catalog:
     attach_options: list[AttachOption] = field(default_factory=list)
     # Names of every catalog vgi_catalogs() advertised at this location.
     advertised_catalogs: list[str] = field(default_factory=list)
+    # {catalog name: its own attach options}, for every advertised catalog —
+    # vgi_catalogs() declares them per row, so a sibling catalog's options are
+    # not this catalog's. Lets VGI905 satisfy (or honestly skip) a sibling whose
+    # attach is gated on a required option. Empty when discovery didn't run.
+    advertised_attach_options: dict[str, list[AttachOption]] = field(default_factory=dict)
     # Catalog-level vgi.executable_examples (walkthroughs spanning the catalog).
     executable_examples: list[ExecutableExample] = field(default_factory=list)
     executable_examples_parse_error: str | None = None

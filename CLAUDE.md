@@ -330,10 +330,16 @@ Commit messages end with:
 ## Cross-repo
 
 - `~/Development/vgi-units` — a Rust VGI worker used for live validation; carries the
-  `vgi.agent_test_tasks` suite in `crates/units-worker/src/main.rs`. Build with the
-  pinned toolchain: `rustup run 1.90.0 cargo build --release -p units-worker`
-  (and `cargo fmt` — CI gates on it). Run live: `VGI_LINT_LIVE=1 uv run vgi-lint
-  simulate ~/Development/vgi-units/target/release/units-worker --no-cache`.
+  `vgi.agent_test_tasks` suite in `crates/units-worker/src/main.rs`. Build:
+  `cargo build --release -p units-worker` (and `cargo fmt` — CI gates on it) on the
+  default toolchain, **1.97.1** — the workspace sets `rust-version = "1.97"`, so
+  don't pin an older `rustup run` toolchain.
+  Run live: `VGI_LINT_LIVE=1 uv run vgi-lint simulate
+  ~/Development/vgi-units/target/release/units-worker --no-cache`.
+  **Keep its `vgi`/`vgi-rpc` crates current with the haybarn the linter locks** —
+  the extension rejects a worker whose `catalog_attach` Arrow schema predates its
+  protocol (`Worker returned an out-of-date Apache Arrow schema`), which reads as
+  a total attach failure across every live test, not as a version warning.
 - `~/Development/vgi-web-frontend/src/lib/ai-agent.ts` — the production "ask AI" tool
   contract that `simulate`'s discovery tools mirror.
 - `~/Development/vgi-tutorial-plans.yaml` — reusable 25-worker tutorial plan cache

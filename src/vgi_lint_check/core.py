@@ -102,6 +102,7 @@ def lint_worker(
             catalogs = discover_catalogs(con, location)
         discovery = _choose(catalogs, location, catalog_name)
         advertised = [c.catalog for c in catalogs] or [discovery.catalog]
+        advertised_opts = {c.catalog: list(c.attach_options) for c in catalogs}
         name = discovery.catalog
         local_alias = validate_alias(alias) if alias else derive_alias(name)
         versions = resolve_versions(
@@ -113,6 +114,7 @@ def lint_worker(
                 location,
                 discovery,
                 advertised,
+                advertised_opts,
                 local_alias,
                 dv,
                 vgi_version,
@@ -200,6 +202,7 @@ def with_attached_catalogs(
                 discovered = discover_catalogs(con, location)
                 discovery = _choose(discovered, location, None)
                 advertised = [c.catalog for c in discovered] or [discovery.catalog]
+                advertised_opts = {c.catalog: list(c.attach_options) for c in discovered}
                 local_alias = validate_alias(alias) if alias else derive_alias(discovery.catalog)
                 releases = [
                     Release(r.version, r.released_at, r.summary, r.notes_url)
@@ -229,6 +232,7 @@ def with_attached_catalogs(
                     pragma_rows=diff.pragma_rows,
                     attach_options=discovery.attach_options,
                     advertised_catalogs=advertised,
+                    advertised_attach_options=advertised_opts,
                     argument_rows=fetch_function_arguments(con, local_alias),
                     copy_handler_rows=fetch_copy_handlers(con, local_alias),
                 )
@@ -288,6 +292,7 @@ def _load_catalog(
         catalogs = discover_catalogs(con, location)
         discovery = _choose(catalogs, location, catalog_name)
         advertised = [c.catalog for c in catalogs] or [discovery.catalog]
+        advertised_opts = {c.catalog: list(c.attach_options) for c in catalogs}
         local_alias = validate_alias(alias) if alias else derive_alias(discovery.catalog)
         releases = [
             Release(r.version, r.released_at, r.summary, r.notes_url) for r in discovery.releases
@@ -319,6 +324,7 @@ def _load_catalog(
                 pragma_rows=diff.pragma_rows,
                 attach_options=discovery.attach_options,
                 advertised_catalogs=advertised,
+                advertised_attach_options=advertised_opts,
                 argument_rows=fetch_function_arguments(con, local_alias),
                 copy_handler_rows=fetch_copy_handlers(con, local_alias),
             )
@@ -352,6 +358,7 @@ def _lint_one_version(
     location: str,
     discovery: CatalogDiscovery,
     advertised: list[str],
+    advertised_opts: dict[str, list[Any]],
     alias: str,
     data_version: str | None,
     vgi_version: str | None,
@@ -399,6 +406,7 @@ def _lint_one_version(
                 pragma_rows=diff.pragma_rows,
                 attach_options=discovery.attach_options,
                 advertised_catalogs=advertised,
+                advertised_attach_options=advertised_opts,
                 argument_rows=fetch_function_arguments(con, alias),
                 copy_handler_rows=fetch_copy_handlers(con, alias),
             )
