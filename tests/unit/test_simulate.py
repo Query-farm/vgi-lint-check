@@ -165,6 +165,22 @@ def test_tool_list_tables_echoes_category():
     assert fns["is_holiday"]["category"] == "holidays"
 
 
+def test_multi_catalog_discovery_requires_explicit_catalog():
+    alpha = F.catalog(F.schema("main", tables=[F.table("main", "alpha_rows")]))
+    beta = F.catalog(F.schema("main", tables=[F.table("main", "beta_rows")]))
+    beta.database = "beta"
+    ambiguous = sim.tool_list_tables([alpha, beta])
+    assert "catalog is required" in ambiguous["error"]
+    assert ambiguous["catalogs"] == [alpha.qualifier, "beta"]
+
+    selected = sim.tool_list_tables([alpha, beta], catalog_name="beta")
+    assert selected["objects"][0]["qualified_name"] == "beta.main.beta_rows"
+    assert [item["catalog"] for item in sim.tool_list_catalogs([alpha, beta])["catalogs"]] == [
+        alpha.qualifier,
+        "beta",
+    ]
+
+
 def test_category_doc_md_does_not_leak_grader_fields():
     # A category's doc_md is listing-surface; the no-leak invariant still holds.
     task = AgentTask(

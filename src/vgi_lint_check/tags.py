@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from .model import (
@@ -434,11 +436,9 @@ def decode_result_dynamic_columns_md(tags: TagSet) -> tuple[list[ResultColumnTab
 def decode_agent_test_tasks(tags: TagSet) -> tuple[list[AgentTask], str | None]:
     """Decode the ``vgi.agent_test_tasks`` tag into (tasks, parse_error).
 
-    Each entry is ``{name, prompt, success_criteria?, reference_sql?, check_sql?,
-    unordered?}`` where ``reference_sql`` is a string, a list of strings, or a
-    list of ``{description, sql, expected_result?}`` steps (the canonical
-    solution sequence). Returns ([], None) when the tag is absent; ([], "<reason>")
-    on a malformed value so a rule can flag it.
+    The database-facing format is deliberately public: each entry is only
+    ``{name, prompt}``. Private grading fields are ignored here and VGI416 tells
+    authors to move them to ``vgi-agent-tests.yaml``.
     """
     raw = tags.get(TAG_AGENT_TEST_TASKS)
     if raw is None or not str(raw).strip():
@@ -459,23 +459,60 @@ def decode_agent_test_tasks(tags: TagSet) -> tuple[list[AgentTask], str | None]:
             return [], f"entry #{i} has no 'name'"
         if not (prompt and str(prompt).strip()):
             return [], f"entry #{i} has no 'prompt'"
-        ref: list[ExampleStatement] = []
-        if item.get("reference_sql") is not None:
-            ref, serr = _decode_statements(item.get("reference_sql"))
-            if serr is not None:
-                return [], f"entry #{i} reference_sql: {serr}"
-        crit = item.get("success_criteria")
-        check = item.get("check_sql")
         tasks.append(
             AgentTask(
                 name=str(name),
                 prompt=str(prompt),
-                success_criteria=None if crit is None else str(crit),
-                reference_statements=ref,
-                check_sql=None if check is None else str(check),
-                unordered=bool(item.get("unordered", False)),
-                ignore_column_names=bool(item.get("ignore_column_names", False)),
                 raw=item,
             )
         )
     return tasks, None
+
+
+def merge_agent_task_sidecar(tasks: list[AgentTask], path: str | Path) -> list[AgentTask]:
+    """Merge private grader fields from a YAML sidecar into public tasks by name.
+
+    The YAML root may be a task list or ``{tasks: [...]}``. A sidecar cannot add
+    prompts or tasks: the database tag remains the public, discoverable suite.
+    """
+    import yaml
+
+    source = Path(path)
+    try:
+        data = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"could not read agent task sidecar {source}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid agent task sidecar YAML in {source}: {exc}") from exc
+    if isinstance(data, dict):
+        data = data.get("tasks")
+    if not isinstance(data, list):
+        raise ValueError("agent task sidecar must be a list or a mapping with a 'tasks' list")
+
+    public = {task.name: task for task in tasks}
+    graders: dict[str, AgentTask] = {}
+    for index, item in enumerate(data):
+        if not isinstance(item, dict) or not str(item.get("name") or "").strip():
+            raise ValueError(f"agent task sidecar entry #{index} must have a name")
+        name = str(item["name"])
+        if name not in public:
+            raise ValueError(f"agent task sidecar names unknown public task {name!r}")
+        if name in graders:
+            raise ValueError(f"agent task sidecar repeats task {name!r}")
+        reference: list[ExampleStatement] = []
+        if item.get("reference_sql") is not None:
+            reference, error = _decode_statements(item["reference_sql"])
+            if error:
+                raise ValueError(f"agent task sidecar task {name!r} reference_sql: {error}")
+        base = public[name]
+        graders[name] = replace(
+            base,
+            success_criteria=(
+                None if item.get("success_criteria") is None else str(item["success_criteria"])
+            ),
+            reference_statements=reference,
+            check_sql=None if item.get("check_sql") is None else str(item["check_sql"]),
+            unordered=bool(item.get("unordered", False)),
+            ignore_column_names=bool(item.get("ignore_column_names", False)),
+        )
+    return [graders.get(task.name, task) for task in tasks]

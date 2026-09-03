@@ -293,9 +293,11 @@ def test_agent_test_tasks_decoded_on_catalog():
     cat = build_catalog(snap, "v", "loc")
     assert cat.agent_test_tasks_parse_error is None
     assert [t.name for t in cat.agent_test_tasks] == ["t1", "t2"]
-    assert cat.agent_test_tasks[0].unordered is True
-    assert len(cat.agent_test_tasks[1].reference_statements) == 2
-    assert cat.agent_test_tasks[1].check_sql == "SELECT true"
+    # Private grader fields are preserved only in raw so VGI416 can report them;
+    # they are never active unless merged from the private YAML sidecar.
+    assert cat.agent_test_tasks[0].unordered is False
+    assert cat.agent_test_tasks[1].reference_statements == []
+    assert cat.agent_test_tasks[1].check_sql is None
 
     # malformed -> parse error recorded, no crash
     bad = Snapshot(

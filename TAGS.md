@@ -249,19 +249,17 @@ columns/returns, caveats, and examples.
   - `name` — **required**, unique task id.
   - `prompt` — **required**, the natural-language task (the *only* field shown to
     the analyst).
-  - `reference_sql` — optional canonical solution: a string, list of strings, or
-    list of `{"description"?, "sql", "expected_result"?}` steps. **Grader-only.**
-  - `success_criteria` — optional judge rubric. **Grader-only.**
-  - `check_sql` — optional post-session assertion. **Grader-only.**
-  - `unordered` / `ignore_column_names` — optional booleans relaxing strict
-    result comparison for that task.
-- **Required:** optional (needed only to run `vgi-lint simulate`).
+- **Required:** yes under the default strict profile (VGI152).
 - **Used for:** `vgi-lint simulate` — runs an LLM analyst through these tasks to
   grade how *discoverable/usable* the worker is for agents.
-- **Critical invariant:** `reference_sql`, `success_criteria`, and `check_sql` are
-  **grader-only** and must never appear in any listing or tool output the analyst
-  sees. Do not stash hints in them expecting the agent to read them.
-- **Validated by:** VGI407 (valid `{name, prompt}` array — *error*).
+- **Private grading sidecar:** put `reference_sql`, `success_criteria`, `check_sql`,
+  `unordered`, and `ignore_column_names` in `vgi-agent-tests.yaml`, keyed by the
+  public task `name`. The linter discovers that conventional filename beside its
+  config; select another file with `[simulate] agent_tasks_file` or
+  `vgi-lint simulate --agent-tasks-file PATH`. Without private fields, simulation
+  falls back to the judge rubric based on the public prompt and observed result.
+- **Critical invariant:** the database tag contains only `name` and `prompt`.
+- **Validated by:** VGI407 (valid shape) and VGI416 (no embedded grader fields).
 
 ---
 
@@ -269,7 +267,7 @@ columns/returns, caveats, and examples.
 
 | Tag | Value | Used for | Rules |
 | --- | --- | --- | --- |
-| `vgi.source_url` | http(s) URL | where the catalog/object is implemented (repo/file) | VGI004 (catalog should advertise), VGI129 (valid URL), VGI139 (keep it on the catalog, don't repeat on every object), VGI171 (resolves). Opt-in on schema/table/view (VGI128, off by default). |
+| `vgi.source_url` | http(s) URL | where the catalog/object is implemented (repo/file) | VGI004 (catalog should advertise), VGI129 (valid URL), VGI139 (do not repeat the catalog URL unchanged), VGI171 (resolves). Distinct per-object links are accepted; completeness remains opt-in via VGI128. |
 | `vgi.author` | string | author / maintainer attribution | VGI160 (declare), part of the catalog provenance set |
 | `vgi.copyright` | string | copyright notice | VGI160 |
 | `vgi.license` | string | license name / SPDX id (prefer SPDX, or `LicenseRef-…` for custom) | VGI160, VGI013 (SPDX form) |
@@ -340,8 +338,15 @@ The old key keeps working (it transparently resolves to the canonical key) but
   finding (VGI402); omit it instead of setting it empty.
 - **JSON tags are strings.** Array/object-valued tags (`vgi.keywords`,
   `vgi.doc_links`, `vgi.example_queries`, `vgi.executable_examples`,
-  `vgi.agent_test_tasks`, `vgi.categories`, `vgi.classification_tags`) are stored as
+  `vgi.agent_test_tasks`, `vgi.categories`, `vgi.classification_tags`,
+  `vgi.result_columns_schema`) are stored as
   JSON-encoded strings in the MAP value.
+- **Build-time contract, not a worker protocol version.** `vgi-lint spec --format
+  json` publishes the latest key/alias/retirement registry for consumers to vendor
+  and check in CI. Workers do not need to advertise a metadata-spec version.
+- **Agent context is bounded.** Catalog `vgi.doc_llm` is capped at 8,000 characters;
+  detail values and individual examples are capped at 4,000 characters and detail
+  tools return at most five examples. VGI417 warns before consumers truncate them.
 - **Strict by default.** Documentation tags are required broadly under the strict
   profile; a worker opts out per object/rule via `[tool.vgi-lint-check]`
   `ignore`/`severity`, not by leaving tags blank.

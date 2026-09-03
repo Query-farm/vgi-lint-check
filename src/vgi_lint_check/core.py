@@ -410,6 +410,12 @@ def _lint_one_version(
                 argument_rows=fetch_function_arguments(con, alias),
                 copy_handler_rows=fetch_copy_handlers(con, alias),
             )
+        if config.agent_tasks_file:
+            from .tags import merge_agent_task_sidecar
+
+            catalog.agent_test_tasks = merge_agent_task_sidecar(
+                catalog.agent_test_tasks, config.agent_tasks_file
+            )
         rules = select_rules(config)
         needs_con = any(getattr(r, "requires_connection", False) for r in rules)
         needs_net = any(getattr(r, "requires_network", False) for r in rules)

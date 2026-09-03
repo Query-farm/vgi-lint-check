@@ -54,7 +54,7 @@ skipped unless `--execute` is passed.
 | `VGI132` | warning | classifying-tags-reused | A classifying tag should be a small, reused vocabulary — not unique per object. |  |
 | `VGI133` | warning | join-path-documented | A table with foreign keys should explain how to join to the referenced tables. |  |
 | `VGI138` | error | keywords-json-array | 'vgi.keywords' must be a JSON array of strings, not a comma-separated string. |  |
-| `VGI139` | warning | source-url-catalog-only | vgi.source_url belongs on the catalog, not repeated on every object. |  |
+| `VGI139` | warning | source-url-catalog-only | Do not repeat the catalog source URL unchanged on every object. |  |
 | `VGI140` | info | release-dated | Published data-version releases should carry a release date (freshness). |  |
 | `VGI141` | info | release-documented | Releases should have a summary or notes_url ('what's new'). |  |
 | `VGI150` | info | examples-not-trivial | Example queries should demonstrate value, not only `SELECT * FROM x`. |  |
@@ -158,6 +158,8 @@ skipped unless `--execute` is passed.
 | `VGI413` | warning | schema-categories-required | Every schema with objects must declare a 'vgi.categories' registry (navigation/SEO). |  |
 | `VGI414` | error | retired-tag-key | Retired tag keys must be migrated — they are no longer recognized. |  |
 | `VGI415` | error | required-filters-tag-valid | The extension-injected vgi_required_filters tag must be a JSON array of non-empty arrays of non-empty strings (an AND of OR-groups). |  |
+| `VGI416` | error | agent-test-tasks-public-only | vgi.agent_test_tasks must not expose private grader fields. |  |
+| `VGI417` | warning | agent-context-value-bounded | Metadata values should fit the bounded context exposed by agent tools. |  |
 
 ## Example queries (VGI5xx)
 
@@ -286,4 +288,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_196 rules._
+_198 rules._

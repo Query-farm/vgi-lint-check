@@ -12,42 +12,42 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from .tag_spec import value as _tag_value
+
 # Reserved tag keys VGI workers use as documentation/discovery channels.
-TAG_DOC_LLM = "vgi.doc_llm"  # LLM-oriented narrative doc (canonical)
-TAG_DOC_MD = "vgi.doc_md"  # Markdown narrative doc (canonical)
-TAG_DOC_LINKS = "vgi.doc_links"  # JSON array of {title?, url} links to more docs
-TAG_EXAMPLE_QUERIES = "vgi.example_queries"
-TAG_EXECUTABLE_EXAMPLES = "vgi.executable_examples"  # self-contained, must-run examples
-TAG_AGENT_TEST_TASKS = "vgi.agent_test_tasks"  # fixed analyst-task suite for `simulate`
-TAG_TITLE = "vgi.title"  # human/marketing display name (vs the machine name)
-TAG_KEYWORDS = "vgi.keywords"  # JSON array of search keywords / synonyms
-TAG_CATEGORY = "vgi.category"  # single primary category an object belongs to (a registry name)
-TAG_CATEGORIES = "vgi.categories"  # schema-level registry: ordered array of category objects
-TAG_CLASSIFICATION_TAGS = "vgi.classification_tags"  # JSON array of cross-cutting facet labels
-TAG_RESULT_COLUMNS_SCHEMA = "vgi.result_columns_schema"  # JSON [{name,type,description}] (static)
-TAG_RESULT_DYNAMIC_COLUMNS_MD = "vgi.result_dynamic_columns_md"  # Markdown w/ per-variant tables
-TAG_RESULT_COLUMNS_MD = (
-    "vgi.result_columns_md"  # RETIRED: use result_columns_schema / _dynamic_columns_md
-)
-TAG_SOURCE_URL = "vgi.source_url"  # link to where this object is implemented (repo/file)
-TAG_AUTHOR = "vgi.author"  # author / maintainer attribution
-TAG_COPYRIGHT = "vgi.copyright"  # copyright notice
-TAG_LICENSE = "vgi.license"  # license name or SPDX identifier
-TAG_SUPPORT_CONTACT = "vgi.support_contact"  # where to report issues/bugs (email or URL)
-TAG_SUPPORT_POLICY_URL = "vgi.support_policy_url"  # link to the support/SLA policy
-TAG_ICON_URL = "vgi.icon_url"  # link to a browser-displayable icon/logo image for the catalog
+TAG_DOC_LLM = _tag_value("TAG_DOC_LLM")
+TAG_DOC_MD = _tag_value("TAG_DOC_MD")
+TAG_DOC_LINKS = _tag_value("TAG_DOC_LINKS")
+TAG_EXAMPLE_QUERIES = _tag_value("TAG_EXAMPLE_QUERIES")
+TAG_EXECUTABLE_EXAMPLES = _tag_value("TAG_EXECUTABLE_EXAMPLES")
+TAG_AGENT_TEST_TASKS = _tag_value("TAG_AGENT_TEST_TASKS")
+TAG_TITLE = _tag_value("TAG_TITLE")
+TAG_KEYWORDS = _tag_value("TAG_KEYWORDS")
+TAG_CATEGORY = _tag_value("TAG_CATEGORY")
+TAG_CATEGORIES = _tag_value("TAG_CATEGORIES")
+TAG_CLASSIFICATION_TAGS = _tag_value("TAG_CLASSIFICATION_TAGS")
+TAG_RESULT_COLUMNS_SCHEMA = _tag_value("TAG_RESULT_COLUMNS_SCHEMA")
+TAG_RESULT_DYNAMIC_COLUMNS_MD = _tag_value("TAG_RESULT_DYNAMIC_COLUMNS_MD")
+TAG_RESULT_COLUMNS_MD = _tag_value("TAG_RESULT_COLUMNS_MD")
+TAG_SOURCE_URL = _tag_value("TAG_SOURCE_URL")
+TAG_AUTHOR = _tag_value("TAG_AUTHOR")
+TAG_COPYRIGHT = _tag_value("TAG_COPYRIGHT")
+TAG_LICENSE = _tag_value("TAG_LICENSE")
+TAG_SUPPORT_CONTACT = _tag_value("TAG_SUPPORT_CONTACT")
+TAG_SUPPORT_POLICY_URL = _tag_value("TAG_SUPPORT_POLICY_URL")
+TAG_ICON_URL = _tag_value("TAG_ICON_URL")
 
 # Extension-injected (NOT worker-authored, so `vgi_`-prefixed and NOT in
 # RESERVED_TAG_KEYS): the VGI DuckDB extension renders Table.required_filters
 # onto duckdb_tables().tags as JSON [["a"],["b","c"]] so a caller can discover a
 # table's required WHERE-filter groups before hitting the bind-time error.
-TAG_REQUIRED_FILTERS = "vgi_required_filters"
+TAG_REQUIRED_FILTERS = _tag_value("TAG_REQUIRED_FILTERS")
 
 # Deprecated tag keys kept working for back-compat (old key -> canonical key).
-TAG_DESCRIPTION_LLM = "vgi.description_llm"  # deprecated: use vgi.doc_llm
-TAG_DESCRIPTION_MD = "vgi.description_md"  # deprecated: use vgi.doc_md
-TAG_COLUMNS_MD = "vgi.columns_md"  # RETIRED (was: use vgi.result_columns_md)
-TAG_CATEGORY_TAGS = "vgi.category_tags"  # deprecated: use vgi.classification_tags
+TAG_DESCRIPTION_LLM = _tag_value("TAG_DESCRIPTION_LLM")
+TAG_DESCRIPTION_MD = _tag_value("TAG_DESCRIPTION_MD")
+TAG_COLUMNS_MD = _tag_value("TAG_COLUMNS_MD")
+TAG_CATEGORY_TAGS = _tag_value("TAG_CATEGORY_TAGS")
 DEPRECATED_TAG_ALIASES = {
     TAG_DESCRIPTION_LLM: TAG_DOC_LLM,
     TAG_DESCRIPTION_MD: TAG_DOC_MD,

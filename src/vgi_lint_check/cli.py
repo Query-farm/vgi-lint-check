@@ -22,6 +22,7 @@ from .core import lint_worker
 from .exit_codes import EXIT_CONNECTION, EXIT_FINDINGS, EXIT_TOOL_ERROR
 from .findings import Severity
 from .rules.registry import REGISTRY
+from .tag_spec import TagContractError, validate_contract
 
 
 class DefaultGroup(click.Group):
@@ -246,6 +247,11 @@ def lint(
     quiet: bool,
 ) -> None:
     """Lint a worker at LOCATION (URL or subprocess command)."""
+    try:
+        validate_contract()
+    except (OSError, json.JSONDecodeError, TagContractError) as exc:
+        raise click.ClickException(f"invalid bundled tag contract: {exc}") from exc
+
     cfg = load_config(config_path)
     if trace_path is not None:
         cfg.trace = trace_path
@@ -329,6 +335,16 @@ def lint(
 # --------------------------------------------------------------------------
 # rules / explain
 # --------------------------------------------------------------------------
+@app.command(name="spec")
+@click.option("--format", "fmt", type=click.Choice(["json"]), default="json")
+def spec_cmd(fmt: str) -> None:
+    """Print the machine-readable VGI metadata tag contract."""
+    from .tag_spec import contract
+
+    if fmt == "json":
+        click.echo(json.dumps(contract(), indent=2, sort_keys=True))
+
+
 @app.command(name="rules")
 @click.option("--category", "category", default=None)
 @click.option("--format", "fmt", type=click.Choice(["terminal", "json"]), default="terminal")
@@ -519,6 +535,12 @@ def review_cmd(
 @click.option("--install/--no-install", default=True)
 @click.option("--data-version", default=None, help="Simulate against a specific data version.")
 @click.option(
+    "--agent-tasks-file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Private YAML grader fields keyed by public vgi.agent_test_tasks names.",
+)
+@click.option(
     "--backend",
     "sim_backend",
     type=click.Choice(["claude", "api"]),
@@ -607,6 +629,7 @@ def simulate_cmd(
     spatial: bool,
     install: bool,
     data_version: str | None,
+    agent_tasks_file: str | None,
     sim_backend: str,
     sim_model: str | None,
     cache_path: str,
@@ -636,6 +659,7 @@ def simulate_cmd(
     if not location:
         raise click.UsageError("no worker LOCATION given and none configured")
     backend = make_backend(sim_backend, sim_model)
+    grader_path = agent_tasks_file or cfg.agent_tasks_file
     # Start from the repo's declared window (see Config.sim_limits) so a worker
     # that already recorded how slow it is — a multi-gigabyte model load, a slow
     # upstream — does not have to say so again here. Explicit flags still win.
@@ -652,6 +676,12 @@ def simulate_cmd(
     )
 
     def runner(catalog: Any, con: Any) -> Any:
+        if grader_path:
+            from .tags import merge_agent_task_sidecar
+
+            catalog.agent_test_tasks = merge_agent_task_sidecar(
+                catalog.agent_test_tasks, grader_path
+            )
         if suggest is not None:
             return ("suggest", sm.suggest_tasks(catalog, backend, cap=max(0, suggest)))
         if verify_references:

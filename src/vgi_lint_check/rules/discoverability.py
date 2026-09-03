@@ -507,22 +507,25 @@ class SourceUrlCatalogOnly(Rule):
         ObjectKind.MACRO,
         ObjectKind.TABLE_FUNCTION,
     )
-    summary = "vgi.source_url belongs on the catalog, not repeated on every object."
+    summary = "Do not repeat the catalog source URL unchanged on every object."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         cat = ctx.catalog
         objs = [(s.id, s.tags) for s in cat.iter_schemas()]
         objs += [(t.id, t.tags) for t in cat.iter_table_like()]
         objs += [(f.id, f.tags) for f in cat.iter_all_functions()]
+        catalog_url = (cat.tags.get(TAG_SOURCE_URL) or cat.source_url or "").rstrip("/")
+        if not catalog_url:
+            return
         for oid, tags in objs:
-            if tags.has(TAG_SOURCE_URL):
+            object_url = (tags.get(TAG_SOURCE_URL) or "").rstrip("/")
+            if object_url and object_url == catalog_url:
                 yield self.finding(
                     ctx,
                     oid,
-                    "'vgi.source_url' is set on a non-catalog object",
-                    "set source_url once on the catalog (the worker's repo) and "
-                    "remove it here — per-object copies are redundant. Enable "
-                    "VGI128 if you intend distinct per-object source links.",
+                    "'vgi.source_url' repeats the catalog source URL unchanged",
+                    "remove the redundant tag or link directly to the distinct file/section "
+                    "that implements this object",
                 )
 
 
@@ -617,8 +620,9 @@ class AgentTestTasksPresent(Rule):
             ctx,
             cat.id,
             "no 'vgi.agent_test_tasks' suite",
-            "add a 'vgi.agent_test_tasks' tag (catalog): a JSON array of "
-            "{name, prompt, reference_sql?} analyst tasks. It is required so "
+            "add a 'vgi.agent_test_tasks' tag (catalog): a JSON array of public "
+            "{name, prompt} analyst tasks. Put private graders in vgi-agent-tests.yaml. "
+            "It is required so "
             "`vgi-lint simulate` can measure how well agents actually use this worker",
         )
 

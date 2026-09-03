@@ -259,7 +259,8 @@ an agent/SQL-analyst actually accomplish real work here using only what's expose
 A worker declares a **fixed** task suite in `vgi.agent_test_tasks`; `simulate` runs
 an LLM analyst through each one — it sees only a bounded orientation listing and the
 task *prompt* (never the solution) and **discovers the schema through tools**, just
-like a real agent: `list_tables`, `describe_table`, `describe_function`, and a guarded
+like a real agent: `list_catalogs`, `list_tables`, `list_categories`,
+`describe_table`, `describe_function`, and a guarded
 `run_sql` (a local mirror of the production "ask AI" tool contract). It iterates until
 it answers. It's a real test, not a vibe check: grading is **execution-based**.
 
@@ -268,14 +269,25 @@ it answers. It's a real test, not a vibe check: grading is **execution-based**.
 [
   {
     "name": "kwh to joules",
-    "prompt": "How many joules is 100 kWh? Return one column named joules.",  // ONLY this is shown to the analyst
-    "reference_sql": "SELECT units.main.convert(100, 'kWh', 'J') AS joules"    // canonical solution — hidden; re-run to grade
+    "prompt": "How many joules is 100 kWh? Return one column named joules."
   }
 ]
 ```
 
+```yaml
+# vgi-agent-tests.yaml — private repository/CI sidecar, never exposed as metadata
+tasks:
+  - name: kwh to joules
+    reference_sql: SELECT units.main.convert(100, 'kWh', 'J') AS joules
+    success_criteria: Returns the exact joule conversion in a column named joules.
+```
+
+The conventional file is discovered beside `vgi-lint.toml`/`pyproject.toml`;
+use `--agent-tasks-file` or `[simulate] agent_tasks_file` to override it.
+
 ```bash
 vgi-lint simulate <worker>              # run the suite (gates on --min-pass-rate)
+vgi-lint simulate <worker> --agent-tasks-file vgi-agent-tests.yaml
 vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as tag JSON
 ```
 
@@ -370,7 +382,7 @@ table below is a quick index:
 | `vgi.doc_links` | JSON array of links to more docs — URL strings or `{"title","url"}` objects (validated + resolved) |
 | `vgi.example_queries` | JSON list of `{"description","sql"}` *illustrative* example queries |
 | `vgi.executable_examples` | JSON list of self-contained, **must-run** examples (see below) |
-| `vgi.agent_test_tasks` | JSON list of fixed analyst tasks `{name, prompt, reference_sql?, success_criteria?, check_sql?}` — the suite `vgi-lint simulate` runs (see below) |
+| `vgi.agent_test_tasks` | JSON list of public analyst tasks `{name, prompt}`; private graders live in `vgi-agent-tests.yaml` |
 | `vgi.title` | Human/marketing display name (vs. the machine name) |
 | `vgi.keywords` | JSON array of search keywords / synonyms — `["a","b"]` (comma-separated string is now a **VGI138 error**) |
 | `vgi.category` | The object's single **primary category** — a `name` defined in its schema's `vgi.categories` registry (on tables/views/functions; **VGI409**) |
@@ -503,7 +515,7 @@ A bare string (`ignore = ["VGI113"]`) still works and lands in kind
 `concurrency` — it drives the same worker through the same cold start, so a
 worker that already declared it is slow does not have to say so twice. Override
 under `[tool.vgi-lint-check.simulate]` (`timeout`, `concurrency`, `attempts`,
-`max_steps`) when the agent run genuinely differs.
+`max_steps`, `agent_tasks_file`) when the agent run genuinely differs.
 
 Precedence: defaults < `pyproject.toml` < `vgi-lint.toml` < CLI flags.
 

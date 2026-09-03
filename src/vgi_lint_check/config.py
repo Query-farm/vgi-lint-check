@@ -310,6 +310,9 @@ class Config:
     sim_concurrency: int | None = None
     sim_attempts: int = 1
     sim_max_steps: int = 12
+    # Private grader material for public vgi.agent_test_tasks. Keeping this in a
+    # repo sidecar prevents reference answers/check SQL from reaching consumers.
+    agent_tasks_file: str | None = None
     check_links: bool = False  # enable network rules (validate description URLs)
     link_timeout: float = 10.0
     # LLM passes (use the local `claude -p` subscription backend by default).
@@ -512,6 +515,8 @@ def from_table(raw: dict[str, Any]) -> Config:
             cfg.sim_concurrency = int(sim["concurrency"])
         cfg.sim_attempts = int(sim.get("attempts", cfg.sim_attempts))
         cfg.sim_max_steps = int(sim.get("max_steps", cfg.sim_max_steps))
+        if "agent_tasks_file" in sim:
+            cfg.agent_tasks_file = str(sim["agent_tasks_file"])
     return cfg
 
 
@@ -527,13 +532,26 @@ def load_config(
     """
     path = _discover_path(explicit_path, start_dir)
     if path is None:
-        return Config()
+        cfg = Config()
+        conventional = Path(start_dir or Path.cwd()) / "vgi-agent-tests.yaml"
+        if conventional.is_file():
+            cfg.agent_tasks_file = str(conventional.resolve())
+        return cfg
     data = tomllib.loads(Path(path).read_text())
     if path.name == "pyproject.toml":
         table = data.get("tool", {}).get("vgi-lint-check", {})
     else:
         table = data.get("tool", {}).get("vgi-lint-check", data)
-    return from_table(table)
+    cfg = from_table(table)
+    if cfg.agent_tasks_file:
+        configured = Path(cfg.agent_tasks_file)
+        if not configured.is_absolute():
+            cfg.agent_tasks_file = str((path.parent / configured).resolve())
+    else:
+        conventional = path.parent / "vgi-agent-tests.yaml"
+        if conventional.is_file():
+            cfg.agent_tasks_file = str(conventional.resolve())
+    return cfg
 
 
 def _discover_path(explicit_path: str | Path | None, start_dir: str | Path | None) -> Path | None:

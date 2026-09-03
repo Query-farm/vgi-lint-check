@@ -2,7 +2,7 @@
 
 from tests import fixtures as F
 from vgi_lint_check.config import Config
-from vgi_lint_check.model import ObjectKind
+from vgi_lint_check.model import AgentTask, ObjectKind
 from vgi_lint_check.rules import run, select_rules
 from vgi_lint_check.rules.base import RuleContext
 
@@ -276,13 +276,29 @@ def test_vgi139_source_url_catalog_only():
     # source_url on a function is flagged; the same value belongs on the catalog
     fn = F.func("main", "predict", description="d", tags={"vgi.source_url": "https://x.test/repo"})
     s = F.schema("main", comment="c", tags=_TAGS, functions=[fn])
-    codes = _codes(F.catalog(s))
+    codes = _codes(F.catalog(s, source_url="https://x.test/repo"))
     assert "VGI139" in codes
     # VGI128 (per-object source_url required) is now opt-in -> off by default
     assert "VGI128" not in codes
+    # A distinct object-level link is useful provenance, not redundant.
+    assert "VGI139" not in _codes(F.catalog(s, source_url="https://x.test/repo/root"))
     # a catalog-level source_url (the discovery field) does not trip VGI139
     clean = F.schema("main", comment="c", tags=_TAGS, tables=[F.table("main", "t", comment="c")])
     assert "VGI139" not in _codes(F.catalog(clean))
+
+
+def test_vgi416_agent_graders_are_not_public_metadata():
+    cat = F.catalog()
+    cat.agent_test_tasks = [
+        AgentTask(name="lookup", prompt="Find it", check_sql=None, raw={"check_sql": "SELECT 1"})
+    ]
+    assert "VGI416" in _codes(cat)
+
+
+def test_vgi417_warns_when_agent_metadata_will_be_truncated():
+    table = F.table("main", "large_docs", tags={"vgi.doc_md": "x" * 4_001})
+    cat = F.catalog(F.schema("main", tables=[table]))
+    assert "VGI417" in _codes(cat)
 
 
 def test_vgi310_function_overuses_any():

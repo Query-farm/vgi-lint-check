@@ -12,6 +12,7 @@ from ..model import (
     TAG_CATEGORIES,
     TAG_CATEGORY,
     TAG_CLASSIFICATION_TAGS,
+    TAG_DOC_LLM,
     TAG_REQUIRED_FILTERS,
     Catalog,
     ObjectId,
@@ -196,11 +197,72 @@ class AgentTestTasksValid(Rule):
                 ctx,
                 ctx.catalog.id,
                 f"vgi.agent_test_tasks is not valid: {err}",
-                'use a JSON array of {"name","prompt", "reference_sql"?, '
-                '"success_criteria"?, "check_sql"?} task objects. Only "prompt" is '
-                "shown to the analyst — reference_sql/success_criteria/check_sql are "
-                "grader-only and must never leak into the prompt or any description",
+                'use a JSON array of public {"name", "prompt"} task objects',
             )
+
+
+@register
+class AgentTestTasksPublicOnly(Rule):
+    code = "VGI416"
+    name = "agent-test-tasks-public-only"
+    category = TAGS
+    default_severity = Severity.ERROR
+    targets = (ObjectKind.CATALOG,)
+    summary = "vgi.agent_test_tasks must not expose private grader fields."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        private = {
+            "success_criteria",
+            "reference_sql",
+            "check_sql",
+            "unordered",
+            "ignore_column_names",
+        }
+        for index, task in enumerate(ctx.catalog.agent_test_tasks):
+            raw = task.raw if isinstance(task.raw, dict) else {}
+            exposed = sorted(private.intersection(raw))
+            if exposed:
+                yield self.finding(
+                    ctx,
+                    ctx.catalog.id,
+                    f"agent task #{index} ({task.name!r}) exposes grader field(s): "
+                    + ", ".join(exposed),
+                    "keep only name/prompt in vgi.agent_test_tasks and move grader fields "
+                    "to vgi-agent-tests.yaml (--agent-tasks-file)",
+                )
+
+
+@register
+class AgentContextValueBounded(Rule):
+    code = "VGI417"
+    name = "agent-context-value-bounded"
+    category = TAGS
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = "Metadata values should fit the bounded context exposed by agent tools."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        for oid, tags in _all_objects(ctx.catalog):
+            for key, value in tags.raw.items():
+                if key == "vgi.agent_test_tasks":
+                    continue
+                limit = 8_000 if key == TAG_DOC_LLM and oid.kind is ObjectKind.CATALOG else 4_000
+                if len(value) > limit:
+                    yield self.finding(
+                        ctx,
+                        oid,
+                        f"tag {key!r} is {len(value):,} characters (agent context limit {limit:,})",
+                        "shorten or split the metadata; agent tools truncate oversized values",
+                    )
 
 
 @register
