@@ -165,6 +165,18 @@ def test_tool_list_tables_echoes_category():
     assert fns["is_holiday"]["category"] == "holidays"
 
 
+def test_describe_table_ships_the_required_filters_rule_with_the_data():
+    groups = '[["accession_number"],["ticker","cik"]]'
+    gated = F.table("main", "filings", tags={"vgi_required_filters": groups})
+    plain = F.table("main", "open")
+    cat = F.catalog(F.schema("main", tables=[gated, plain]))
+    described = sim.tool_describe_table(cat, "main", "filings")
+    assert described["required_filters"] == [["accession_number"], ["ticker", "cik"]]
+    assert described["required_filters_rule"] == sim.REQUIRED_FILTERS_RULE
+    assert "required_filters_rule" not in sim.tool_describe_table(cat, "main", "open")
+    assert "required_filters" in sim._ACTOR
+
+
 def test_multi_catalog_discovery_requires_explicit_catalog():
     alpha = F.catalog(F.schema("main", tables=[F.table("main", "alpha_rows")]))
     beta = F.catalog(F.schema("main", tables=[F.table("main", "beta_rows")]))

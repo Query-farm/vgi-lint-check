@@ -25,6 +25,33 @@ def test_bundled_contract_is_valid():
     validate_contract()
 
 
+# The contract is what consumers vendor, so its placement must agree with the
+# normative "Applies to" prose in TAGS.md — pinned here so they cannot drift.
+_DOCUMENTED_SCOPES = {
+    "vgi.title": ["catalog", "schema", "table", "view"],
+    "vgi.keywords": ["catalog", "schema", "table", "view"],
+    "vgi.category": ["table", "view", "function"],
+    "vgi.categories": ["schema"],
+    "vgi.classification_tags": ["schema", "table", "view", "function"],
+    "vgi.example_queries": ["schema", "table", "view", "function"],
+    "vgi.agent_test_tasks": ["catalog"],
+    "vgi.result_columns_schema": ["function"],
+    "vgi.result_dynamic_columns_md": ["function"],
+    "vgi.author": ["catalog"],
+    "vgi.copyright": ["catalog"],
+    "vgi.license": ["catalog"],
+    "vgi.support_contact": ["catalog"],
+    "vgi.support_policy_url": ["catalog"],
+    "vgi.icon_url": ["catalog"],
+}
+
+
+def test_contract_scopes_match_documented_placement():
+    scopes = {item["key"]: item["scopes"] for item in contract()["tags"]}
+    for key, expected in _DOCUMENTED_SCOPES.items():
+        assert scopes[key] == expected, key
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -65,13 +92,19 @@ def test_every_lint_run_validates_contract_before_loading_worker(monkeypatch):
 
 def test_public_tasks_ignore_embedded_graders_and_sidecar_merges_them(tmp_path):
     tasks, error = decode_agent_test_tasks(
-        TagSet({
-            "vgi.agent_test_tasks": json.dumps([{
-                "name": "lookup",
-                "prompt": "Find the row",
-                "check_sql": "SELECT leaked",
-            }]),
-        })
+        TagSet(
+            {
+                "vgi.agent_test_tasks": json.dumps(
+                    [
+                        {
+                            "name": "lookup",
+                            "prompt": "Find the row",
+                            "check_sql": "SELECT leaked",
+                        }
+                    ]
+                ),
+            }
+        )
     )
     assert error is None
     assert tasks[0].check_sql is None

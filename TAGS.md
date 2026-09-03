@@ -302,8 +302,12 @@ catalog at attach time.
   arrays, e.g. `[["accession_number"],["ticker","cik"]]`, onto
   `duckdb_tables().tags`. Lets a caller discover a table's required WHERE-filter
   groups (via `SELECT tags['vgi_required_filters'] FROM duckdb_tables()`) *before*
-  hitting the bind-time `BinderException`. **Validated by:** VGI415 (well-formed
-  JSON list-of-non-empty-lists-of-strings; also nudges near-miss key spellings).
+  hitting the bind-time `BinderException`. Agent-facing `describe_table` tools (the
+  web frontend and `vgi-lint simulate`) surface it decoded as `required_filters`
+  next to a one-line `required_filters_rule`, so an agent never needs to know the
+  tag key or infer what the nested arrays mean. **Validated by:** VGI415
+  (well-formed JSON list-of-non-empty-lists-of-strings; also nudges near-miss key
+  spellings).
 - **`vgi_resolved_data_version` / `vgi_resolved_implementation_version`** — on the
   catalog (`duckdb_databases().tags`); the versions the worker resolved at attach.
 
