@@ -391,10 +391,11 @@ from the absence of a default. With `--execute`, two live checks also run:
 
 ## Reserved tags
 
-The reserved vocabulary now includes an optional federated semantic model. See the
-[semantic model specification](docs/semantic-model.md), the
-[agent/human authoring guide](docs/semantic-model-authoring.md), and the packaged Draft 2020-12
-schemas exposed by `vgi-lint spec --format json` or `vgi-lint spec --schema member`.
+The reserved vocabulary now includes an optional federated semantic model. Start with the
+[human authoring guide](docs/semantic-model-authoring.md), use the
+[semantic model specification](docs/semantic-model.md) for normative behavior, or give a coding
+agent the [agent authoring playbook](docs/semantic-model-agent-authoring.md). Packaged Draft 2020-12
+schemas are exposed by `vgi-lint spec --format json` or `vgi-lint spec --schema member`.
 
 VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 (set them on the catalog, a schema, a table/view, or — where noted — a function).

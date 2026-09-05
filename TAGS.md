@@ -344,9 +344,10 @@ The old key keeps working (it transparently resolves to the canonical key) but
 VGI also reserves `vgi.semantic_catalog`, `vgi.semantic_entity`,
 `vgi.semantic_members`, `vgi.semantic_member`, and `vgi.semantic_relationships` for a federated
 measure/dimension model. Their JSON Schemas, identity rules, relationship reconciliation and
-compiler contract are specified in [`docs/semantic-model.md`](docs/semantic-model.md). Agents and
-human worker authors should follow
-[`docs/semantic-model-authoring.md`](docs/semantic-model-authoring.md).
+compiler contract are specified in [`docs/semantic-model.md`](docs/semantic-model.md). Human worker
+authors should start with
+[`docs/semantic-model-authoring.md`](docs/semantic-model-authoring.md); coding agents should use
+[`docs/semantic-model-agent-authoring.md`](docs/semantic-model-agent-authoring.md).
 
 - **The `vgi.*` namespace is framework-owned.** A `vgi.*` key that is not one of
   the reserved keys above is treated as a typo (VGI404, with a did-you-mean hint).

@@ -5,6 +5,10 @@ This document is the normative human-readable companion to the JSON Schemas in
 meaning, resolution and compiler behavior. VGI publishes the latest contract; workers do not
 select or pin a semantic-contract version.
 
+For a step-by-step explanation and complete worked example, start with the
+[human authoring guide](semantic-model-authoring.md). Coding agents should additionally follow the
+[agent authoring playbook](semantic-model-agent-authoring.md).
+
 ## Storage and carriers
 
 DuckDB tags are `MAP(VARCHAR, VARCHAR)`, so every semantic value is serialized JSON. The
