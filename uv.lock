@@ -1197,6 +1197,18 @@ wheels = [
 ]
 
 [[package]]
+name = "types-jsonschema"
+version = "4.26.0.20260518"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "referencing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dd/46/73b6a5d61a61015c4248030a8cb07e5bdddb4041430fae9e585a68692578/types_jsonschema-4.26.0.20260518.tar.gz", hash = "sha256:e1dd53dc97a64f5eccdd6fa9839666e09bb500a8ebba2db6fdaf1789faea81a6", size = 16638, upload-time = "2026-05-18T06:06:44.106Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/d5/134f8a147dcecda10db7f60cfc6af0578a25a5c53c87b3907a64385e0184/types_jsonschema-4.26.0.20260518-py3-none-any.whl", hash = "sha256:30b30a518c7fe335df85c919fcbcc631b69c03d4a4b5b632fa916bea03065307", size = 16072, upload-time = "2026-05-18T06:06:43.264Z" },
+]
+
+[[package]]
 name = "types-pyyaml"
 version = "6.0.12.20260815"
 source = { registry = "https://pypi.org/simple" }
@@ -1225,11 +1237,12 @@ wheels = [
 
 [[package]]
 name = "vgi-lint-check"
-version = "0.82.0"
+version = "0.84.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "haybarn" },
+    { name = "jsonschema" },
     { name = "markdown-it-py" },
     { name = "packaging" },
     { name = "pytz" },
@@ -1239,12 +1252,12 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "jsonschema" },
     { name = "mypy" },
     { name = "pydoclint" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "twine" },
+    { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
 
@@ -1252,6 +1265,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "haybarn", specifier = ">=1.5.4rc1,<1.6" },
+    { name = "jsonschema", specifier = ">=4" },
     { name = "markdown-it-py", specifier = ">=3" },
     { name = "packaging", specifier = ">=23" },
     { name = "pytz", specifier = ">=2024.1" },
@@ -1261,12 +1275,12 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "jsonschema", specifier = ">=4" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pydoclint", specifier = ">=0.5" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.6" },
     { name = "twine", specifier = ">=5" },
+    { name = "types-jsonschema", specifier = ">=4" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260518" },
 ]
 

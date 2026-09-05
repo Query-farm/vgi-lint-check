@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://query.farm/schema/vgi/semantic/definitions.json",
+  "$defs": {
+    "semantic_id": {"type":"string","minLength":1,"maxLength":200,"pattern":"^[A-Za-z][A-Za-z0-9_.:-]*$"},
+    "catalog_id": {"$ref":"#/$defs/semantic_id"},
+    "entity_ref": {
+      "type":"object","additionalProperties":false,"required":["catalog_id","entity_id"],
+      "properties":{"catalog_id":{"$ref":"#/$defs/catalog_id"},"entity_id":{"$ref":"#/$defs/semantic_id"}}
+    },
+    "cardinality": {
+      "type":"object","additionalProperties":false,"required":["min","max"],
+      "properties":{"min":{"enum":[0,1]},"max":{"enum":[1,"many"]},"roles":{"type":"array","items":{"$ref":"#/$defs/semantic_id"},"uniqueItems":true}}
+    },
+    "source_argument": {
+      "type":"object","additionalProperties":false,"required":["argument","parameter"],
+      "description":"Maps one physical table-function argument to a semantic query parameter. Calling convention and order are inferred from vgi_function_arguments(), never duplicated here.",
+      "properties":{
+        "argument":{"type":"string","minLength":1,"description":"Exact physical argument name reported by vgi_function_arguments()."},
+        "parameter":{"$ref":"#/$defs/semantic_id","description":"Semantic request parameter name."},
+        "required":{"type":"boolean","default":true,"description":"Whether the semantic request must supply the parameter. False requires a physical function default."}
+      }
+    },
+    "additivity": {
+      "oneOf":[
+        {"const":"additive"},{"const":"non_additive"},
+        {"type":"object","additionalProperties":false,"required":["kind","prohibited_dimensions"],"properties":{"kind":{"const":"semi_additive"},"prohibited_dimensions":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/semantic_id"}}}}
+      ]
+    }
+  }
+}

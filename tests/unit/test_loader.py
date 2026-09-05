@@ -229,6 +229,9 @@ def test_function_arguments_joined_and_version_skew():
         {
             "schema_name": "main",
             "function_name": "multiply",
+            "function_type": "scalar",
+            "arg_position": 0,
+            "field_index": 0,
             "arg_name": "value",
             "arg_type": "DOUBLE",
             "arg_description": "the number",
@@ -237,6 +240,9 @@ def test_function_arguments_joined_and_version_skew():
         {
             "schema_name": "main",
             "function_name": "multiply",
+            "function_type": "scalar",
+            "arg_position": 1,
+            "field_index": 1,
             "arg_name": "factor",
             "arg_type": "DOUBLE",
             "arg_description": None,
@@ -246,12 +252,45 @@ def test_function_arguments_joined_and_version_skew():
     cat = build_catalog(snap, "v", "loc", argument_rows=arg_rows)
     fn = next(f for f in cat.iter_functions() if f.name == "multiply")
     assert [a.name for a in fn.arguments] == ["value", "factor"]
+    assert [(a.position, a.field_index) for a in fn.arguments] == [(0, 0), (1, 1)]
     assert fn.arguments[0].description == "the number"
     assert fn.arguments[1].description is None and fn.arguments[1].is_const is True
 
     # with no rows (older extension), arguments is empty and nothing breaks
     cat2 = build_catalog(snap, "v", "loc", argument_rows=None)
     assert next(f for f in cat2.iter_functions() if f.name == "multiply").arguments == []
+
+
+def test_function_arguments_are_scoped_by_function_type():
+    snap = Snapshot(
+        schemas=[{"database_name": "v", "schema_name": "main", "tags": {}}],
+        functions=[
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "function_name": "shared",
+                "function_type": kind,
+                "tags": {},
+            }
+            for kind in ("scalar", "table")
+        ],
+    )
+    rows = [
+        {
+            "schema_name": "main",
+            "function_name": "shared",
+            "function_type": kind,
+            "arg_position": 0,
+            "field_index": 0,
+            "arg_name": name,
+            "is_positional": True,
+        }
+        for kind, name in (("scalar", "value"), ("table", "path"))
+    ]
+    loaded = build_catalog(snap, "v", "loc", argument_rows=rows)
+    by_type = {function.function_type: function for function in loaded.iter_all_functions()}
+    assert [argument.name for argument in by_type["scalar"].arguments] == ["value"]
+    assert [argument.name for argument in by_type["table"].arguments] == ["path"]
 
 
 class _RaisingCon:
@@ -308,3 +347,32 @@ def test_agent_test_tasks_decoded_on_catalog():
     )
     cat2 = build_catalog(bad, "v", "loc")
     assert cat2.agent_test_tasks == [] and cat2.agent_test_tasks_parse_error is not None
+
+
+def test_duckdb_2_table_function_output_columns_preserve_native_tags():
+    snap = Snapshot(
+        schemas=[{"database_name": "v", "schema_name": "main", "comment": None, "tags": {}}],
+        columns=[
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "function_name": "events",
+                "column_name": "event_id",
+                "data_type": "BIGINT",
+                "tags": {"vgi.semantic_member": '{"member_id":"event_id","kind":"identifier"}'},
+            }
+        ],
+        functions=[
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "function_name": "events",
+                "function_type": "table",
+                "tags": {},
+            }
+        ],
+    )
+    loaded = build_catalog(snap, "v", "loc")
+    function = next(loaded.iter_all_functions())
+    assert [column.name for column in function.native_result_columns] == ["event_id"]
+    assert function.native_result_columns[0].tags.get("vgi.semantic_member") is not None

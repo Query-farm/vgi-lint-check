@@ -160,6 +160,10 @@ skipped unless `--execute` is passed.
 | `VGI415` | error | required-filters-tag-valid | The extension-injected vgi_required_filters tag must be a JSON array of non-empty arrays of non-empty strings (an AND of OR-groups). |  |
 | `VGI416` | error | agent-test-tasks-public-only | vgi.agent_test_tasks must not expose private grader fields. |  |
 | `VGI417` | warning | agent-context-value-bounded | Metadata values should fit the bounded context exposed by agent tools. |  |
+| `VGI418` | error | semantic-tag-schema | Semantic JSON tags must conform to the published JSON Schemas. |  |
+| `VGI419` | error | semantic-model-consistency | Semantic identities, grains, members and relationships must resolve consistently. |  |
+| `VGI420` | warning | semantic-model-completeness | Modeled entities and members should explain their business meaning. |  |
+| `VGI421` | error | semantic-tag-scope | Semantic tags must be carried by the object kinds that give them context. |  |
 
 ## Example queries (VGI5xx)
 
@@ -288,4 +292,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_198 rules._
+_202 rules._

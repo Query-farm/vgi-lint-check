@@ -10,7 +10,7 @@ from typing import Any, NoReturn, cast
 SUPPORTED_CONTRACT_REVISION = 1
 _SECTIONS = ("tags", "aliases", "retired", "extension_tags")
 _FORMATS = {"json", "markdown", "text", "url"}
-_SCOPES = {"catalog", "schema", "table", "view", "function"}
+_SCOPES = {"catalog", "schema", "table", "view", "function", "column"}
 
 
 class TagContractError(ValueError):
@@ -54,8 +54,7 @@ def validate_contract(spec: dict[str, Any] | None = None) -> None:
     revision = candidate.get("contract_revision")
     if revision != SUPPORTED_CONTRACT_REVISION:
         _invalid(
-            f"unsupported contract_revision {revision!r}; "
-            f"expected {SUPPORTED_CONTRACT_REVISION}"
+            f"unsupported contract_revision {revision!r}; expected {SUPPORTED_CONTRACT_REVISION}"
         )
     if not isinstance(candidate.get("title"), str) or not candidate["title"].strip():
         _invalid("title must be a non-empty string")
@@ -75,9 +74,10 @@ def validate_contract(spec: dict[str, Any] | None = None) -> None:
             item = cast(dict[str, Any], raw_item)
             symbol = _string(item, "symbol", location)
             key = _string(item, "key", location)
-            if not symbol.startswith("TAG_") or not symbol.removeprefix("TAG_").replace(
-                "_", ""
-            ).isalnum():
+            if (
+                not symbol.startswith("TAG_")
+                or not symbol.removeprefix("TAG_").replace("_", "").isalnum()
+            ):
                 _invalid(f"{location}.symbol is not a valid TAG_* symbol")
             if symbol in seen_symbols:
                 _invalid(f"duplicate symbol {symbol!r} in {seen_symbols[symbol]} and {location}")
@@ -100,6 +100,11 @@ def validate_contract(spec: dict[str, Any] | None = None) -> None:
             _invalid(f"{location}.scopes contains unknown scopes {unknown_scopes!r}")
         if "public_fields" in item:
             _string_list(item, "public_fields", location)
+        if "schema" in item:
+            schema_name = _string(item, "schema", location)
+            from .semantic_schema import schema
+
+            schema(schema_name)
 
     for index, item in enumerate(entries["aliases"]):
         location = f"aliases[{index}]"
@@ -138,6 +143,15 @@ def contract() -> dict[str, Any]:
     spec = _raw_contract()
     validate_contract(spec)
     return spec
+
+
+def schema_for_tag(key: str) -> str | None:
+    """Return the semantic schema name assigned to a canonical tag key."""
+    for item in contract()["tags"]:
+        if item["key"] == key:
+            raw = item.get("schema")
+            return str(raw) if raw else None
+    return None
 
 
 def symbol_values() -> dict[str, str]:

@@ -260,7 +260,7 @@ A worker declares a **fixed** task suite in `vgi.agent_test_tasks`; `simulate` r
 an LLM analyst through each one — it sees only a bounded orientation listing and the
 task *prompt* (never the solution) and **discovers the schema through tools**, just
 like a real agent: `list_catalogs`, `list_tables`, `list_categories`,
-`describe_table`, `describe_function`, and a guarded
+`describe_table`, `describe_function`, `query_semantic_model`, and a guarded
 `run_sql` (a local mirror of the production "ask AI" tool contract). It iterates until
 it answers. It's a real test, not a vibe check: grading is **execution-based**.
 
@@ -280,6 +280,8 @@ tasks:
   - name: kwh to joules
     reference_sql: SELECT units.main.convert(100, 'kWh', 'J') AS joules
     success_criteria: Returns the exact joule conversion in a column named joules.
+    # Optional private gate: prove the agent solved this through the modeled path.
+    required_tools: [query_semantic_model]
 ```
 
 The conventional file is discovered beside `vgi-lint.toml`/`pyproject.toml`;
@@ -289,6 +291,21 @@ use `--agent-tasks-file` or `[simulate] agent_tasks_file` to override it.
 vgi-lint simulate <worker>              # run the suite (gates on --min-pass-rate)
 vgi-lint simulate <worker> --agent-tasks-file vgi-agent-tests.yaml
 vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as tag JSON
+
+# Compose workers and test whether an agent can use their federated semantic model.
+vgi-lint semantic-simulate <sales-worker> <crm-worker> \
+  --as sales_runtime --as crm_runtime \
+  --agent-tasks-file vgi-agent-tests.yaml --backend api
+```
+
+The repository's semantic end-to-end suite is offline by default. It loads the committed
+`examples/semantic/ecommerce-workers.json` catalogs and data, runs the semantic lint rules,
+federates them, compiles representative requests, executes the generated SQL, and grades a
+scripted agent interaction. The corresponding real-model acceptance test is explicitly opt-in:
+
+```bash
+ANTHROPIC_API_KEY=... uv run --with anthropic pytest --run-ai \
+  tests/ai/test_semantic_agent.py
 ```
 
 - **Grading is layered, strongest wins:** (1) compare the analyst's answer to the
@@ -300,6 +317,11 @@ vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as 
   listing, then pulls columns/signatures/constraints on demand through the discovery
   tools (no full catalog dump). This scales and mirrors how real agents work, so the
   friction it surfaces reflects real metadata gaps.
+- **Semantic-model acceptance tests** use `semantic-simulate` with several workers attached
+  together. The agent sees stable catalog/entity/member IDs in the same discovery responses as
+  physical metadata and can call `query_semantic_model`; the linter's reference compiler executes
+  the generated parameterized SQL. Put `required_tools: [query_semantic_model]` in the private
+  sidecar when falling back to hand-written `run_sql` should fail the task.
 - **The path is scored, not just the outcome.** Each task gets a **discoverability
   score** (0–100) from *how* the agent got there — penalizing wasted effort the
   metadata should have spared it (queries that failed to bind, hitting a mandatory
@@ -369,6 +391,11 @@ from the absence of a default. With `--execute`, two live checks also run:
 
 ## Reserved tags
 
+The reserved vocabulary now includes an optional federated semantic model. See the
+[semantic model specification](docs/semantic-model.md), the
+[agent/human authoring guide](docs/semantic-model-authoring.md), and the packaged Draft 2020-12
+schemas exposed by `vgi-lint spec --format json` or `vgi-lint spec --schema member`.
+
 VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 (set them on the catalog, a schema, a table/view, or — where noted — a function).
 **[`TAGS.md`](TAGS.md) is the complete, normative reference** — every tag's
@@ -397,6 +424,10 @@ table below is a quick index:
 | `vgi.support_contact` | Where to report issues/bugs — email or URL (catalog) |
 | `vgi.support_policy_url` | Link to the support / SLA policy (catalog) |
 | `vgi.icon_url` | Link to a browser-displayable icon/logo image for the catalog — validated for format & resolution under `--check-links` (catalog) |
+| `vgi.semantic_catalog` | Stable logical catalog identity and runtime binding hints |
+| `vgi.semantic_entity` | Entity identity, grain, default time dimension and table-function source arguments |
+| `vgi.semantic_members` / `vgi.semantic_member` | Packed DuckDB 1.5 and native column representations of dimensions and measures |
+| `vgi.semantic_relationships` | Cross-catalog relationship assertions over stable entity/member IDs |
 
 > **Renamed:** `vgi.doc_llm`/`vgi.doc_md` (was `vgi.description_llm`/`_md`) and
 > `vgi.classification_tags` (was `vgi.category_tags`). The old keys still work (dual

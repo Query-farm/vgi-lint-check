@@ -19,6 +19,7 @@ from . import (  # noqa: F401  (imported for registration side effects)
     execution,
     functions,
     pragmas,
+    semantic,
     settings,
     structure,
     tags,

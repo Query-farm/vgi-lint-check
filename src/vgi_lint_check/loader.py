@@ -112,6 +112,21 @@ def _build_attach_options(alias: str, infos: list[Any] | None) -> list[AttachOpt
     return out
 
 
+def _optional_int(value: Any) -> int | None:
+    """Normalize an optional integer-valued diagnostic column."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _argument_function_type(value: Any) -> Any:
+    """Match vgi_function_arguments() macro names to duckdb_functions()."""
+    return "macro" if value == "scalar_macro" else value
+
+
 def build_catalog(
     snapshot: Snapshot,
     alias: str,
@@ -140,18 +155,24 @@ def build_catalog(
     copy_handlers = frozenset(
         str(r["handler"]) for r in (copy_handler_rows or []) if r.get("handler")
     )
-    # Per-argument metadata (vgi_function_arguments()), grouped by (schema, name).
-    # A name with several overloads keeps all its arguments; the rule dedups by
-    # name, so a distinct overload's args aren't silently dropped.
-    args_by_key: dict[tuple[Any, Any], list[Argument]] = {}
+    # Per-argument metadata (vgi_function_arguments()), grouped by function type
+    # as well as name. A name with several overloads of one type keeps all its
+    # arguments so semantic compilation can reject the ambiguity explicitly.
+    args_by_key: dict[tuple[Any, Any, Any], list[Argument]] = {}
     for r in argument_rows or []:
-        key = (r.get("schema_name"), r.get("function_name"))
+        key = (
+            r.get("schema_name"),
+            r.get("function_name"),
+            _argument_function_type(r.get("function_type")),
+        )
         name = r.get("arg_name")
         if not name:
             continue
         args_by_key.setdefault(key, []).append(
             Argument(
                 name=str(name),
+                position=_optional_int(r.get("arg_position")),
+                field_index=_optional_int(r.get("field_index")),
                 type=r.get("arg_type"),
                 description=r.get("arg_description"),
                 is_const=bool(r.get("is_const")),
@@ -247,23 +268,26 @@ def build_catalog(
         get_schema(sname).views.append(v)
 
     # --- columns ----------------------------------------------------------
+    # DuckDB 2.0 may expose table-function output columns here too. Functions
+    # are loaded below, so retain any row that is not owned by a relation and
+    # attach it after the corresponding function row is built.
+    unclaimed_columns: dict[tuple[str, str], list[Column]] = {}
     for r in _scoped(snapshot.columns, alias):
-        sname, tname, cname = (
-            r.get("schema_name"),
-            r.get("table_name"),
-            r.get("column_name"),
+        sname = r.get("schema_name")
+        tname = r.get("table_name") or r.get("function_name")
+        cname = r.get("column_name")
+        column = Column(
+            id=ObjectId(alias, ObjectKind.COLUMN, schema=sname, name=tname, column=cname),
+            name=cname,
+            data_type=r.get("data_type"),
+            comment=r.get("comment"),
+            tags=to_tagset(r.get("tags")),
         )
         target = tables_by_key.get((sname, tname)) or views_by_key.get((sname, tname))
         if target is None:
+            unclaimed_columns.setdefault((sname, tname), []).append(column)
             continue
-        target.columns.append(
-            Column(
-                id=ObjectId(alias, ObjectKind.COLUMN, schema=sname, name=tname, column=cname),
-                name=cname,
-                data_type=r.get("data_type"),
-                comment=r.get("comment"),
-            )
-        )
+        target.columns.append(column)
 
     # --- functions / macros (table-functions correlated to their table) ---
     for r in _scoped(snapshot.functions, alias):
@@ -299,12 +323,22 @@ def build_catalog(
             executable_examples=exec_ex,
             executable_examples_parse_error=exec_err,
             result_columns=result_cols,
+            native_result_columns=(
+                unclaimed_columns.get((sname, fname), [])
+                if _function_objectkind(ftype) is ObjectKind.TABLE_FUNCTION
+                else []
+            ),
             result_columns_parse_error=result_cols_err,
             result_dynamic_tables=dyn_tables,
             result_dynamic_parse_error=dyn_err,
             macro_definition=r.get("macro_definition"),
             stability=r.get("stability"),
-            arguments=args_by_key.get((sname, fname), []),
+            arguments=args_by_key.get(
+                (sname, fname, ftype),
+                # Compatibility with synthetic snapshots that predate the
+                # function_type column on argument rows.
+                args_by_key.get((sname, fname, None), []),
+            ),
         )
         # Correlate a table-function to its table so column/desc rules use the
         # richer table row rather than flagging the bare function.

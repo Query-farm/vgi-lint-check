@@ -504,6 +504,13 @@ def merge_agent_task_sidecar(tasks: list[AgentTask], path: str | Path) -> list[A
             reference, error = _decode_statements(item["reference_sql"])
             if error:
                 raise ValueError(f"agent task sidecar task {name!r} reference_sql: {error}")
+        required_tools = item.get("required_tools", [])
+        if not isinstance(required_tools, list) or not all(
+            isinstance(value, str) and value.strip() for value in required_tools
+        ):
+            raise ValueError(
+                f"agent task sidecar task {name!r} required_tools must be a list of names"
+            )
         base = public[name]
         graders[name] = replace(
             base,
@@ -514,5 +521,6 @@ def merge_agent_task_sidecar(tasks: list[AgentTask], path: str | Path) -> list[A
             check_sql=None if item.get("check_sql") is None else str(item["check_sql"]),
             unordered=bool(item.get("unordered", False)),
             ignore_column_names=bool(item.get("ignore_column_names", False)),
+            required_tools=tuple(required_tools),
         )
     return [graders.get(task.name, task) for task in tasks]

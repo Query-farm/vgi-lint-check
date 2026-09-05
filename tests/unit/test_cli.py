@@ -79,3 +79,13 @@ def test_simulate_help_and_usage():
     # no location and no config -> usage error
     r2 = run("simulate")
     assert r2.exit_code != 0
+
+
+def test_semantic_simulate_help_and_alias_validation():
+    help_result = run("semantic-simulate", "--help")
+    assert help_result.exit_code == 0
+    assert "composed workers' semantic model" in help_result.output
+    assert "--agent-tasks-file" in help_result.output
+    invalid = run("semantic-simulate", "sales", "crm", "--as", "sales_runtime")
+    assert invalid.exit_code != 0
+    assert "repeat --as exactly once per LOCATION" in invalid.output

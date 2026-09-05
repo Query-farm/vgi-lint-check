@@ -1,0 +1,155 @@
+{
+  "catalogs": [
+    {
+      "attachment_alias": "sales_runtime",
+      "catalog_name": "sales",
+      "catalog_tags": {
+        "vgi.semantic_catalog": {
+          "catalog_id": "com.example.sales",
+          "catalog_instance_id": "demo",
+          "binding_key": "sales",
+          "title": "Sales"
+        },
+        "vgi.agent_test_tasks": [
+          {
+            "name": "revenue by customer country",
+            "prompt": "Using the modeled business definitions, return total revenue by customer country, largest revenue first. Return exactly the columns country and revenue."
+          }
+        ]
+      },
+      "schema": "main",
+      "tables": [
+        {
+          "name": "orders",
+          "comment": "One row per completed customer order, with its booked gross amount.",
+          "tags": {
+            "vgi.semantic_entity": {
+              "entity_id": "orders",
+              "grain": ["order_id"],
+              "default_time_dimension": "ordered_at",
+              "description": "Completed orders at one row per order_id, used as the sales fact grain."
+            },
+            "vgi.semantic_members": [
+              {"member_id": "order_id", "kind": "identifier", "column": "order_id", "description": "Unique order identifier."},
+              {"member_id": "customer_id", "kind": "identifier", "column": "customer_id", "description": "Customer that placed the order."},
+              {"member_id": "ordered_at", "kind": "time_dimension", "column": "ordered_at", "timezone": "UTC", "granularities": ["day", "week", "month", "quarter", "year"], "week_start": "monday", "description": "UTC timestamp when the completed order was booked."},
+              {"member_id": "amount", "kind": "dimension", "column": "amount", "data_type": "DECIMAL(18,2)", "description": "Booked gross order amount in USD."},
+              {"member_id": "revenue", "kind": "measure", "aggregation": "sum", "member": "amount", "additivity": "additive", "output_type": "DECIMAL(18,2)", "description": "Sum of booked gross order amount."},
+              {"member_id": "order_count", "kind": "measure", "aggregation": "count_rows", "additivity": "additive", "description": "Number of completed orders."},
+              {"member_id": "average_order_value", "kind": "measure", "expression": {"op": "safe_divide", "left": {"op": "member", "member": "revenue"}, "right": {"op": "member", "member": "order_count"}}, "additivity": "non_additive", "output_type": "DECIMAL(18,2)", "description": "Revenue divided by completed order count."}
+            ],
+            "vgi.semantic_relationships": [
+              {
+                "relationship_id": "com.example.sales.order_customer",
+                "from": {"catalog_id": "com.example.sales", "entity_id": "orders"},
+                "to": {"catalog_id": "com.example.crm", "entity_id": "customers"},
+                "from_cardinality": {"min": 0, "max": "many", "roles": ["orders"]},
+                "to_cardinality": {"min": 1, "max": 1, "roles": ["customer"]},
+                "predicate": [{"from_member": "customer_id", "to_member": "customer_id", "nulls": "not_equal"}]
+              }
+            ]
+          },
+          "columns": [
+            {"name": "order_id", "type": "INTEGER", "nullable": false},
+            {"name": "customer_id", "type": "VARCHAR", "nullable": false},
+            {"name": "ordered_at", "type": "TIMESTAMPTZ", "nullable": false},
+            {"name": "amount", "type": "DECIMAL(18,2)", "nullable": false}
+          ],
+          "rows": [
+            [1, "c1", "2026-01-05 10:00:00", "100.00"],
+            [2, "c1", "2026-01-12 10:00:00", "50.00"],
+            [3, "c2", "2026-02-01 10:00:00", "200.00"],
+            [4, "c3", "2026-02-10 10:00:00", "25.00"]
+          ]
+        }
+      ]
+    },
+    {
+      "attachment_alias": "crm_runtime",
+      "catalog_name": "crm",
+      "catalog_tags": {
+        "vgi.semantic_catalog": {
+          "catalog_id": "com.example.crm",
+          "catalog_instance_id": "demo",
+          "binding_key": "crm",
+          "title": "Customer relationship management"
+        }
+      },
+      "schema": "main",
+      "tables": [
+        {
+          "name": "customers",
+          "comment": "One current row per customer with reporting geography and segment.",
+          "tags": {
+            "vgi.semantic_entity": {"entity_id": "customers", "grain": ["customer_id"], "description": "Current customer attributes at one row per customer_id."},
+            "vgi.semantic_members": [
+              {"member_id": "customer_id", "kind": "identifier", "column": "customer_id", "description": "Stable customer identifier."},
+              {"member_id": "country", "kind": "dimension", "column": "country", "description": "Customer billing country code."},
+              {"member_id": "segment", "kind": "dimension", "column": "segment", "description": "Current commercial customer segment."}
+            ],
+            "vgi.semantic_relationships": [
+              {
+                "relationship_id": "com.example.sales.order_customer",
+                "from": {"catalog_id": "com.example.crm", "entity_id": "customers"},
+                "to": {"catalog_id": "com.example.sales", "entity_id": "orders"},
+                "from_cardinality": {"min": 1, "max": 1, "roles": ["customer"]},
+                "to_cardinality": {"min": 0, "max": "many", "roles": ["orders"]},
+                "predicate": [{"from_member": "customer_id", "to_member": "customer_id", "nulls": "not_equal"}]
+              }
+            ]
+          },
+          "columns": [
+            {"name": "customer_id", "type": "VARCHAR", "nullable": false},
+            {"name": "country", "type": "VARCHAR", "nullable": false},
+            {"name": "segment", "type": "VARCHAR", "nullable": false}
+          ],
+          "rows": [
+            ["c1", "US", "enterprise"],
+            ["c2", "CA", "growth"],
+            ["c3", "US", "growth"]
+          ]
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "name": "cross_catalog_revenue_by_country",
+      "request": {
+        "measures": [{"catalog_id": "com.example.sales", "entity_id": "orders", "member_id": "revenue"}],
+        "dimensions": [{"catalog_id": "com.example.crm", "entity_id": "customers", "member_id": "country"}],
+        "order": [{"member": "revenue", "direction": "desc"}]
+      },
+      "expected_columns": ["country", "revenue"],
+      "expected_rows": [["CA", "200.00"], ["US", "175.00"]]
+    },
+    {
+      "name": "derived_measure_by_month",
+      "request": {
+        "measures": [{"catalog_id": "com.example.sales", "entity_id": "orders", "member_id": "average_order_value"}],
+        "dimensions": [{"catalog_id": "com.example.sales", "entity_id": "orders", "member_id": "ordered_at", "granularity": "month", "alias": "month"}],
+        "order": [{"member": "month", "direction": "asc"}]
+      },
+      "expected_columns": ["month", "average_order_value"],
+      "expected_rows": [["2026-01-01 00:00:00", "75.00"], ["2026-02-01 00:00:00", "112.50"]]
+    },
+    {
+      "name": "related_entity_filter",
+      "request": {
+        "measures": [{"catalog_id": "com.example.sales", "entity_id": "orders", "member_id": "revenue"}],
+        "filters": {"member": {"catalog_id": "com.example.crm", "entity_id": "customers", "member_id": "segment"}, "operator": "eq", "value": "enterprise"}
+      },
+      "expected_columns": ["revenue"],
+      "expected_rows": [["150.00"]]
+    }
+  ],
+  "agent_graders": {
+    "tasks": [
+      {
+        "name": "revenue by customer country",
+        "reference_sql": "SELECT c.country, CAST(SUM(o.amount) AS DECIMAL(18,2)) AS revenue FROM sales_runtime.main.orders o JOIN crm_runtime.main.customers c USING (customer_id) GROUP BY c.country ORDER BY revenue DESC",
+        "required_tools": ["query_semantic_model"]
+      }
+    ]
+  }
+}

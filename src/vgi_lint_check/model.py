@@ -36,6 +36,11 @@ TAG_LICENSE = _tag_value("TAG_LICENSE")
 TAG_SUPPORT_CONTACT = _tag_value("TAG_SUPPORT_CONTACT")
 TAG_SUPPORT_POLICY_URL = _tag_value("TAG_SUPPORT_POLICY_URL")
 TAG_ICON_URL = _tag_value("TAG_ICON_URL")
+TAG_SEMANTIC_CATALOG = _tag_value("TAG_SEMANTIC_CATALOG")
+TAG_SEMANTIC_ENTITY = _tag_value("TAG_SEMANTIC_ENTITY")
+TAG_SEMANTIC_MEMBERS = _tag_value("TAG_SEMANTIC_MEMBERS")
+TAG_SEMANTIC_MEMBER = _tag_value("TAG_SEMANTIC_MEMBER")
+TAG_SEMANTIC_RELATIONSHIPS = _tag_value("TAG_SEMANTIC_RELATIONSHIPS")
 
 # Extension-injected (NOT worker-authored, so `vgi_`-prefixed and NOT in
 # RESERVED_TAG_KEYS): the VGI DuckDB extension renders Table.required_filters
@@ -96,6 +101,11 @@ RESERVED_TAG_KEYS = frozenset(
         TAG_SUPPORT_CONTACT,
         TAG_SUPPORT_POLICY_URL,
         TAG_ICON_URL,
+        TAG_SEMANTIC_CATALOG,
+        TAG_SEMANTIC_ENTITY,
+        TAG_SEMANTIC_MEMBERS,
+        TAG_SEMANTIC_MEMBER,
+        TAG_SEMANTIC_RELATIONSHIPS,
         *DEPRECATED_TAG_ALIASES,
     }
 )
@@ -303,6 +313,7 @@ class AgentTask:
     check_sql: str | None = None
     unordered: bool = False
     ignore_column_names: bool = False
+    required_tools: tuple[str, ...] = ()
     raw: object = None
 
 
@@ -314,6 +325,7 @@ class Column:
     name: str
     data_type: str | None = None
     comment: str | None = None
+    tags: TagSet = field(default_factory=TagSet)
 
     @property
     def documented(self) -> bool:
@@ -390,6 +402,11 @@ class Argument:
     choices: str | None = None
     value_range: str | None = None
     pattern: str | None = None
+    # ``position`` is the SQL positional ordinal (``arg_position`` on the
+    # diagnostic row) and is therefore None for named and varargs arguments.
+    # ``field_index`` preserves declaration order across all argument kinds.
+    position: int | None = None
+    field_index: int | None = None
 
 
 @dataclass
@@ -414,6 +431,9 @@ class Function:
     # tables parsed from ``vgi.result_dynamic_columns_md``. Only table functions
     # read these.
     result_columns: list[ResultColumn] = field(default_factory=list)
+    # Native DuckDB output columns, including DuckDB 2.0 column tags. This is
+    # independent of vgi.result_columns_schema and empty on older engines.
+    native_result_columns: list[Column] = field(default_factory=list)
     result_columns_parse_error: str | None = None
     result_dynamic_tables: list[ResultColumnTable] = field(default_factory=list)
     result_dynamic_parse_error: str | None = None

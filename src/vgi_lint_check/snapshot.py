@@ -58,7 +58,7 @@ def take_snapshot(con: Any) -> Snapshot:
 _FUNCTION_ARGUMENTS_SQL = """
 SELECT * FROM vgi_function_arguments()
 WHERE catalog_name = ?
-ORDER BY function_name, field_index
+ORDER BY schema_name, function_name, function_type, field_index
 """
 
 

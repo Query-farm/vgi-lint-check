@@ -1,0 +1,33 @@
+name: Semantic agent acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Anthropic model override
+        required: false
+        default: claude-sonnet-5
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-agent:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      VGI_LINT_AI_MODEL: ${{ inputs.model }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Require the API secret
+        run: test -n "$ANTHROPIC_API_KEY"
+
+      - name: Run the semantic agent acceptance test
+        run: uv run --with anthropic pytest --run-ai -q tests/ai/test_semantic_agent.py

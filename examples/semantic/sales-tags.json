@@ -1,0 +1,10 @@
+{
+  "vgi.semantic_catalog": {"catalog_id":"com.example.sales","binding_key":"sales","title":"Sales"},
+  "vgi.semantic_entity": {"entity_id":"orders","grain":["order_id"],"default_time_dimension":"ordered_at"},
+  "vgi.semantic_members": [
+    {"member_id":"order_id","kind":"identifier","column":"order_id"},
+    {"member_id":"ordered_at","kind":"time_dimension","column":"ordered_at","timezone":"UTC","granularities":["day","week","month"],"week_start":"monday"},
+    {"member_id":"amount","kind":"dimension","column":"amount","data_type":"DECIMAL(18,2)"},
+    {"member_id":"revenue","kind":"measure","aggregation":"sum","member":"amount","additivity":"additive"}
+  ]
+}

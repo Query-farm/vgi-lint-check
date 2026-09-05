@@ -115,13 +115,28 @@ def test_public_tasks_ignore_embedded_graders_and_sidecar_merges_them(tmp_path):
         "  - name: lookup\n"
         "    success_criteria: Returns one row\n"
         "    reference_sql: SELECT 1 AS value\n"
-        "    check_sql: SELECT count(*) = 1\n",
+        "    check_sql: SELECT count(*) = 1\n"
+        "    required_tools: [query_semantic_model]\n",
         encoding="utf-8",
     )
     merged = merge_agent_task_sidecar(tasks, sidecar)
     assert merged[0].success_criteria == "Returns one row"
     assert merged[0].reference_statements[0].sql == "SELECT 1 AS value"
     assert merged[0].check_sql == "SELECT count(*) = 1"
+    assert merged[0].required_tools == ("query_semantic_model",)
+
+
+def test_agent_task_sidecar_rejects_malformed_required_tools(tmp_path):
+    tasks, _error = decode_agent_test_tasks(
+        TagSet({"vgi.agent_test_tasks": '[{"name":"lookup","prompt":"Find it"}]'})
+    )
+    sidecar = tmp_path / "vgi-agent-tests.yaml"
+    sidecar.write_text(
+        "tasks:\n  - name: lookup\n    required_tools: query_semantic_model\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="required_tools must be a list"):
+        merge_agent_task_sidecar(tasks, sidecar)
 
 
 def test_agent_task_sidecar_is_configurable():

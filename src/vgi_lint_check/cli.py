@@ -337,12 +337,240 @@ def lint(
 # --------------------------------------------------------------------------
 @app.command(name="spec")
 @click.option("--format", "fmt", type=click.Choice(["json"]), default="json")
-def spec_cmd(fmt: str) -> None:
+@click.option("--schema", "schema_name", default=None, help="Print one semantic JSON Schema.")
+def spec_cmd(fmt: str, schema_name: str | None) -> None:
     """Print the machine-readable VGI metadata tag contract."""
+    from .semantic_schema import export_bundle, schema
     from .tag_spec import contract
 
     if fmt == "json":
-        click.echo(json.dumps(contract(), indent=2, sort_keys=True))
+        try:
+            payload = (
+                schema(schema_name)
+                if schema_name
+                else {
+                    **contract(),
+                    "semantic_schemas": export_bundle(),
+                }
+            )
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@app.command(name="semantic")
+@click.argument("locations", nargs=-1, required=True)
+@click.option("--as", "aliases", multiple=True, help="Attachment alias, positionally paired.")
+@click.option("--install/--no-install", default=True)
+@click.option("--spatial/--no-spatial", default=True)
+@click.option(
+    "--require-resolved/--allow-unresolved",
+    default=False,
+    help="Fail when an asserted relationship cannot resolve in this attachment set.",
+)
+def semantic_cmd(
+    locations: tuple[str, ...],
+    aliases: tuple[str, ...],
+    install: bool,
+    spatial: bool,
+    require_resolved: bool,
+) -> None:
+    """Resolve semantic relationships across simultaneously attached workers."""
+    from .core import with_attached_catalogs
+    from .semantic_federation import build_federated_semantic_model
+    from .semantic_model import build_semantic_model, schema_diagnostics
+
+    validate_contract()
+    if aliases and len(aliases) != len(locations):
+        raise click.UsageError("repeat --as exactly once per LOCATION, or omit it")
+    specs: list[tuple[str, str | None, str | None]] = [
+        (location, None, aliases[index] if aliases else None)
+        for index, location in enumerate(locations)
+    ]
+
+    def resolve(catalogs: dict[str, Any], _connection: Any) -> dict[str, Any]:
+        graph = build_federated_semantic_model(catalogs)
+        catalog_summaries = []
+        for alias, catalog in catalogs.items():
+            identity = build_semantic_model(catalog).catalog or {}
+            catalog_summaries.append(
+                {
+                    "attachment_alias": alias,
+                    "catalog_id": identity.get("catalog_id"),
+                    "catalog_instance_id": identity.get("catalog_instance_id"),
+                }
+            )
+        schema_errors = [
+            {
+                "attachment_alias": alias,
+                "object": diagnostic.object_id.qualified(),
+                "code": diagnostic.code,
+                "message": diagnostic.message,
+            }
+            for alias, catalog in catalogs.items()
+            for diagnostic in schema_diagnostics(catalog)
+        ]
+        return {
+            "catalogs": catalog_summaries,
+            "entities": [
+                {
+                    "catalog_id": catalog_id,
+                    "entity_id": entity_id,
+                    "attachments": sorted(entity.host.database for entity in candidates),
+                }
+                for (catalog_id, entity_id), candidates in sorted(graph.entities.items())
+            ],
+            "relationships": [
+                {
+                    "relationship_id": relationship.relationship_id,
+                    "resolution_status": relationship.resolution_status,
+                    "attestation": relationship.attestation,
+                    "host_aliases": relationship.host_aliases,
+                    "definition": relationship.definition,
+                }
+                for relationship in graph.relationships.values()
+            ],
+            "diagnostics": [
+                {
+                    "object": diagnostic.object_id.qualified(),
+                    "code": diagnostic.code,
+                    "message": diagnostic.message,
+                }
+                for diagnostic in graph.diagnostics
+            ]
+            + schema_errors,
+        }
+
+    payload = with_attached_catalogs(specs, resolve, install=install, spatial=spatial)
+    click.echo(json.dumps(payload, indent=2, sort_keys=True))
+    bad_statuses = {"conflicted", "ambiguous", "unavailable"}
+    if require_resolved:
+        bad_statuses.add("unresolved")
+    if payload["diagnostics"] or any(
+        relationship["resolution_status"] in bad_statuses
+        for relationship in payload["relationships"]
+    ):
+        raise SystemExit(EXIT_FINDINGS)
+
+
+@app.command(name="semantic-simulate")
+@click.argument("locations", nargs=-1, required=True)
+@click.option("--as", "aliases", multiple=True, help="Attachment alias, positionally paired.")
+@click.option("--install/--no-install", default=True)
+@click.option("--spatial/--no-spatial", default=True)
+@click.option(
+    "--agent-tasks-file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Private YAML graders, including optional required_tools: [query_semantic_model].",
+)
+@click.option("--backend", "sim_backend", type=click.Choice(["claude", "api"]), default="claude")
+@click.option("--model", "sim_model", default=None)
+@click.option(
+    "--cache",
+    "cache_path",
+    type=click.Path(dir_okay=False),
+    default=".vgi-semantic-sim-cache.json",
+)
+@click.option("--no-cache", is_flag=True)
+@click.option("--max-steps", type=int, default=12)
+@click.option("--max-queries", type=int, default=10)
+@click.option("--attempts", type=int, default=1)
+@click.option("--query-timeout", type=float, default=30.0)
+@click.option("--row-limit", type=int, default=50)
+@click.option("--concurrency", type=int, default=4)
+@click.option("--session/--no-session", default=True)
+@click.option("--min-pass-rate", type=float, default=1.0)
+@click.option("--advisory", is_flag=True)
+@click.option("--format", "fmt", type=click.Choice(["terminal", "json"]), default="terminal")
+@click.option("--output", type=click.Path(dir_okay=False), default=None)
+@click.option("--traceback", is_flag=True)
+@click.pass_context
+def semantic_simulate_cmd(
+    ctx: click.Context,
+    locations: tuple[str, ...],
+    aliases: tuple[str, ...],
+    install: bool,
+    spatial: bool,
+    agent_tasks_file: str | None,
+    sim_backend: str,
+    sim_model: str | None,
+    cache_path: str,
+    no_cache: bool,
+    max_steps: int,
+    max_queries: int,
+    attempts: int,
+    query_timeout: float,
+    row_limit: int,
+    concurrency: int,
+    session: bool,
+    min_pass_rate: float,
+    advisory: bool,
+    fmt: str,
+    output: str | None,
+    traceback: bool,
+) -> None:
+    """Run an LLM analyst against a composed workers' semantic model."""
+    from . import simulate as sm
+    from .core import with_attached_catalogs
+    from .review import ReviewCache, make_backend
+    from .tags import merge_agent_task_sidecar
+
+    if aliases and len(aliases) != len(locations):
+        raise click.UsageError("repeat --as exactly once per LOCATION, or omit it")
+    specs: list[tuple[str, str | None, str | None]] = [
+        (location, None, aliases[index] if aliases else None)
+        for index, location in enumerate(locations)
+    ]
+    backend = make_backend(sim_backend, sim_model)
+    limits = sm.SimLimits(
+        max_steps=max_steps,
+        max_queries=max_queries,
+        attempts=attempts,
+        timeout=query_timeout,
+        row_limit=row_limit,
+        concurrency=concurrency,
+        sessions=session,
+    )
+
+    def run(catalogs: dict[str, Any], connection: Any) -> Any:
+        tasks = [task for catalog in catalogs.values() for task in catalog.agent_test_tasks]
+        names = [task.name for task in tasks]
+        if len(names) != len(set(names)):
+            raise ValueError("semantic task names must be unique across attached workers")
+        if agent_tasks_file:
+            tasks = merge_agent_task_sidecar(tasks, agent_tasks_file)
+        if not tasks:
+            raise ValueError("attached workers declare no vgi.agent_test_tasks")
+        cache = None if no_cache else ReviewCache(Path(cache_path)).load()
+        return sm.simulate_tasks(
+            list(catalogs.values()),
+            connection,
+            backend,
+            backend_name=sim_backend,
+            limits=limits,
+            cache=cache,
+            tasks=tasks,
+        )
+
+    try:
+        report = with_attached_catalogs(specs, run, install=install, spatial=spatial)
+    except WorkerConnectionError as exc:
+        click.secho(f"error: {exc}", fg="red", err=True)
+        ctx.exit(EXIT_CONNECTION)
+    except Exception as exc:  # noqa: BLE001 - top-level CLI guard
+        if traceback:
+            raise
+        click.secho(f"error: {type(exc).__name__}: {exc}", fg="red", err=True)
+        ctx.exit(EXIT_TOOL_ERROR)
+
+    text = sm.render_json(report) if fmt == "json" else sm.render_terminal(report)
+    if output:
+        Path(output).write_text(text if text.endswith("\n") else text + "\n")
+    else:
+        click.echo(text)
+    if not advisory and report.pass_rate < min_pass_rate:
+        ctx.exit(EXIT_FINDINGS)
 
 
 @app.command(name="rules")

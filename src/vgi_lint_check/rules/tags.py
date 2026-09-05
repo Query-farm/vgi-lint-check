@@ -14,6 +14,8 @@ from ..model import (
     TAG_CLASSIFICATION_TAGS,
     TAG_DOC_LLM,
     TAG_REQUIRED_FILTERS,
+    TAG_SEMANTIC_MEMBERS,
+    TAG_SEMANTIC_RELATIONSHIPS,
     Catalog,
     ObjectId,
     ObjectKind,
@@ -44,8 +46,12 @@ def _tagged_objects(catalog: Catalog) -> Iterator[tuple[ObjectId, TagSet]]:
         yield s.id, s.tags
     for t in catalog.iter_table_like():
         yield t.id, t.tags
+        for column in t.columns:
+            yield column.id, column.tags
     for f in catalog.iter_functions():
         yield f.id, f.tags
+        for column in f.native_result_columns:
+            yield column.id, column.tags
 
 
 def _all_objects(catalog: Catalog) -> Iterator[tuple[ObjectId, TagSet]]:
@@ -55,8 +61,12 @@ def _all_objects(catalog: Catalog) -> Iterator[tuple[ObjectId, TagSet]]:
         yield s.id, s.tags
     for t in catalog.iter_table_like():
         yield t.id, t.tags
+        for column in t.columns:
+            yield column.id, column.tags
     for f in catalog.iter_all_functions():
         yield f.id, f.tags
+        for column in f.native_result_columns:
+            yield column.id, column.tags
 
 
 @register
@@ -130,6 +140,7 @@ class UnknownVgiTagKey(Rule):
         ObjectKind.AGGREGATE,
         ObjectKind.MACRO,
         ObjectKind.TABLE_FUNCTION,
+        ObjectKind.COLUMN,
     )
     summary = "A 'vgi.*' tag key that isn't a recognized reserved key is likely a typo."
 
@@ -217,6 +228,7 @@ class AgentTestTasksPublicOnly(Rule):
             "check_sql",
             "unordered",
             "ignore_column_names",
+            "required_tools",
         }
         for index, task in enumerate(ctx.catalog.agent_test_tasks):
             raw = task.raw if isinstance(task.raw, dict) else {}
@@ -247,6 +259,7 @@ class AgentContextValueBounded(Rule):
         ObjectKind.AGGREGATE,
         ObjectKind.MACRO,
         ObjectKind.TABLE_FUNCTION,
+        ObjectKind.COLUMN,
     )
     summary = "Metadata values should fit the bounded context exposed by agent tools."
 
@@ -255,7 +268,16 @@ class AgentContextValueBounded(Rule):
             for key, value in tags.raw.items():
                 if key == "vgi.agent_test_tasks":
                     continue
-                limit = 8_000 if key == TAG_DOC_LLM and oid.kind is ObjectKind.CATALOG else 4_000
+                if key in {TAG_SEMANTIC_MEMBERS, TAG_SEMANTIC_RELATIONSHIPS}:
+                    # DuckDB 1.5 has no column tags, so a complete member model
+                    # must be packed on its relation/function host. It is consumed
+                    # structurally and paged/summarized by agent tools, not copied
+                    # into prompts as one raw tag value.
+                    limit = 65_536
+                else:
+                    limit = (
+                        8_000 if key == TAG_DOC_LLM and oid.kind is ObjectKind.CATALOG else 4_000
+                    )
                 if len(value) > limit:
                     yield self.finding(
                         ctx,

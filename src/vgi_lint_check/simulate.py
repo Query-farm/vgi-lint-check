@@ -28,6 +28,11 @@ from typing import Any
 from .model import (
     TAG_DOC_LLM,
     TAG_REQUIRED_FILTERS,
+    TAG_SEMANTIC_CATALOG,
+    TAG_SEMANTIC_ENTITY,
+    TAG_SEMANTIC_MEMBER,
+    TAG_SEMANTIC_MEMBERS,
+    TAG_SEMANTIC_RELATIONSHIPS,
     AgentTask,
     Catalog,
     Function,
@@ -95,6 +100,7 @@ class TaskStep:
     cols: list[str] = field(default_factory=list)
     rows: list[Any] = field(default_factory=list)
     blocked: bool = False  # rejected by the safe-SQL guard
+    action: str = "run_sql"
 
 
 @dataclass
@@ -138,6 +144,8 @@ class TaskRun:
     friction: list[str]
     discovery: list[TraceEvent] = field(default_factory=list)
     hit_ceiling: bool = False  # exhausted the step budget without a final answer
+    actions: list[str] = field(default_factory=list)
+    answer_result: tuple[list[str], list[Any]] | None = None
 
 
 @dataclass
@@ -314,6 +322,17 @@ def _catalogs(value: CatalogCollection) -> list[Catalog]:
     return [value] if isinstance(value, Catalog) else list(value)
 
 
+def _semantic_tag(tags: Any, key: str) -> Any:
+    """Decode one semantic JSON tag for discovery, without surfacing malformed raw text."""
+    raw = tags.get(key)
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _resolve_catalog(
     value: CatalogCollection, requested: str | None
 ) -> tuple[Catalog | None, dict[str, Any] | None]:
@@ -347,6 +366,8 @@ def tool_list_catalogs(
             "schema_count": len(list(catalog.iter_schemas())),
             "object_count": len(list(catalog.iter_table_like()))
             + len(list(catalog.iter_all_functions())),
+            "semantic_catalog": _semantic_tag(catalog.tags, TAG_SEMANTIC_CATALOG),
+            "semantic_relationships": _semantic_tag(catalog.tags, TAG_SEMANTIC_RELATIONSHIPS),
         }
         for index, catalog in enumerate(_catalogs(catalogs))
     ]
@@ -545,6 +566,14 @@ def tool_describe_table(
                     {"name": c.name, "type": c.data_type, "comment": c.comment} for c in t.columns
                 ],
                 "examples": [e.sql[:4_000] for e in t.examples[:5] if e.sql],
+                "semantic_entity": _semantic_tag(t.tags, TAG_SEMANTIC_ENTITY),
+                "semantic_members": _semantic_tag(t.tags, TAG_SEMANTIC_MEMBERS),
+                "semantic_relationships": _semantic_tag(t.tags, TAG_SEMANTIC_RELATIONSHIPS),
+                "semantic_column_members": {
+                    c.name: member
+                    for c in t.columns
+                    if (member := _semantic_tag(c.tags, TAG_SEMANTIC_MEMBER)) is not None
+                },
             }
     return {"error": f"no table {schema}.{table!r} — call list_tables to see what exists"}
 
@@ -634,12 +663,22 @@ def tool_describe_function(
                         "type": a.type,
                         "description": a.description,
                         "calling": _arg_calling(a),
+                        **({"position": a.position} if a.position is not None else {}),
+                        **({"field_index": a.field_index} if a.field_index is not None else {}),
                         **({"varargs": True} if a.is_varargs else {}),
                         **_arg_constraints(a),
                     }
                     for a in f.arguments
                 ],
                 "examples": [e.sql[:4_000] for e in f.examples[:5] if e.sql],
+                "semantic_entity": _semantic_tag(f.tags, TAG_SEMANTIC_ENTITY),
+                "semantic_members": _semantic_tag(f.tags, TAG_SEMANTIC_MEMBERS),
+                "semantic_relationships": _semantic_tag(f.tags, TAG_SEMANTIC_RELATIONSHIPS),
+                "semantic_column_members": {
+                    c.name: member
+                    for c in f.native_result_columns
+                    if (member := _semantic_tag(c.tags, TAG_SEMANTIC_MEMBER)) is not None
+                },
             }
             usage = _usage_hint(catalog, schema, name, f.arguments)
             if usage:
@@ -661,6 +700,34 @@ def tool_run_sql(cur: Any, sql: str, limits: SimLimits) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001 - relayed to the analyst as an observation
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
     return {"ok": True, "columns": cols, "rows": _render_result(cols, rows), "row_count": len(rows)}
+
+
+def tool_query_semantic_model(
+    catalogs: CatalogCollection,
+    cur: Any,
+    request: dict[str, Any],
+    limits: SimLimits,
+) -> dict[str, Any]:
+    """Compile and optionally execute the canonical semantic-query tool request."""
+    from .semantic_compiler import execute_semantic_query
+
+    query = dict(request)
+    if query.get("compile_only") is not True:
+        requested_limit = query.get("limit", limits.row_limit)
+        if isinstance(requested_limit, int) and not isinstance(requested_limit, bool):
+            query["limit"] = min(requested_limit, limits.row_limit)
+    by_alias = {catalog.qualifier: catalog for catalog in _catalogs(catalogs)}
+    result = execute_semantic_query(by_alias, cur, query)
+    payload = result.get("result")
+    if result.get("ok") and isinstance(payload, dict):
+        columns = [str(value) for value in payload.get("columns", [])]
+        rows = list(payload.get("rows", []))
+        result["result"] = {
+            "columns": columns,
+            "rows": _render_result(columns, rows),
+            "row_count": len(rows),
+        }
+    return result
 
 
 # --------------------------------------------------------------------------
@@ -766,6 +833,11 @@ _ACTOR = (
     "  — signature, description, and per-argument docs for one function\n"
     '  {"thought":"...","action":"run_sql","sql":"<one SQL statement>"}'
     "  — run one read-only / session-local statement (SELECT, WITH, temp view)\n"
+    '  {"thought":"...","action":"query_semantic_model","measures":[{"catalog_id":"...",'
+    '"entity_id":"...","member_id":"..."}],"dimensions":[],"filters":{...}?,'
+    '"order":[]?,"limit":50?,"bindings":{...}?,"parameters":{...}?,"compile_only":false?}'
+    "  — compile and execute modeled measures/dimensions using the stable IDs shown by "
+    "list_catalogs and describe tools\n"
     '  {"thought":"...","action":"final","answer_sql":"<SELECT whose result IS the answer>",'
     '"answer_summary":"...","friction":["missing/confusing metadata, else omit"]}\n\n'
     "RULES (mirror real-agent best practice):\n"
@@ -778,6 +850,9 @@ _ACTOR = (
     "to bind.\n"
     "- Prefer the query shape of the examples describe_table/describe_function return.\n"
     "- Do ALL arithmetic in SQL; combine data with JOINs in SQL.\n"
+    "- Prefer query_semantic_model when the requested concepts are present in semantic metadata; "
+    "it applies declared measures, relationships, and required filters. Never rewrite its compiled "
+    "SQL or silently fall back to run_sql after a semantic diagnostic.\n"
     "- Avoid SELECT * in your final answer; select only the columns the task needs.\n"
     "- The orientation listing below is just a starting map — drill in with the tools."
 )
@@ -826,11 +901,14 @@ def _dispatch(
         )
     if kind == "run_sql":
         return tool_run_sql(cur, str(action.get("sql") or "").strip(), limits)
+    if kind == "query_semantic_model":
+        request = {key: value for key, value in action.items() if key not in {"action", "thought"}}
+        return tool_query_semantic_model(catalog, cur, request, limits)
     return {"error": f"unknown action {kind!r}"}
 
 
 def run_task(
-    catalog: Catalog,
+    catalog: CatalogCollection,
     con: Any,
     backend: ReviewBackend,
     task: AgentTask,
@@ -853,6 +931,8 @@ def run_task(
     friction: list[str] = []
     finished = False
     queries = 0
+    actions: list[str] = []
+    answer_result: tuple[list[str], list[Any]] | None = None
     message = (
         f"{_ACTOR}\n\nORIENTATION (names only — use the tools for detail):\n{listing}\n\n"
         f"TASK: {task.prompt}\n\nBegin: reply with your first JSON action."
@@ -865,6 +945,8 @@ def run_task(
         if not isinstance(action, dict):
             break
         kind = action.get("action")
+        if isinstance(kind, str):
+            actions.append(kind)
         if kind == "final":
             answer_sql = _as_sql_list(action.get("answer_sql"))
             summary = str(action.get("answer_summary") or "")
@@ -891,6 +973,53 @@ def run_task(
                 )
             queries += 1
             message = _observation("run_sql", result)
+            if queries >= limits.max_queries:
+                break
+            continue
+        if kind == "query_semantic_model":
+            result = _dispatch(catalog, cur, action, limits)
+            plan: dict[str, Any] = result["plan"] if isinstance(result.get("plan"), dict) else {}
+            payload: dict[str, Any] = (
+                result["result"] if isinstance(result.get("result"), dict) else {}
+            )
+            if result.get("ok") and payload:
+                columns = [str(value) for value in payload.get("columns", [])]
+                rows = list(payload.get("rows", []))
+                answer_result = (columns, rows)
+                steps.append(
+                    TaskStep(
+                        sql=str(plan.get("sql", "")),
+                        ok=True,
+                        cols=columns,
+                        rows=rows,
+                        action="query_semantic_model",
+                    )
+                )
+            elif result.get("ok"):
+                steps.append(
+                    TaskStep(
+                        sql=str(plan.get("sql", "")),
+                        ok=True,
+                        action="query_semantic_model",
+                    )
+                )
+            else:
+                diagnostics = result.get("diagnostics") or []
+                message_text = "; ".join(
+                    str(item.get("message", item)) if isinstance(item, dict) else str(item)
+                    for item in diagnostics
+                )
+                steps.append(
+                    TaskStep(
+                        sql=str(plan.get("sql", "")),
+                        ok=False,
+                        error=message_text or "semantic query failed",
+                        error_kind="runtime",
+                        action="query_semantic_model",
+                    )
+                )
+            queries += 1
+            message = _observation("query_semantic_model", result)
             if queries >= limits.max_queries:
                 break
             continue
@@ -927,6 +1056,8 @@ def run_task(
         friction=friction,
         discovery=discovery,
         hit_ceiling=not finished,
+        actions=actions,
+        answer_result=answer_result,
     )
     run._cur = cur  # type: ignore[attr-defined]
     return run
@@ -950,6 +1081,13 @@ def _render_actual(cols: list[str], rows: list[Any], limit: int = 400) -> str:
     except (TypeError, ValueError):
         text = repr(rows[:20])
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _unrender_rows(cols: list[str], rows: list[Any]) -> list[Any]:
+    """Turn simulator-facing row objects back into ordered cells for grading."""
+    return [
+        tuple(row.get(column) for column in cols) if isinstance(row, dict) else row for row in rows
+    ]
 
 
 _JUDGE = (
@@ -977,18 +1115,31 @@ def grade_task(
             grader=grader,
         )
 
+    successful_tools = {step.action for step in run.steps if step.ok}
+    successful_tools.update(event.kind for event in run.discovery if event.found)
+    missing_tools = sorted(set(task.required_tools) - successful_tools)
+    if missing_tools:
+        return mk(
+            "fail",
+            f"analyst did not successfully use required tool(s): {', '.join(missing_tools)}",
+            "required_tools",
+        )
+
     # Tier 1 — deterministic: compare the agent's answer to the reference's terminal output.
     if task.reference_statements:
         try:
             expected = _terminal_result(con.cursor(), task.reference_statements, limits.timeout)
         except Exception as e:  # noqa: BLE001 - a broken reference is an authoring bug
             return mk("fail", f"reference_sql failed: {e}", "reference")
-        if not run.answer_sql:
-            return mk("fail", "analyst gave no answer query", "reference")
-        try:
-            actual = _run(cur, _wrap_limit(run.answer_sql[0], _ANSWER_LIMIT), limits.timeout)
-        except Exception as e:  # noqa: BLE001
-            return mk("fail", f"answer query failed: {e}", "reference")
+        if run.answer_sql:
+            try:
+                actual = _run(cur, _wrap_limit(run.answer_sql[0], _ANSWER_LIMIT), limits.timeout)
+            except Exception as e:  # noqa: BLE001
+                return mk("fail", f"answer query failed: {e}", "reference")
+        elif run.answer_result is not None:
+            actual = (run.answer_result[0], _unrender_rows(*run.answer_result))
+        else:
+            return mk("fail", "analyst gave no answer query or semantic result", "reference")
         ok = _resultsets_equal(
             expected,
             actual,
@@ -1021,6 +1172,8 @@ def grade_task(
                 )
             except Exception:  # noqa: BLE001
                 result_text = "(answer query failed)"
+        elif run.answer_result is not None:
+            result_text = _render_actual(run.answer_result[0], _unrender_rows(*run.answer_result))
         prompt = _JUDGE.format(
             task=task.prompt,
             criteria=task.success_criteria,
@@ -1037,7 +1190,7 @@ def grade_task(
             return mk("fail", "judge returned no verdict", "judge")
 
     # No oracle: pass if a final answer is backed by ≥1 successful query.
-    answered = bool(run.answer_sql) and any(s.ok for s in run.steps)
+    answered = bool(run.answer_sql or run.answer_result) and any(s.ok for s in run.steps)
     return mk(
         "pass" if answered else "fail",
         "produced an answer (no reference to verify against)" if answered else "no answer produced",
@@ -1146,18 +1299,19 @@ def build_suggestions(run: TaskRun, m: PathMetrics) -> list[str]:
 # Suite runner + cache
 # --------------------------------------------------------------------------
 def _task_key(overview: str, task: AgentTask, data_version: str | None, salt: str = "") -> str:
-    blob = json.dumps([salt, overview, task.raw, data_version], sort_keys=True, default=str)
+    blob = json.dumps([salt, overview, asdict(task), data_version], sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
 def simulate_tasks(
-    catalog: Catalog,
+    catalog: CatalogCollection,
     con: Any,
     backend: ReviewBackend,
     *,
     backend_name: str = "claude",
     limits: SimLimits | None = None,
     cache: ReviewCache | None = None,
+    tasks: list[AgentTask] | None = None,
 ) -> SimReport:
     """Run every declared task (with retries) and aggregate a suitability report.
 
@@ -1168,6 +1322,12 @@ def simulate_tasks(
     limits = limits or SimLimits()
     listing = build_listing(catalog)
     salt = backend_fingerprint(backend)
+    catalogs = _catalogs(catalog)
+    task_list = (
+        tasks
+        if tasks is not None
+        else [task for item in catalogs for task in item.agent_test_tasks]
+    )
 
     def judge(task: AgentTask) -> TaskVerdict:
         best: TaskVerdict | None = None
@@ -1188,11 +1348,12 @@ def simulate_tasks(
         return best
 
     # Resolve cache hits up front; collect the misses (with their slot + key) to judge.
-    slots: list[TaskVerdict | None] = [None] * len(catalog.agent_test_tasks)
+    slots: list[TaskVerdict | None] = [None] * len(task_list)
     misses: list[tuple[int, AgentTask, str]] = []
     cached = 0
-    for i, task in enumerate(catalog.agent_test_tasks):
-        key = _task_key(listing, task, catalog.data_version, salt)
+    data_version = ",".join(str(item.data_version or "") for item in catalogs)
+    for i, task in enumerate(task_list):
+        key = _task_key(listing, task, data_version, salt)
         hit = _cache_get(cache, key)
         if hit is not None:
             slots[i] = hit
@@ -1218,7 +1379,12 @@ def simulate_tasks(
         cache.save()
     verdicts = [v for v in slots if v is not None]
     return SimReport(
-        catalog.location, backend_name, verdicts, len(misses), cached, compute_coverage(catalog)
+        ", ".join(item.location for item in catalogs),
+        backend_name,
+        verdicts,
+        len(misses),
+        cached,
+        compute_collection_coverage(catalogs, task_list),
     )
 
 
@@ -1286,6 +1452,16 @@ def _suite_sql(catalog: Catalog) -> str:
     return " ".join(parts).lower()
 
 
+def _tasks_sql(tasks: list[AgentTask]) -> str:
+    """All private SQL graders across an explicit task collection."""
+    parts: list[str] = []
+    for task in tasks:
+        parts.extend(statement.sql or "" for statement in task.reference_statements)
+        if task.check_sql:
+            parts.append(task.check_sql)
+    return " ".join(parts).lower()
+
+
 def _referenced(text: str, objects: list[tuple[str, str]]) -> set[str]:
     """Qualified names from ``objects`` whose bare name appears in ``text`` (a call)."""
     low = text.lower()
@@ -1299,6 +1475,16 @@ def compute_coverage(catalog: Catalog) -> Coverage:
     covered = [q for q, _ in objects if q in hit]
     uncovered = [q for q, _ in objects if q not in hit]
     return Coverage(covered=covered, uncovered=uncovered)
+
+
+def compute_collection_coverage(catalogs: list[Catalog], tasks: list[AgentTask]) -> Coverage:
+    """Coverage for a composed attachment set and its combined task suite."""
+    objects = sorted(item for catalog in catalogs for item in _unique_objects(catalog))
+    hit = _referenced(_tasks_sql(tasks), objects)
+    return Coverage(
+        covered=[qualified for qualified, _name in objects if qualified in hit],
+        uncovered=[qualified for qualified, _name in objects if qualified not in hit],
+    )
 
 
 # --------------------------------------------------------------------------

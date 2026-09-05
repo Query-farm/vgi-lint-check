@@ -47,12 +47,13 @@ def exec_example(index, description, statements, *, name=None):
     return ExecutableExample(index=index, name=name, description=description, statements=stmts)
 
 
-def col(schema, table, name, comment=None, dtype="VARCHAR"):
+def col(schema, table, name, comment=None, dtype="VARCHAR", tags=None):
     return Column(
         id=ObjectId("v", ObjectKind.COLUMN, schema=schema, name=table, column=name),
         name=name,
         data_type=dtype,
         comment=comment,
+        tags=TagSet(dict(tags or {})),
     )
 
 

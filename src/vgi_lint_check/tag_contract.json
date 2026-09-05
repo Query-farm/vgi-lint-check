@@ -21,7 +21,12 @@
     {"symbol":"TAG_LICENSE","key":"vgi.license","format":"text","scopes":["catalog"]},
     {"symbol":"TAG_SUPPORT_CONTACT","key":"vgi.support_contact","format":"text","scopes":["catalog"]},
     {"symbol":"TAG_SUPPORT_POLICY_URL","key":"vgi.support_policy_url","format":"url","scopes":["catalog"]},
-    {"symbol":"TAG_ICON_URL","key":"vgi.icon_url","format":"url","scopes":["catalog"]}
+    {"symbol":"TAG_ICON_URL","key":"vgi.icon_url","format":"url","scopes":["catalog"]},
+    {"symbol":"TAG_SEMANTIC_CATALOG","key":"vgi.semantic_catalog","format":"json","scopes":["catalog"],"schema":"catalog"},
+    {"symbol":"TAG_SEMANTIC_ENTITY","key":"vgi.semantic_entity","format":"json","scopes":["table","view","function"],"schema":"entity"},
+    {"symbol":"TAG_SEMANTIC_MEMBERS","key":"vgi.semantic_members","format":"json","scopes":["table","view","function"],"schema":"members"},
+    {"symbol":"TAG_SEMANTIC_MEMBER","key":"vgi.semantic_member","format":"json","scopes":["column"],"schema":"member"},
+    {"symbol":"TAG_SEMANTIC_RELATIONSHIPS","key":"vgi.semantic_relationships","format":"json","scopes":["catalog","table","view","function"],"schema":"relationships"}
   ],
   "aliases": [
     {"symbol":"TAG_DESCRIPTION_LLM","key":"vgi.description_llm","canonical":"vgi.doc_llm"},

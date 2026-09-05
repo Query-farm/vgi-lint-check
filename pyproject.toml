@@ -1,6 +1,6 @@
 [project]
 name = "vgi-lint-check"
-version = "0.82.0"
+version = "0.84.0"
 description = "A pydoclint-style metadata-quality linter for VGI workers."
 readme = "README.md"
 keywords = [
@@ -48,6 +48,7 @@ dependencies = [
     # workers publish in vgi_catalogs() release metadata.
     "pytz>=2024.1",
     "pyyaml>=6",
+    "jsonschema>=4",
 ]
 
 [project.urls]
@@ -62,11 +63,11 @@ vgi-lint = "vgi_lint_check.cli:app"
 dev = [
     "pytest>=8",
     "twine>=5",
-    "jsonschema>=4",
     "ruff>=0.6",
     "mypy>=1.11",
     "pydoclint>=0.5",
     "types-pyyaml>=6.0.12.20260518",
+    "types-jsonschema>=4",
 ]
 
 [tool.uv]
@@ -75,6 +76,7 @@ prerelease = "allow"
 [tool.pytest.ini_options]
 markers = [
     "live: tests that attach to a running VGI worker (network/subprocess); skipped by default",
+    "ai: tests that call the Anthropic API; skipped by default",
 ]
 
 # --- tooling adopted from vgi-python --------------------------------------

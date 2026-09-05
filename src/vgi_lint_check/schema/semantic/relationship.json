@@ -1,0 +1,10 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://query.farm/schema/vgi/semantic/relationship.json",
+  "type":"object","additionalProperties":false,"required":["relationship_id","from","to","from_cardinality","to_cardinality","predicate"],
+  "properties":{
+    "relationship_id":{"$ref":"definitions.json#/$defs/semantic_id"},"title":{"type":"string"},"description":{"type":"string"},
+    "from":{"$ref":"definitions.json#/$defs/entity_ref"},"to":{"$ref":"definitions.json#/$defs/entity_ref"},
+    "from_cardinality":{"$ref":"definitions.json#/$defs/cardinality"},"to_cardinality":{"$ref":"definitions.json#/$defs/cardinality"},
+    "predicate":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","additionalProperties":false,"required":["from_member","to_member"],"properties":{"from_member":{"$ref":"definitions.json#/$defs/semantic_id"},"to_member":{"$ref":"definitions.json#/$defs/semantic_id"},"nulls":{"enum":["not_equal","equal"],"default":"not_equal"}}}}
+  }
+}

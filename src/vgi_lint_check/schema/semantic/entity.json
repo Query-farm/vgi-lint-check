@@ -1,0 +1,13 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://query.farm/schema/vgi/semantic/entity.json",
+  "type":"object","additionalProperties":false,"required":["entity_id","grain"],
+  "properties":{
+    "entity_id":{"$ref":"definitions.json#/$defs/semantic_id"},
+    "title":{"type":"string","minLength":1,"maxLength":200},
+    "description":{"type":"string","minLength":1,"maxLength":4000},
+    "grain":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"definitions.json#/$defs/semantic_id"}},
+    "default_time_dimension":{"$ref":"definitions.json#/$defs/semantic_id"},
+    "source":{"type":"object","additionalProperties":false,"properties":{"arguments":{"type":"array","maxItems":50,"items":{"$ref":"definitions.json#/$defs/source_argument"}}}}
+  }
+}

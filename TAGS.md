@@ -69,6 +69,10 @@ columns/returns, caveats, and examples.
 | `vgi.source_url` | ◦ rec | ◦ | ◦ | |
 | `vgi.author` / `vgi.copyright` / `vgi.license` | ◦ rec | | | |
 | `vgi.support_contact` / `vgi.support_policy_url` | ◦ rec | | | |
+| `vgi.semantic_catalog` | ◦ | | | |
+| `vgi.semantic_entity` / `vgi.semantic_members` | | | ◦ | ◦ table_function |
+| `vgi.semantic_member` | | | ◦ column | |
+| `vgi.semantic_relationships` | ◦ | | ◦ | ◦ table_function |
 
 \* `req` on tables/views/functions is the **strict default** (VGI112/VGI113); relax via config.
 
@@ -335,6 +339,15 @@ The old key keeps working (it transparently resolves to the canonical key) but
 
 ## 9. Namespace rules & invariants
 
+### Semantic model tags
+
+VGI also reserves `vgi.semantic_catalog`, `vgi.semantic_entity`,
+`vgi.semantic_members`, `vgi.semantic_member`, and `vgi.semantic_relationships` for a federated
+measure/dimension model. Their JSON Schemas, identity rules, relationship reconciliation and
+compiler contract are specified in [`docs/semantic-model.md`](docs/semantic-model.md). Agents and
+human worker authors should follow
+[`docs/semantic-model-authoring.md`](docs/semantic-model-authoring.md).
+
 - **The `vgi.*` namespace is framework-owned.** A `vgi.*` key that is not one of
   the reserved keys above is treated as a typo (VGI404, with a did-you-mean hint).
   Do not invent new `vgi.*` keys — use a free-form (non-prefixed) key instead.
@@ -362,19 +375,19 @@ The old key keeps working (it transparently resolves to the canonical key) but
 ```python
 # Schema-level tags
 {
-  "vgi.title": "Calendar — main",
-  "vgi.doc_llm": "Holiday, business-day, recurrence, and trading-calendar helpers …",
-  "vgi.doc_md": "## Calendar functions\n\n…",
-  "vgi.keywords": "[\"holiday\",\"business day\",\"trading day\",\"iso week\"]",
-  "vgi.categories": "[{\"name\":\"holidays\",\"title\":\"Holidays\",\"description\":\"Public-holiday tests and names.\"},{\"name\":\"trading\",\"title\":\"Trading calendars\",\"description\":\"Exchange sessions and market hours.\"}]",
-  "domain": "date-and-time"
+    "vgi.title": "Calendar — main",
+    "vgi.doc_llm": "Holiday, business-day, recurrence, and trading-calendar helpers …",
+    "vgi.doc_md": "## Calendar functions\n\n…",
+    "vgi.keywords": '["holiday","business day","trading day","iso week"]',
+    "vgi.categories": '[{"name":"holidays","title":"Holidays","description":"Public-holiday tests and names."},{"name":"trading","title":"Trading calendars","description":"Exchange sessions and market hours."}]',
+    "domain": "date-and-time",
 }
 
 # A function in that schema
 {
-  "vgi.doc_llm": "True when a date is a public holiday in a country …",
-  "vgi.doc_md": "## is_holiday\n\n…",
-  "vgi.category": "holidays",
-  "vgi.classification_tags": "[\"calendar\",\"lookup\"]"
+    "vgi.doc_llm": "True when a date is a public holiday in a country …",
+    "vgi.doc_md": "## is_holiday\n\n…",
+    "vgi.category": "holidays",
+    "vgi.classification_tags": '["calendar","lookup"]',
 }
 ```

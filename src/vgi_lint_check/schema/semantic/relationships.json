@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://query.farm/schema/vgi/semantic/relationships.json","type":"array","maxItems":500,"items":{"$ref":"relationship.json"}}
