@@ -20,7 +20,7 @@ reserved keys are:
 | `vgi.semantic_entity` | table, view, table function | Entity identity, grain and source arguments |
 | `vgi.semantic_members` | table, view, table function | Packed member array, available on DuckDB 1.5 |
 | `vgi.semantic_member` | column | Native member metadata, available when DuckDB exposes column tags |
-| `vgi.semantic_relationships` | catalog, entity host | Relationship assertions |
+| `vgi.semantic_relationships` | catalog, or a table/view/table function carrying `vgi.semantic_entity` | Relationship assertions |
 
 Consumers must feature-detect whether `duckdb_columns()` returns `tags`; they must not branch on
 a DuckDB version string. When a packed and native carrier define the same member, identical values
@@ -43,9 +43,11 @@ A federation catalog may assert a relationship between two catalogs it does not 
 
 ## Entities and members
 
-An entity has a globally meaningful `(catalog_id, entity_id)` identity and an explicit grain. Every
-grain member must be a physical `identifier`. Members have stable IDs independent of physical
-column names:
+An entity has a globally meaningful `(catalog_id, entity_id)` identity and an explicit grain. Its
+physical carrier—the object tagged with `vgi.semantic_entity`—is a table, view, or table function.
+This carrier is sometimes called the entity host in implementation code; it is not a separate kind
+of semantic object. Every grain member must be a physical `identifier`. Members have stable IDs
+independent of physical column names:
 
 - `identifier`: a key that may participate in grain or relationships.
 - `dimension`: a physical or calculated grouping/filtering attribute.
@@ -61,10 +63,11 @@ aggregates are not part of the contract. `output_type` is optional and means an 
 Additivity is `additive`, `non_additive`, or `semi_additive` with prohibited dimensions. An explicit
 annotation may only be more restrictive than what an aggregation implies.
 
-Parameterized root table functions map source argument names to semantic query parameters. A table
-function reached through a relationship must initially be zero-argument; correlated/per-row table
-functions are not supported. An absent optional mapping is omitted from the call so the function's
-own default remains effective.
+Parameterized table functions map source argument names to semantic query parameters. A query may
+override selected mappings with query-local input columns or members of one explicit driving entity.
+This creates a correlated `CROSS JOIN LATERAL` invocation edge. It is dataflow that constructs fact
+rows, not a semantic relationship. An absent optional scalar mapping is omitted from the call so the
+function's own default remains effective.
 
 The semantic tag does not declare whether an argument is positional or named. The compiler resolves
 each `source.arguments[].argument` against the table function's live
@@ -78,6 +81,12 @@ request would omit an earlier optional positional argument while supplying a lat
 required physical argument must have a semantic mapping. A mapping marked `required: false` is only
 valid when the physical argument has a default. These restrictions can be relaxed later without
 changing the tag representation.
+
+Column-driven bindings additionally require the function-level `input_from_args` capability exposed
+by `vgi_function_arguments()`. Workers using `defineRowTransformFunction()` advertise it through
+`FunctionInfo`; semantic authors must not duplicate it in a tag. Only positional, non-constant
+arguments may be column-driven. Scalar parameters may bind compatible positional or named
+arguments.
 
 ## Relationships and federation
 
@@ -121,6 +130,52 @@ multi-fact compiler can independently aggregate branches, require conformed dime
 semantics, full-outer-join at a common grain, apply an explicit missing-value policy, and then
 calculate cross-fact measures without changing the request shape.
 
+### Correlated inputs and invocation pipelines
+
+`inputs` declares bounded, typed, query-local row sets. Every input has an `input_id`, typed columns,
+one or more grain columns, and rows. Row widths must match; grain values must be non-null and unique.
+The compiler casts every placeholder to its declared DuckDB type. A request is limited to 100 rows
+per input, 32 columns, 3,200 total cells and one megabyte of serialized row data.
+
+`source_bindings` is an ordered-independent, acyclic dataflow graph. Each entry identifies a table-
+function entity, exactly one driver, and physical-argument overrides. A driver is either an inline
+`input_id` or a semantic entity with a required `max_rows` bound. An entity driver may declare
+semantic `filters` and member `order`; both are compiled inside the bounded driver subquery before
+the lateral call. A required filter on a driver must be satisfied there, not after expansion.
+Argument bindings are exactly one
+of `{parameter}`, `{input_column}`, or `{member}`. Member references must belong to the declared
+driver and initially must be physical column-backed members with a known compatible type.
+
+Each table function has at most one driver. Every binding must lie on the selected fact root's
+invocation path. The current single-fact compiler supports one linear path of up to ten functions;
+that is sufficient for input → forecast, sites → forecast, and input → geocoding → forecast. Cycles,
+unbound function drivers, multiple inline roots, unrelated bindings, named/constant correlated
+arguments, and incompatible types fail closed.
+
+The compiler emits one bounded CTE per stage and preserves earlier rows as nested structs. This
+keeps member provenance unambiguous across catalogs and lets a later function consume a prior
+function's output without inventing a business relationship. Dimensions on any entity along the
+selected invocation path may be selected directly; no semantic relationship is required between a
+driver and the function it invokes. `max_output_rows` bounds each lateral stage and defaults to
+10,000. `execution_limits.max_invocations` defaults to 100; an explicit request
+may raise or lower it but never above the hard ceiling of 1,000. It counts correlated input rows,
+not provider HTTP requests.
+
+For a correlated function:
+
+```text
+effective source grain = all upstream driving grains + function output grain
+```
+
+Driving grain columns are automatically selected and grouped by default. For locations driving an
+hourly forecast, that means `location_id + time_key`; time alone cannot identify a row across
+locations. `allow_driving_grain_reduction: true` explicitly permits an aggregation to remove the
+upstream grain. The plan reports `effective_source_grain`, final `result_grain`, every invocation and
+its argument bindings, estimated invocations, and whether driving grain was reduced.
+
+Ordinary semantic relationships may enrich the final fact root after invocation and retain all
+existing cardinality/fanout checks. They do not drive table-function arguments.
+
 Generated SQL uses deterministic aliases (`_e0`, `_e1`, ...), quoted identifiers and positional
 parameters. Filters on dimensions are applied before aggregation; measure filters use `HAVING`.
 Ordering may reference selected output names only. Limit defaults to 1,000 and is capped at 10,000.
@@ -135,7 +190,8 @@ semantic filter or an explicitly mapped source argument. A join predicate or `HA
 does not satisfy a source required filter.
 
 Failures are structured by stage: `request_validation`, `model_resolution`,
-`multi_fact_not_supported`, `catalog_binding`, `relationship_resolution`, `type_check`, `fanout`,
+`multi_fact_not_supported`, `catalog_binding`, `relationship_resolution`, `source_binding`,
+`execution_limit`, `type_check`, `fanout`,
 `required_filter`, `sql_generation`, and `duckdb_execution`. The tool never silently falls back to
 `run_sql`.
 

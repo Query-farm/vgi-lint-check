@@ -653,6 +653,8 @@ def tool_describe_function(
                 "name": name,
                 "qualified_name": f"{catalog.qualifier}.{schema}.{name}",
                 "function_type": f.function_type,
+                "input_from_args": f.input_from_args,
+                "supports_correlated_input": f.input_from_args,
                 "description": f.description or f.comment,
                 "doc_llm": f.tags.get(TAG_DOC_LLM),
                 **({"category": f.category} if f.category else {}),
@@ -835,9 +837,13 @@ _ACTOR = (
     "  — run one read-only / session-local statement (SELECT, WITH, temp view)\n"
     '  {"thought":"...","action":"query_semantic_model","measures":[{"catalog_id":"...",'
     '"entity_id":"...","member_id":"..."}],"dimensions":[],"filters":{...}?,'
-    '"order":[]?,"limit":50?,"bindings":{...}?,"parameters":{...}?,"compile_only":false?}'
+    '"order":[]?,"limit":50?,"bindings":{...}?,"parameters":{...}?,"inputs":[]?,'
+    '"source_bindings":[]?,"execution_limits":{...}?,"compile_only":false?}'
     "  — compile and execute modeled measures/dimensions using the stable IDs shown by "
     "list_catalogs and describe tools\n"
+    "    Correlated shape: inputs=[{input_id,grain,columns:[{name,type,nullable?}],rows}], "
+    "source_bindings=[{entity,driver:{input_id}|{entity,max_rows,filters?,order?},"
+    "arguments:{physical_arg:{input_column}|{member}|{parameter}},max_output_rows?}]\n"
     '  {"thought":"...","action":"final","answer_sql":"<SELECT whose result IS the answer>",'
     '"answer_summary":"...","friction":["missing/confusing metadata, else omit"]}\n\n'
     "RULES (mirror real-agent best practice):\n"
@@ -852,7 +858,10 @@ _ACTOR = (
     "- Do ALL arithmetic in SQL; combine data with JOINs in SQL.\n"
     "- Prefer query_semantic_model when the requested concepts are present in semantic metadata; "
     "it applies declared measures, relationships, and required filters. Never rewrite its compiled "
-    "SQL or silently fall back to run_sql after a semantic diagnostic.\n"
+    "SQL or silently fall back to run_sql after a semantic diagnostic. For a function whose "
+    "describe_function result reports supports_correlated_input, the semantic tool can bind a "
+    "bounded typed inputs row set or driver entity through source_bindings; it preserves driver "
+    "grain unless allow_driving_grain_reduction is explicitly true.\n"
     "- Avoid SELECT * in your final answer; select only the columns the task needs.\n"
     "- The orientation listing below is just a starting map — drill in with the tools."
 )

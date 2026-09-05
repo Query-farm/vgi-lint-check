@@ -441,6 +441,10 @@ class Function:
     # Per-argument metadata from vgi_function_arguments() (empty on older vgi
     # extensions that don't expose it — the rule then emits nothing).
     arguments: list[Argument] = field(default_factory=list)
+    # FunctionInfo.input_from_args surfaced by vgi_function_arguments(). True
+    # means positional arguments may be column-bound by a correlated LATERAL
+    # invocation. This is runtime capability metadata, never a semantic tag.
+    input_from_args: bool = False
     # DuckDB function stability: CONSISTENT (deterministic), VOLATILE, or
     # CONSISTENT_WITHIN_QUERY. None for macros/table-functions (not applicable).
     stability: str | None = None

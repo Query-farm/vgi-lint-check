@@ -54,8 +54,10 @@ class SemanticEntity:
     function_parameters: list[str] = field(default_factory=list)
     function_arguments: list[Argument] = field(default_factory=list)
     function_overload_count: int = 1
+    input_from_args: bool = False
     members: dict[str, dict[str, Any]] = field(default_factory=dict)
     physical_columns: set[str] = field(default_factory=set)
+    physical_column_types: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -179,12 +181,27 @@ def build_semantic_model(catalog: Catalog) -> SemanticModel:
             entity.function_overload_count = function_overload_counts[
                 (host.schema, host.name, host.function_type)
             ]
+            entity.input_from_args = host.input_from_args
         if isinstance(host, Table):
             entity.physical_columns = {column.name for column in host.columns}
+            entity.physical_column_types = {
+                column.name: str(column.data_type)
+                for column in host.columns
+                if column.data_type is not None
+            }
         else:
             entity.physical_columns = {
                 str(column.name) for column in host.native_result_columns
             } or {str(column.name) for column in host.result_columns if column.name is not None}
+            result_columns = host.native_result_columns or host.result_columns
+            entity.physical_column_types = {
+                str(column.name): str(
+                    getattr(column, "data_type", None) or getattr(column, "type", None)
+                )
+                for column in result_columns
+                if column.name is not None
+                and (getattr(column, "data_type", None) or getattr(column, "type", None))
+            }
         packed = _decode(host.tags.get(TAG_SEMANTIC_MEMBERS))
         if isinstance(packed, list):
             for member in packed:
@@ -360,9 +377,7 @@ def _validate_entity(entity: SemanticEntity, diagnostics: list[SemanticDiagnosti
             )
         mapped_names = set(argument_names)
         unsupported = sorted(
-            argument.name
-            for argument in entity.function_arguments
-            if argument.is_table_input
+            argument.name for argument in entity.function_arguments if argument.is_table_input
         )
         if unsupported:
             diagnostics.append(

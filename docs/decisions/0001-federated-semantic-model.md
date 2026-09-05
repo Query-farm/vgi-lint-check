@@ -21,8 +21,12 @@ visible. A designated federation catalog may assert a third-party relationship. 
 override other assertions or grant themselves authority. Resolution status and attestation are
 reported separately.
 
-The first query compiler supports one measure-owning root grain plus to-one dimension enrichment.
-It rejects fanout and multi-root measure queries, while preserving a branch-shaped IR for later
+The query compiler supports one measure-owning root grain plus to-one dimension enrichment. It also
+supports bounded correlated table-function pipelines driven by typed query-local inputs or another
+semantic entity. Invocation edges are dataflow, not semantic relationships. The compiler derives
+column-input capability and named/positional calling convention from live function metadata,
+preserves every upstream driving grain by default, and rejects cycles, unbounded drivers, excessive
+invocations, fanout and multi-root measure queries. The branch-shaped IR remains suitable for later
 multi-fact stitching. Compiled SQL is deterministic and parameterized. Compile-only validation does
 not query DuckDB.
 
@@ -34,6 +38,5 @@ consumers must normalize both. Federation is explicit and safe across runtime al
 need bindings when several instances share one logical identity. The conservative compiler rejects
 some valid SQL rather than guessing cardinality or repairing fanout invisibly.
 
-Multi-fact metrics, temporal/spatial predicates, correlated table functions and arbitrary SQL
-expressions remain future work. They can be added without changing existing stable IDs or the
-single-branch request shape.
+Multi-fact metrics, temporal/spatial predicates and arbitrary SQL expressions remain future work.
+They can be added without changing existing stable IDs or the single-branch request shape.

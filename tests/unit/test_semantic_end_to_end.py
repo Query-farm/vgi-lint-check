@@ -11,13 +11,13 @@ import haybarn
 import pytest
 import yaml
 
-from tests.fixtures import arg, func
+from tests.fixtures import arg, col, func, table
 from tests.fixtures import catalog as fixture_catalog
 from tests.fixtures import schema as fixture_schema
 from tests.semantic_example import load_example
 from vgi_lint_check import simulate
 from vgi_lint_check.config import Config
-from vgi_lint_check.model import ObjectId, ResultColumn
+from vgi_lint_check.model import TAG_REQUIRED_FILTERS, ObjectId, ResultColumn
 from vgi_lint_check.rules import run, select_rules
 from vgi_lint_check.rules.base import RuleContext
 from vgi_lint_check.semantic_compiler import compile_semantic_query, execute_semantic_query
@@ -112,6 +112,17 @@ def test_cross_catalog_plan_is_deterministic_and_parameterized(commerce):
                 "sales_runtime:com.example.sales::orders",
                 "crm_runtime:com.example.crm::customers",
             ],
+            "invocations": [],
+            "effective_source_grain": [
+                {
+                    "source": "com.example.sales::orders",
+                    "member": "order_id",
+                    "output_name": "order_id",
+                }
+            ],
+            "result_grain": ["country"],
+            "estimated_invocations": 0,
+            "driving_grain_reduced": False,
         }
     ]
 
@@ -229,9 +240,7 @@ def test_table_function_compiler_executes_positional_then_named_arguments():
         }
         compiled = compile_semantic_query({"v": worker}, request)
         assert compiled["ok"] is True
-        assert 'FROM "v"."main"."events"(?, "region" := ?) AS _e0' in compiled["plan"][
-            "sql"
-        ]
+        assert 'FROM "v"."main"."events"(?, "region" := ?) AS _e0' in compiled["plan"]["sql"]
         assert compiled["plan"]["parameters"] == ["2026-01-15", "US"]
         defaulted = compile_semantic_query(
             {"v": worker},
@@ -248,6 +257,483 @@ def test_table_function_compiler_executes_positional_then_named_arguments():
         assert executed["result"]["rows"] == [("US", 30)]
     finally:
         connection.close()
+
+
+def _forecast_catalog():
+    function = func(
+        "main",
+        "forecast_hourly",
+        "table",
+        tags={
+            "vgi.semantic_entity": json.dumps(
+                {
+                    "entity_id": "forecast_hourly",
+                    "grain": ["time_key"],
+                    "source": {
+                        "arguments": [
+                            {"argument": "latitude", "parameter": "latitude"},
+                            {"argument": "longitude", "parameter": "longitude"},
+                            {
+                                "argument": "forecast_days",
+                                "parameter": "forecast_days",
+                                "required": False,
+                            },
+                        ]
+                    },
+                }
+            ),
+            "vgi.semantic_members": json.dumps(
+                [
+                    {"member_id": "time_key", "kind": "identifier", "column": "time"},
+                    {
+                        "member_id": "time",
+                        "kind": "time_dimension",
+                        "column": "time",
+                        "timezone": "UTC",
+                        "granularities": ["hour", "day"],
+                    },
+                    {
+                        "member_id": "temperature",
+                        "kind": "dimension",
+                        "column": "temperature",
+                        "data_type": "DOUBLE",
+                    },
+                    {
+                        "member_id": "average_temperature",
+                        "kind": "measure",
+                        "aggregation": "avg",
+                        "member": "temperature",
+                        "additivity": "non_additive",
+                    },
+                ]
+            ),
+        },
+        arguments=[
+            arg("latitude", "DOUBLE", position=0, field_index=0, is_positional=True),
+            arg("longitude", "DOUBLE", position=1, field_index=1, is_positional=True),
+            arg("forecast_days", "INTEGER", field_index=2, is_named=True, default="3"),
+        ],
+        input_from_args=True,
+        result_columns=[
+            ResultColumn("time", "TIMESTAMP", "Forecast hour."),
+            ResultColumn("temperature", "DOUBLE", "Temperature."),
+        ],
+    )
+    return fixture_catalog(
+        fixture_schema("main", functions=[function]),
+        tags={"vgi.semantic_catalog": json.dumps({"catalog_id": "farm.query.open_meteo"})},
+    )
+
+
+def test_inline_input_compiles_and_executes_correlated_lateral_function():
+    worker = _rehome(_forecast_catalog(), "weather")
+    function = next(worker.iter_all_functions())
+    function.tags.raw[TAG_REQUIRED_FILTERS] = json.dumps([["latitude"]])
+    connection = haybarn.connect()
+    try:
+        connection.execute("ATTACH ':memory:' AS weather")
+        connection.execute(
+            "CREATE MACRO weather.main.forecast_hourly"
+            "(latitude, longitude, forecast_days := 3) AS TABLE "
+            "SELECT TIMESTAMP '2026-01-01' + i * INTERVAL 1 HOUR AS time, "
+            "latitude + longitude + i AS temperature FROM range(forecast_days) r(i)"
+        )
+        request = {
+            "measures": [
+                {
+                    "catalog_id": "farm.query.open_meteo",
+                    "entity_id": "forecast_hourly",
+                    "member_id": "average_temperature",
+                }
+            ],
+            "dimensions": [
+                {
+                    "catalog_id": "farm.query.open_meteo",
+                    "entity_id": "forecast_hourly",
+                    "member_id": "time",
+                    "granularity": "hour",
+                }
+            ],
+            "inputs": [
+                {
+                    "input_id": "locations",
+                    "grain": ["location_id"],
+                    "columns": [
+                        {"name": "location_id", "type": "VARCHAR"},
+                        {"name": "latitude", "type": "DOUBLE"},
+                        {"name": "longitude", "type": "DOUBLE"},
+                    ],
+                    "rows": [["berlin", 52.52, 13.41], ["tokyo", 35.69, 139.69]],
+                }
+            ],
+            "source_bindings": [
+                {
+                    "entity": {
+                        "catalog_id": "farm.query.open_meteo",
+                        "entity_id": "forecast_hourly",
+                    },
+                    "driver": {"input_id": "locations"},
+                    "arguments": {
+                        "latitude": {"input_column": "latitude"},
+                        "longitude": {"input_column": "longitude"},
+                        "forecast_days": {"parameter": "forecast_days"},
+                    },
+                }
+            ],
+            "parameters": {"forecast_days": 2},
+            "order": [
+                {"member": "location_id", "direction": "asc"},
+                {"member": "time", "direction": "asc"},
+            ],
+        }
+        compiled = compile_semantic_query({"weather": worker}, request)
+        assert compiled["ok"] is True, compiled
+        assert "CROSS JOIN LATERAL" in compiled["plan"]["sql"]
+        assert (
+            '"weather"."main"."forecast_hourly"('
+            '"_driver"."latitude", "_driver"."longitude", "forecast_days" := ?)'
+            in compiled["plan"]["sql"]
+        )
+        assert compiled["plan"]["parameters"] == ["berlin", 52.52, 13.41, "tokyo", 35.69, 139.69, 2]
+        branch = compiled["plan"]["fact_branches"][0]
+        assert branch["estimated_invocations"] == 2
+        assert branch["result_grain"] == ["location_id", "time"]
+        reduced = compile_semantic_query(
+            {"weather": worker},
+            {
+                **request,
+                "order": [{"member": "time", "direction": "asc"}],
+                "allow_driving_grain_reduction": True,
+            },
+        )
+        assert reduced["ok"] is True
+        assert reduced["plan"]["fact_branches"][0]["driving_grain_reduced"] is True
+        assert reduced["plan"]["fact_branches"][0]["result_grain"] == ["time"]
+
+        function.input_from_args = False
+        unsupported = compile_semantic_query({"weather": worker}, request)
+        assert unsupported["ok"] is False
+        assert unsupported["diagnostics"][0]["code"] == "correlated_input_not_supported"
+        function.input_from_args = True
+
+        bad_type = deepcopy(request)
+        bad_type["inputs"][0]["rows"][0][1] = "not-a-latitude"
+        rejected_type = compile_semantic_query({"weather": worker}, bad_type)
+        assert rejected_type["ok"] is False
+        assert rejected_type["diagnostics"][0]["code"] == "incompatible_input_value"
+
+        too_many_calls = {**request, "execution_limits": {"max_invocations": 1}}
+        rejected_limit = compile_semantic_query({"weather": worker}, too_many_calls)
+        assert rejected_limit["ok"] is False
+        assert rejected_limit["diagnostics"][0]["code"] == "invocation_limit"
+        result = execute_semantic_query({"weather": worker}, connection, request)
+        assert result["ok"] is True, result
+        assert len(result["result"]["rows"]) == 4
+    finally:
+        connection.close()
+
+
+def _sites_catalog():
+    sites = fixture_catalog(
+        fixture_schema(
+            "main",
+            tables=[
+                table(
+                    "main",
+                    "sites",
+                    tags={
+                        "vgi.semantic_entity": json.dumps(
+                            {"entity_id": "sites", "grain": ["site_id"]}
+                        ),
+                        "vgi.semantic_members": json.dumps(
+                            [
+                                {
+                                    "member_id": "site_id",
+                                    "kind": "identifier",
+                                    "column": "site_id",
+                                    "data_type": "VARCHAR",
+                                },
+                                {
+                                    "member_id": "latitude",
+                                    "kind": "dimension",
+                                    "column": "latitude",
+                                    "data_type": "DOUBLE",
+                                },
+                                {
+                                    "member_id": "longitude",
+                                    "kind": "dimension",
+                                    "column": "longitude",
+                                    "data_type": "DOUBLE",
+                                },
+                                {
+                                    "member_id": "site_name",
+                                    "kind": "dimension",
+                                    "column": "site_name",
+                                    "data_type": "VARCHAR",
+                                },
+                            ]
+                        ),
+                    },
+                    columns=[
+                        col("main", "sites", "site_id", dtype="VARCHAR"),
+                        col("main", "sites", "latitude", dtype="DOUBLE"),
+                        col("main", "sites", "longitude", dtype="DOUBLE"),
+                        col("main", "sites", "site_name", dtype="VARCHAR"),
+                    ],
+                )
+            ],
+        ),
+        tags={"vgi.semantic_catalog": json.dumps({"catalog_id": "com.example.assets"})},
+    )
+    return sites
+
+
+def test_entity_driven_lateral_execution_preserves_driver_grain():
+    sites = _rehome(_sites_catalog(), "assets")
+    next(sites.iter_tables()).tags.raw[TAG_REQUIRED_FILTERS] = json.dumps([["site_id"]])
+    weather = _rehome(_forecast_catalog(), "weather")
+    connection = haybarn.connect()
+    try:
+        connection.execute("ATTACH ':memory:' AS assets")
+        connection.execute("ATTACH ':memory:' AS weather")
+        connection.execute(
+            "CREATE TABLE assets.main.sites"
+            "(site_id VARCHAR, latitude DOUBLE, longitude DOUBLE, site_name VARCHAR)"
+        )
+        connection.execute(
+            "INSERT INTO assets.main.sites VALUES "
+            "('berlin', 52.52, 13.41, 'Berlin'), "
+            "('tokyo', 35.69, 139.69, 'Tokyo')"
+        )
+        connection.execute(
+            "CREATE MACRO weather.main.forecast_hourly"
+            "(latitude, longitude, forecast_days := 3) AS TABLE "
+            "SELECT TIMESTAMP '2026-01-01' AS time, latitude + longitude AS temperature"
+        )
+        request = {
+            "measures": [
+                {
+                    "catalog_id": "farm.query.open_meteo",
+                    "entity_id": "forecast_hourly",
+                    "member_id": "average_temperature",
+                }
+            ],
+            "dimensions": [
+                {
+                    "catalog_id": "com.example.assets",
+                    "entity_id": "sites",
+                    "member_id": "site_name",
+                }
+            ],
+            "source_bindings": [
+                {
+                    "entity": {
+                        "catalog_id": "farm.query.open_meteo",
+                        "entity_id": "forecast_hourly",
+                    },
+                    "driver": {
+                        "entity": {"catalog_id": "com.example.assets", "entity_id": "sites"},
+                        "max_rows": 2,
+                        "filters": {"member": "site_id", "operator": "eq", "value": "berlin"},
+                        "order": [{"member_id": "site_id", "direction": "asc"}],
+                    },
+                    "arguments": {
+                        "latitude": {
+                            "member": {
+                                "catalog_id": "com.example.assets",
+                                "entity_id": "sites",
+                                "member_id": "latitude",
+                            }
+                        },
+                        "longitude": {
+                            "member": {
+                                "catalog_id": "com.example.assets",
+                                "entity_id": "sites",
+                                "member_id": "longitude",
+                            }
+                        },
+                    },
+                }
+            ],
+            "parameters": {"forecast_days": 1},
+        }
+        result = execute_semantic_query({"assets": sites, "weather": weather}, connection, request)
+        assert result["ok"] is True, result
+        assert result["result"]["columns"] == [
+            "site_id",
+            "site_name",
+            "average_temperature",
+        ]
+        assert len(result["result"]["rows"]) == 1
+        missing = deepcopy(request)
+        del missing["source_bindings"][0]["driver"]["filters"]
+        rejected = compile_semantic_query({"assets": sites, "weather": weather}, missing)
+        assert rejected["ok"] is False
+        assert rejected["diagnostics"][0]["code"] == "driver_required_filter_missing"
+    finally:
+        connection.close()
+
+
+def _geocode_catalog():
+    function = func(
+        "main",
+        "geocode",
+        "table",
+        input_from_args=True,
+        arguments=[
+            arg("latitude", "DOUBLE", position=0, field_index=0, is_positional=True),
+            arg("longitude", "DOUBLE", position=1, field_index=1, is_positional=True),
+        ],
+        result_columns=[
+            ResultColumn("candidate_id", "VARCHAR", "Candidate."),
+            ResultColumn("latitude", "DOUBLE", "Latitude."),
+            ResultColumn("longitude", "DOUBLE", "Longitude."),
+        ],
+        tags={
+            "vgi.semantic_entity": json.dumps(
+                {
+                    "entity_id": "geocode",
+                    "grain": ["candidate_id"],
+                    "source": {
+                        "arguments": [
+                            {"argument": "latitude", "parameter": "latitude"},
+                            {"argument": "longitude", "parameter": "longitude"},
+                        ]
+                    },
+                }
+            ),
+            "vgi.semantic_members": json.dumps(
+                [
+                    {
+                        "member_id": "candidate_id",
+                        "kind": "identifier",
+                        "column": "candidate_id",
+                        "data_type": "VARCHAR",
+                    },
+                    {
+                        "member_id": "latitude",
+                        "kind": "dimension",
+                        "column": "latitude",
+                        "data_type": "DOUBLE",
+                    },
+                    {
+                        "member_id": "longitude",
+                        "kind": "dimension",
+                        "column": "longitude",
+                        "data_type": "DOUBLE",
+                    },
+                ]
+            ),
+        },
+    )
+    return fixture_catalog(
+        fixture_schema("main", functions=[function]),
+        tags={"vgi.semantic_catalog": json.dumps({"catalog_id": "com.example.geocoding"})},
+    )
+
+
+def test_chained_correlated_functions_compile_as_bounded_acyclic_pipeline():
+    geocode = _rehome(_geocode_catalog(), "geo")
+    weather = _rehome(_forecast_catalog(), "weather")
+    request = {
+        "measures": [
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "average_temperature",
+            }
+        ],
+        "inputs": [
+            {
+                "input_id": "locations",
+                "grain": ["location_id"],
+                "columns": [
+                    {"name": "location_id", "type": "VARCHAR"},
+                    {"name": "latitude", "type": "DOUBLE"},
+                    {"name": "longitude", "type": "DOUBLE"},
+                ],
+                "rows": [["berlin", 52.52, 13.41], ["tokyo", 35.69, 139.69]],
+            }
+        ],
+        "source_bindings": [
+            {
+                "entity": {"catalog_id": "farm.query.open_meteo", "entity_id": "forecast_hourly"},
+                "driver": {
+                    "entity": {"catalog_id": "com.example.geocoding", "entity_id": "geocode"},
+                    "max_rows": 4,
+                },
+                "arguments": {
+                    "latitude": {
+                        "member": {
+                            "catalog_id": "com.example.geocoding",
+                            "entity_id": "geocode",
+                            "member_id": "latitude",
+                        }
+                    },
+                    "longitude": {
+                        "member": {
+                            "catalog_id": "com.example.geocoding",
+                            "entity_id": "geocode",
+                            "member_id": "longitude",
+                        }
+                    },
+                },
+            },
+            {
+                "entity": {"catalog_id": "com.example.geocoding", "entity_id": "geocode"},
+                "driver": {"input_id": "locations"},
+                "arguments": {
+                    "latitude": {"input_column": "latitude"},
+                    "longitude": {"input_column": "longitude"},
+                },
+            },
+        ],
+        "parameters": {"forecast_days": 1},
+        "execution_limits": {"max_invocations": 6},
+    }
+    compiled = compile_semantic_query({"geo": geocode, "weather": weather}, request)
+    assert compiled["ok"] is True, compiled
+    branch = compiled["plan"]["fact_branches"][0]
+    assert [item["entity"]["entity_id"] for item in branch["invocations"]] == [
+        "geocode",
+        "forecast_hourly",
+    ]
+    assert branch["estimated_invocations"] == 6
+    assert branch["result_grain"] == ["location_id", "candidate_id"]
+    assert compiled["plan"]["sql"].count("CROSS JOIN LATERAL") == 2
+
+    connection = haybarn.connect()
+    try:
+        connection.execute("ATTACH ':memory:' AS geo")
+        connection.execute("ATTACH ':memory:' AS weather")
+        connection.execute(
+            "CREATE MACRO geo.main.geocode(latitude, longitude) AS TABLE "
+            "SELECT 'best' AS candidate_id, latitude, longitude"
+        )
+        connection.execute(
+            "CREATE MACRO weather.main.forecast_hourly"
+            "(latitude, longitude, forecast_days := 3) AS TABLE "
+            "SELECT TIMESTAMP '2026-01-01' AS time, latitude + longitude AS temperature"
+        )
+        executed = execute_semantic_query({"geo": geocode, "weather": weather}, connection, request)
+        assert executed["ok"] is True, executed
+        assert executed["result"]["columns"] == [
+            "location_id",
+            "candidate_id",
+            "average_temperature",
+        ]
+        assert len(executed["result"]["rows"]) == 2
+    finally:
+        connection.close()
+
+    cyclic = deepcopy(request)
+    cyclic["source_bindings"][1]["driver"] = {
+        "entity": {"catalog_id": "farm.query.open_meteo", "entity_id": "forecast_hourly"},
+        "max_rows": 2,
+    }
+    rejected = compile_semantic_query({"geo": geocode, "weather": weather}, cyclic)
+    assert rejected["ok"] is False
+    assert rejected["diagnostics"][0]["code"] == "correlation_cycle"
 
 
 def test_table_function_compiler_rejects_optional_positional_holes():
@@ -405,6 +891,10 @@ def _rehome(catalog, alias):
                 )
                 for column in relation.columns
             ]
+        for function in schema.functions:
+            function.id = ObjectId(
+                alias, function.id.kind, schema=function.schema, name=function.name
+            )
     return catalog
 
 

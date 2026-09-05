@@ -146,7 +146,9 @@ must be `order_id + line_id`, even if users often aggregate it to one row per or
 
 ### 3. Add members
 
-For DuckDB 1.5 compatibility, put the full array in `vgi.semantic_members` on the entity host:
+For DuckDB 1.5 compatibility, put the full array in `vgi.semantic_members` on the `orders` table.
+More generally, this means the same table, view, or table function that carries
+`vgi.semantic_entity`—there is no separate “entity host” object:
 
 ```json
 [
@@ -339,7 +341,7 @@ resolves each mapping against `vgi_function_arguments()`:
 
 ```sql
 SELECT arg_name, arg_position, field_index, is_positional, is_named, is_varargs,
-       is_table_input, arg_default
+       is_table_input, input_from_args, arg_default
 FROM vgi_function_arguments()
 WHERE catalog_name = 'events_runtime'
   AND schema_name = 'main'
@@ -362,10 +364,59 @@ table inputs, unmapped required arguments, optional mappings without physical de
 that would leave a positional hole. These are explicit current boundaries, not extra fields you
 should add to the tag.
 
+If the function was created with `defineRowTransformFunction()`, discovery reports
+`input_from_args = true`. That runtime capability lets a semantic query bind positional arguments to
+columns and invoke the function once per driving row. Do not copy it into `vgi.semantic_entity`.
+
+For example, a caller can provide a typed location batch and bind it to a forecast entity:
+
+```json
+{
+  "measures": [{"catalog_id":"farm.query.open_meteo","entity_id":"forecast_hourly","member_id":"average_temperature"}],
+  "inputs": [{
+    "input_id": "locations",
+    "grain": ["location_id"],
+    "columns": [
+      {"name":"location_id","type":"VARCHAR"},
+      {"name":"latitude","type":"DOUBLE"},
+      {"name":"longitude","type":"DOUBLE"}
+    ],
+    "rows": [["berlin",52.52,13.41],["tokyo",35.69,139.69]]
+  }],
+  "source_bindings": [{
+    "entity": {"catalog_id":"farm.query.open_meteo","entity_id":"forecast_hourly"},
+    "driver": {"input_id":"locations"},
+    "arguments": {
+      "latitude": {"input_column":"latitude"},
+      "longitude": {"input_column":"longitude"},
+      "forecast_days": {"parameter":"forecast_days"}
+    }
+  }],
+  "parameters": {"forecast_days":3}
+}
+```
+
+To drive the function from a modeled `sites` table or view, replace the driver with
+`{"entity":{"catalog_id":"com.example.assets","entity_id":"sites"},"max_rows":100,
+"filters":{"member":"active","operator":"eq","value":true}}` and use
+fully qualified `{member: ...}` bindings. A function may also drive a later function, producing a
+bounded pipeline such as locations → geocoding → weather. Every intermediate function needs its own
+source binding and `input_from_args` capability.
+
+Put entity-driver filters and optional member ordering inside `driver`. They run before the lateral
+function and before `max_rows` is applied. Any `vgi_required_filters` declared by that driver must be
+satisfied there; a top-level post-expansion filter is deliberately not accepted as a substitute.
+
+The compiler automatically retains the input/entity grain. Only set
+`allow_driving_grain_reduction: true` when combining different driver rows is the intended business
+result. Set `execution_limits.max_invocations` to a request-specific bound when the default of 100 is
+too high; requests cannot raise the hard ceiling.
+
 ## DuckDB 1.5 and 2.0 member carriers
 
 DuckDB 1.5 exposes semantic tags on tables and table functions, but not native output-column tags.
-Store all members in the packed `vgi.semantic_members` array on the entity host.
+Store all members in the packed `vgi.semantic_members` array on the same table or view that carries
+`vgi.semantic_entity` (or on the table function when that carrier is supported).
 
 When DuckDB exposes column tags, you may also put one `vgi.semantic_member` value directly on each
 column. A native member may omit `column`; the hosting column supplies it. Consumers merge packed and
@@ -485,6 +536,9 @@ remain useful for discovery, direct-SQL agents, and a future multi-fact compiler
 In Cupola, the `query_semantic_model` tool accepts this request directly. In this repository, the
 reference compiler and executable examples are exercised by the tests in
 [`tests/unit/test_semantic_end_to_end.py`](../tests/unit/test_semantic_end_to_end.py).
+That suite includes inline location batches, a filtered `sites` entity driving weather, and an
+executed locations → geocoding → weather chain, plus capability, type, grain, cycle and limit
+failures.
 
 ## Test whether an agent can use it
 

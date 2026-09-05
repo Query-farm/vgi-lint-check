@@ -307,6 +307,40 @@ def test_fetch_function_arguments_version_skew_returns_empty():
     assert fetch_function_arguments(_RaisingCon(), "v") == []
 
 
+def test_function_arguments_retain_correlated_input_capability():
+    snap = Snapshot(
+        schemas=[{"database_name": "v", "schema_name": "main", "comment": None, "tags": {}}],
+        functions=[
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "function_name": "forecast",
+                "function_type": "table",
+                "tags": {},
+            }
+        ],
+    )
+    loaded = build_catalog(
+        snap,
+        "v",
+        "loc",
+        argument_rows=[
+            {
+                "schema_name": "main",
+                "function_name": "forecast",
+                "function_type": "table",
+                "arg_name": "latitude",
+                "arg_type": "DOUBLE",
+                "arg_position": 0,
+                "field_index": 0,
+                "is_positional": True,
+                "input_from_args": True,
+            }
+        ],
+    )
+    assert next(loaded.iter_all_functions()).input_from_args is True
+
+
 def test_agent_test_tasks_decoded_on_catalog():
     import json as _json
 

@@ -57,7 +57,7 @@ model based on guesses.
 ## Table-function sources
 
 Map physical arguments to semantic parameter names, but do not copy `is_named`, `is_positional`,
-`arg_position`, or `field_index` into the tag. The compiler reads those facts from
+`arg_position`, `field_index`, or `input_from_args` into the tag. The compiler reads those facts from
 `vgi_function_arguments()`.
 
 ```json
@@ -77,6 +77,14 @@ Verify that every mapping resolves exactly once, every required physical scalar 
 and every optional mapping has a physical default. The current compiler rejects overload ambiguity,
 varargs, table inputs, and requests that create a positional hole. Flattened
 `duckdb_functions().parameters` metadata is not sufficient to infer a safe call.
+
+When a row-transform function reports `input_from_args = true`, demonstrate both scalar and
+correlated use. Author a compile-only request with a small typed `inputs` row set, bind only
+positional non-constant arguments with `input_column`, and verify that the plan preserves the input
+grain. For entity-driven use, bind fully qualified physical members from one declared driver and set
+a conservative `max_rows`. For a chained pipeline, give each function one binding and verify the
+invocation order, accumulated effective grain, total estimated invocations, and cycle rejection.
+Never represent these dataflow edges as `vgi.semantic_relationships`.
 
 ## Reusable task prompt
 

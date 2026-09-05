@@ -30,12 +30,22 @@ DiagnosticStage = Literal[
     "multi_fact_not_supported",
     "catalog_binding",
     "relationship_resolution",
+    "source_binding",
+    "execution_limit",
     "type_check",
     "fanout",
     "required_filter",
     "sql_generation",
     "duckdb_execution",
 ]
+
+_MAX_INLINE_ROWS = 100
+_MAX_INLINE_COLUMNS = 32
+_MAX_INLINE_CELLS = 3_200
+_MAX_INLINE_BYTES = 1_000_000
+_DEFAULT_MAX_INVOCATIONS = 100
+_HARD_MAX_INVOCATIONS = 1_000
+_DEFAULT_MAX_STAGE_ROWS = 10_000
 
 _SAFE_TYPE = re.compile(r"^[A-Za-z][A-Za-z0-9_ ]*(?:\([0-9]+(?:,[0-9]+)?\))?(?:\[\])?$")
 _BINARY_OPERATORS = {"add": "+", "subtract": "-", "multiply": "*", "divide": "/"}
@@ -56,6 +66,14 @@ class _Edge:
     source: SemanticEntity
     target: SemanticEntity
     forward: bool
+
+
+@dataclass(frozen=True)
+class _InvocationBinding:
+    entity: SemanticEntity
+    driver_entity: SemanticEntity | None
+    input_id: str | None
+    definition: dict[str, Any]
 
 
 class _CompileFailure(Exception):
@@ -94,6 +112,17 @@ def _ref_key(value: dict[str, Any]) -> tuple[str, str]:
 
 def _entity_marker(entity: SemanticEntity) -> str:
     return f"{entity.host.database}:{entity.catalog_id}::{entity.entity_id}"
+
+
+def _unique_entities(values: list[SemanticEntity]) -> list[SemanticEntity]:
+    seen: set[str] = set()
+    result: list[SemanticEntity] = []
+    for entity in values:
+        marker = _entity_marker(entity)
+        if marker not in seen:
+            seen.add(marker)
+            result.append(entity)
+    return result
 
 
 def _safe_type(value: str) -> str:
@@ -258,9 +287,670 @@ def _source_sql(entity: SemanticEntity, query: dict[str, Any], parameters: list[
                     f"parameter {parameter!r}",
                 )
             continue
+        if not _value_compatible(supplied[parameter], argument.type):
+            _fail(
+                "type_check",
+                "incompatible_parameter_type",
+                f"Parameter {parameter!r} is incompatible with argument {argument.name!r}",
+            )
         parameters.append(supplied[parameter])
         args.append(f"{_quote_ident(argument.name)} := ?" if argument.is_named else "?")
     return f"{qualified}({', '.join(args)})"
+
+
+def _qualified_source(entity: SemanticEntity) -> str:
+    return ".".join(
+        (
+            _quote_ident(entity.host.database),
+            _quote_ident(entity.host.schema or "main"),
+            _quote_ident(entity.host.name or ""),
+        )
+    )
+
+
+def _path_alias(base: str, path: tuple[str, ...]) -> str:
+    return base + "".join(f".{_quote_ident(part)}" for part in path)
+
+
+def _normalized_type(value: str | None) -> str:
+    raw = re.sub(r"\s+", " ", str(value or "").strip().upper())
+    aliases = {
+        "STRING": "VARCHAR",
+        "TEXT": "VARCHAR",
+        "INT": "INTEGER",
+        "INT4": "INTEGER",
+        "INT8": "BIGINT",
+        "FLOAT": "REAL",
+        "FLOAT8": "DOUBLE",
+        "BOOL": "BOOLEAN",
+    }
+    return aliases.get(raw, raw)
+
+
+def _types_compatible(source: str | None, target: str | None) -> bool:
+    left, right = _normalized_type(source), _normalized_type(target)
+    if not left or not right or right == "ANY":
+        return True
+    if left == right:
+        return True
+    numeric = ["TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "REAL", "DOUBLE"]
+    return left in numeric and right in numeric and numeric.index(left) <= numeric.index(right)
+
+
+def _value_compatible(value: Any, target: str | None) -> bool:
+    """Conservatively check JSON scalar/container shape against a DuckDB type."""
+    if value is None or not target:
+        return True
+    normalized = _normalized_type(target)
+    if normalized == "ANY":
+        return True
+    if normalized == "BOOLEAN":
+        return isinstance(value, bool)
+    if normalized.startswith(("TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT")):
+        return isinstance(value, int) and not isinstance(value, bool)
+    if normalized.startswith(("REAL", "DOUBLE", "DECIMAL", "NUMERIC")):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if normalized.startswith(("VARCHAR", "CHAR", "TEXT", "DATE", "TIME", "TIMESTAMP", "UUID")):
+        return isinstance(value, str)
+    if normalized.endswith("[]"):
+        return isinstance(value, list)
+    if normalized.startswith(("STRUCT", "MAP", "JSON")):
+        return isinstance(value, (dict, list, str))
+    return True
+
+
+def _member_type(entity: SemanticEntity, member: dict[str, Any]) -> str | None:
+    explicit = member.get("output_type") or member.get("data_type")
+    if explicit:
+        return str(explicit)
+    column = member.get("column")
+    return entity.physical_column_types.get(str(column)) if column else None
+
+
+def _validate_inputs(query: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    inputs: dict[str, dict[str, Any]] = {}
+    total_cells = 0
+    total_bytes = 0
+    for item in query.get("inputs", []):
+        input_id = str(item.get("input_id", ""))
+        if input_id in inputs:
+            _fail("source_binding", "duplicate_input", f"Duplicate input_id {input_id!r}")
+        columns = list(item.get("columns", []))
+        rows = list(item.get("rows", []))
+        if len(columns) > _MAX_INLINE_COLUMNS or len(rows) > _MAX_INLINE_ROWS:
+            _fail(
+                "execution_limit", "inline_input_limit", f"Input {input_id!r} exceeds inline limits"
+            )
+        names = [str(column.get("name", "")) for column in columns]
+        if len(names) != len(set(names)):
+            _fail(
+                "source_binding",
+                "duplicate_input_column",
+                f"Input {input_id!r} has duplicate columns",
+            )
+        grain = [str(value) for value in item.get("grain", [])]
+        missing_grain = sorted(set(grain) - set(names))
+        if missing_grain:
+            _fail(
+                "source_binding",
+                "unknown_input_grain",
+                f"Input {input_id!r} grain references {missing_grain!r}",
+            )
+        indexes = [names.index(name) for name in grain]
+        grain_values: set[tuple[Any, ...]] = set()
+        for row_index, row in enumerate(rows):
+            if len(row) != len(columns):
+                _fail(
+                    "source_binding",
+                    "input_row_width",
+                    f"Input {input_id!r} row {row_index} has the wrong width",
+                )
+            for index, value in enumerate(row):
+                if value is None and columns[index].get("nullable", False) is not True:
+                    _fail(
+                        "type_check",
+                        "null_input_value",
+                        f"Input {input_id!r} column {names[index]!r} is not nullable",
+                    )
+                if value is not None and not _value_compatible(
+                    value, str(columns[index].get("type", ""))
+                ):
+                    _fail(
+                        "type_check",
+                        "incompatible_input_value",
+                        f"Input {input_id!r} row {row_index} column {names[index]!r} "
+                        f"does not match {columns[index].get('type')!r}",
+                    )
+            key = tuple(row[index] for index in indexes)
+            if any(value is None for value in key):
+                _fail(
+                    "source_binding",
+                    "null_input_grain",
+                    f"Input {input_id!r} grain cannot contain NULL",
+                )
+            if key in grain_values:
+                _fail(
+                    "source_binding",
+                    "duplicate_input_grain",
+                    f"Input {input_id!r} grain is not unique",
+                )
+            grain_values.add(key)
+        total_cells += len(columns) * len(rows)
+        total_bytes += len(json.dumps(rows, ensure_ascii=False).encode("utf-8"))
+        inputs[input_id] = item
+    if total_cells > _MAX_INLINE_CELLS or total_bytes > _MAX_INLINE_BYTES:
+        _fail(
+            "execution_limit",
+            "inline_input_payload_limit",
+            "Inline inputs exceed the request payload limit",
+        )
+    return inputs
+
+
+def _resolve_invocation_chain(
+    graph: FederatedSemanticModel,
+    identities: dict[str, dict[str, Any]],
+    root: SemanticEntity,
+    query: dict[str, Any],
+    bindings: dict[str, str],
+    inputs: dict[str, dict[str, Any]],
+) -> list[_InvocationBinding]:
+    by_target: dict[str, _InvocationBinding] = {}
+    for definition in query.get("source_bindings", []):
+        entity = _resolve_entity(graph, identities, definition["entity"], bindings)
+        marker = _entity_marker(entity)
+        if marker in by_target:
+            _fail(
+                "source_binding",
+                "duplicate_source_binding",
+                f"Entity {entity.entity_id!r} has multiple source bindings",
+            )
+        if entity.source_kind != "table_function":
+            _fail(
+                "source_binding",
+                "binding_target_not_function",
+                f"Entity {entity.entity_id!r} is not a table function",
+            )
+        driver = definition["driver"]
+        driver_entity: SemanticEntity | None = None
+        input_id: str | None = None
+        if "input_id" in driver:
+            input_id = str(driver["input_id"])
+            if input_id not in inputs:
+                _fail("source_binding", "unknown_input", f"Unknown input_id {input_id!r}")
+        else:
+            driver_entity = _resolve_entity(graph, identities, driver["entity"], bindings)
+        by_target[marker] = _InvocationBinding(entity, driver_entity, input_id, definition)
+
+    chain: list[_InvocationBinding] = []
+    visiting: set[str] = set()
+    used: set[str] = set()
+
+    def visit(entity: SemanticEntity) -> None:
+        marker = _entity_marker(entity)
+        binding = by_target.get(marker)
+        if binding is None:
+            return
+        if marker in visiting:
+            _fail(
+                "source_binding",
+                "correlation_cycle",
+                f"Correlation cycle includes {entity.entity_id!r}",
+            )
+        visiting.add(marker)
+        if binding.driver_entity is not None:
+            visit(binding.driver_entity)
+        visiting.remove(marker)
+        used.add(marker)
+        chain.append(binding)
+
+    visit(root)
+    unused = sorted(set(by_target) - used)
+    if unused:
+        _fail(
+            "source_binding",
+            "unused_source_binding",
+            f"Source bindings are not on the root invocation path: {unused!r}",
+        )
+    used_inputs = {item.input_id for item in chain if item.input_id is not None}
+    unused_inputs = sorted(set(inputs) - used_inputs)
+    if unused_inputs:
+        _fail(
+            "source_binding",
+            "unused_input",
+            f"Inputs are not used by the root invocation path: {unused_inputs!r}",
+        )
+    if len(used_inputs) > 1:
+        _fail(
+            "source_binding",
+            "multiple_driving_inputs",
+            "One invocation path may use only one inline input",
+        )
+    return chain
+
+
+def _correlated_call_sql(
+    binding: _InvocationBinding,
+    query: dict[str, Any],
+    parameters: list[Any],
+    driver_alias: str,
+    driver_paths: dict[str, tuple[str, ...]],
+    input_columns: dict[str, dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    entity = binding.entity
+    resolved = _resolved_source_arguments(entity)
+    mappings = {str(mapping.get("argument", "")): mapping for mapping, _argument in resolved}
+    arguments = {argument.name: argument for argument in entity.function_arguments}
+    overrides = cast(dict[str, dict[str, Any]], binding.definition.get("arguments", {}))
+    unknown = sorted(set(overrides) - set(arguments))
+    if unknown:
+        _fail(
+            "source_binding",
+            "unknown_bound_argument",
+            f"Bindings reference unknown arguments {unknown!r}",
+        )
+    correlated = False
+    rendered: dict[str, tuple[str, dict[str, Any], Any]] = {}
+    supplied = query.get("parameters", {}) if isinstance(query.get("parameters"), dict) else {}
+    for name, argument in arguments.items():
+        override = overrides.get(name)
+        if override is not None and ("input_column" in override or "member" in override):
+            correlated = True
+            if not entity.input_from_args:
+                _fail(
+                    "source_binding",
+                    "correlated_input_not_supported",
+                    f"Function {entity.entity_id!r} does not advertise input_from_args",
+                )
+            if not argument.is_positional or argument.position is None or argument.is_const:
+                _fail(
+                    "source_binding",
+                    "invalid_correlated_argument",
+                    f"Argument {name!r} cannot be column-bound",
+                )
+            if "input_column" in override:
+                if binding.input_id is None:
+                    _fail(
+                        "source_binding",
+                        "input_binding_wrong_driver",
+                        f"Argument {name!r} requires an inline-input driver",
+                    )
+                column_name = str(override["input_column"])
+                column = input_columns.get(column_name)
+                if column is None:
+                    _fail(
+                        "source_binding",
+                        "unknown_input_column",
+                        f"Unknown input column {column_name!r}",
+                    )
+                if not _types_compatible(str(column.get("type", "")), argument.type):
+                    _fail(
+                        "type_check",
+                        "incompatible_argument_type",
+                        f"Input column {column_name!r} is incompatible with argument {name!r}",
+                    )
+                sql = f"{driver_alias}.{_quote_ident(column_name)}"
+                detail: dict[str, Any] = {
+                    "argument": name,
+                    "kind": "input_column",
+                    "source": column_name,
+                }
+            else:
+                if binding.driver_entity is None:
+                    _fail(
+                        "source_binding",
+                        "member_binding_wrong_driver",
+                        f"Argument {name!r} requires an entity driver",
+                    )
+                ref = cast(dict[str, Any], override["member"])
+                if _ref_key(ref) != (
+                    binding.driver_entity.catalog_id,
+                    binding.driver_entity.entity_id,
+                ):
+                    _fail(
+                        "source_binding",
+                        "member_not_on_driver",
+                        f"Argument {name!r} references a member outside its driver",
+                    )
+                member_id = str(ref.get("member_id", ""))
+                member = binding.driver_entity.members.get(member_id)
+                if member is None:
+                    _fail(
+                        "source_binding",
+                        "unknown_driver_member",
+                        f"Unknown driver member {member_id!r}",
+                    )
+                if not member.get("column"):
+                    _fail(
+                        "source_binding",
+                        "derived_driver_member",
+                        f"Driver member {member_id!r} must be column-backed",
+                    )
+                if not _types_compatible(
+                    _member_type(binding.driver_entity, member), argument.type
+                ):
+                    _fail(
+                        "type_check",
+                        "incompatible_argument_type",
+                        f"Driver member {member_id!r} is incompatible with argument {name!r}",
+                    )
+                marker = _entity_marker(binding.driver_entity)
+                sql = _member_sql(
+                    binding.driver_entity, member, _path_alias(driver_alias, driver_paths[marker])
+                )
+                detail = {"argument": name, "kind": "member", "source": ref}
+            rendered[name] = (sql, detail, None)
+            continue
+
+        parameter_name = str((override or mappings.get(name) or {}).get("parameter", ""))
+        required = (mappings.get(name) or {}).get("required", True) is not False
+        if parameter_name and parameter_name in supplied:
+            if not _value_compatible(supplied[parameter_name], argument.type):
+                _fail(
+                    "type_check",
+                    "incompatible_parameter_type",
+                    f"Parameter {parameter_name!r} is incompatible with argument {name!r}",
+                )
+            rendered[name] = (
+                "?",
+                {"argument": name, "kind": "parameter", "source": parameter_name},
+                supplied[parameter_name],
+            )
+        elif argument.default is None and required:
+            _fail(
+                "required_filter",
+                "missing_source_parameter",
+                f"Table function argument {name!r} requires semantic parameter {parameter_name!r}",
+            )
+
+    if not correlated:
+        _fail(
+            "source_binding",
+            "missing_correlated_argument",
+            f"Source binding for {entity.entity_id!r} has no column-driven argument",
+        )
+    positions = {
+        cast(int, arguments[name].position) for name in rendered if arguments[name].is_positional
+    }
+    if positions:
+        highest = max(positions)
+        physical = {
+            argument.position: argument
+            for argument in arguments.values()
+            if argument.is_positional and argument.position is not None
+        }
+        holes = [
+            physical[index].name
+            for index in sorted(physical)
+            if index < highest and index not in positions
+        ]
+        if holes:
+            _fail(
+                "source_binding",
+                "optional_positional_hole",
+                f"Cannot omit earlier positional arguments {holes!r}",
+            )
+    ordered = sorted(
+        ((arguments[name], sql, detail, value) for name, (sql, detail, value) in rendered.items()),
+        key=lambda item: (
+            (0, cast(int, item[0].position))
+            if item[0].is_positional
+            else (1, item[0].field_index or 0)
+        ),
+    )
+    sql_args: list[str] = []
+    details: list[dict[str, Any]] = []
+    for argument, sql, detail, value in ordered:
+        sql_args.append(
+            sql if argument.is_positional else f"{_quote_ident(argument.name)} := {sql}"
+        )
+        details.append(detail)
+        if detail["kind"] == "parameter":
+            parameters.append(value)
+    return f"{_qualified_source(entity)}({', '.join(sql_args)})", details
+
+
+def _compile_invocation_source(
+    catalogs: dict[str, Catalog],
+    graph: FederatedSemanticModel,
+    identities: dict[str, dict[str, Any]],
+    root: SemanticEntity,
+    query: dict[str, Any],
+    bindings: dict[str, str],
+    parameters: list[Any],
+) -> dict[str, Any] | None:
+    inputs = _validate_inputs(query)
+    chain = _resolve_invocation_chain(graph, identities, root, query, bindings, inputs)
+    if not chain:
+        if inputs or query.get("source_bindings"):
+            _fail(
+                "source_binding",
+                "missing_root_source_binding",
+                "Inputs and source bindings must drive the root entity",
+            )
+        return None
+
+    requested_limit = int(
+        (query.get("execution_limits") or {}).get("max_invocations", _DEFAULT_MAX_INVOCATIONS)
+    )
+    max_invocations = min(_HARD_MAX_INVOCATIONS, requested_limit)
+    ctes: list[str] = []
+    paths: dict[str, tuple[str, ...]] = {}
+    previous_stage: str | None = None
+    prevalidated_required_entities: set[str] = set()
+    invocation_plans: list[dict[str, Any]] = []
+    total_invocations = 0
+
+    for index, binding in enumerate(chain):
+        driver = binding.definition["driver"]
+        driver_paths: dict[str, tuple[str, ...]]
+        if binding.input_id is not None:
+            if index != 0:
+                _fail(
+                    "source_binding",
+                    "inline_driver_not_leaf",
+                    "An inline input may only begin an invocation path",
+                )
+            item = inputs[binding.input_id]
+            input_alias = f"_input{index}"
+            column_names = [str(column["name"]) for column in item["columns"]]
+            row_sql: list[str] = []
+            for row in item["rows"]:
+                values: list[str] = []
+                for column, value in zip(item["columns"], row, strict=True):
+                    parameters.append(value)
+                    values.append(f"CAST(? AS {_safe_type(str(column['type']))})")
+                row_sql.append(f"({', '.join(values)})")
+            names_sql = ", ".join(_quote_ident(name) for name in column_names)
+            values_sql = ", ".join(row_sql)
+            ctes.append(f"{_quote_ident(input_alias)}({names_sql}) AS (VALUES {values_sql})")
+            driver_source = _quote_ident(input_alias)
+            driver_paths = {f"input:{binding.input_id}": ()}
+            driver_count = len(item["rows"])
+            input_columns = {str(column["name"]): column for column in item["columns"]}
+            driver_label = binding.input_id
+            driver_kind = "inline_input"
+        else:
+            assert binding.driver_entity is not None
+            driver_marker = _entity_marker(binding.driver_entity)
+            driver_count = int(driver["max_rows"])
+            base_source: str
+            if previous_stage is None:
+                if binding.driver_entity.source_kind != "relation":
+                    _fail(
+                        "source_binding",
+                        "unbound_function_driver",
+                        "Function driver "
+                        f"{binding.driver_entity.entity_id!r} needs its own source binding",
+                    )
+                qualified_driver = _qualified_source(binding.driver_entity)
+                base_source = qualified_driver
+                driver_paths = {driver_marker: ()}
+            else:
+                base_source = _quote_ident(previous_stage)
+                driver_paths = paths
+            source_alias = '"_source"'
+            driver_member_alias = _path_alias(source_alias, driver_paths[driver_marker])
+            driver_lookup: dict[str, tuple[SemanticEntity, dict[str, Any], str]] = {}
+            for member_id, member in binding.driver_entity.members.items():
+                found = (binding.driver_entity, member, driver_member_alias)
+                driver_lookup[member_id] = found
+                driver_lookup[
+                    f"{binding.driver_entity.catalog_id}::{binding.driver_entity.entity_id}::{member_id}"
+                ] = found
+            driver_filter = driver.get("filters")
+            filter_sql = _compile_filter(driver_filter, driver_lookup, parameters)
+            filtered_ids = {
+                str(ref if isinstance(ref, str) else ref.get("member_id", ""))
+                for ref in _filter_members(driver_filter)
+            }
+            driver_required_filters = (
+                _required_filters(catalogs, binding.driver_entity)
+                if binding.driver_entity.source_kind == "relation"
+                else []
+            )
+            for group in driver_required_filters:
+                satisfied = any(
+                    member_id in filtered_ids
+                    and binding.driver_entity.members.get(member_id, {}).get("column") == column
+                    for column in group
+                    for member_id in binding.driver_entity.members
+                )
+                if not satisfied:
+                    _fail(
+                        "required_filter",
+                        "driver_required_filter_missing",
+                        f"Driver {binding.driver_entity.entity_id!r} requires a pre-invocation "
+                        f"filter on one of: {', '.join(group)}",
+                    )
+            if driver_required_filters:
+                prevalidated_required_entities.add(driver_marker)
+            order_sql: list[str] = []
+            for order in driver.get("order", []):
+                member_id = str(order.get("member_id", ""))
+                order_member = binding.driver_entity.members.get(member_id)
+                if order_member is None:
+                    _fail(
+                        "source_binding",
+                        "unknown_driver_order_member",
+                        f"Unknown driver order member {member_id!r}",
+                    )
+                order_sql.append(
+                    f"{_member_sql(binding.driver_entity, order_member, driver_member_alias)} "
+                    f"{str(order['direction']).upper()}"
+                )
+            driver_source = " ".join(
+                part
+                for part in (
+                    f"(SELECT * FROM {base_source} AS {source_alias}",
+                    f"WHERE {filter_sql}" if filter_sql else "",
+                    f"ORDER BY {', '.join(order_sql)}" if order_sql else "",
+                    f"LIMIT {driver_count})",
+                )
+                if part
+            )
+            input_columns = {}
+            driver_label = f"{binding.driver_entity.catalog_id}::{binding.driver_entity.entity_id}"
+            driver_kind = "entity"
+        total_invocations += driver_count
+        if total_invocations > max_invocations:
+            _fail(
+                "execution_limit",
+                "invocation_limit",
+                f"Invocation path may execute {total_invocations} function rows, "
+                f"above limit {max_invocations}",
+            )
+        call_sql, argument_plan = _correlated_call_sql(
+            binding, query, parameters, '"_driver"', driver_paths, input_columns
+        )
+        stage = f"_stage{index}"
+        stage_limit = min(
+            _DEFAULT_MAX_STAGE_ROWS,
+            int(binding.definition.get("max_output_rows", _DEFAULT_MAX_STAGE_ROWS)),
+        )
+        ctes.append(
+            f'{_quote_ident(stage)} AS (SELECT "_driver" AS "driver", "_fn" AS "entity" '
+            f'FROM {driver_source} AS "_driver" CROSS JOIN LATERAL {call_sql} '
+            f'AS "_fn" LIMIT {stage_limit})'
+        )
+        paths = {marker: ("driver", *path) for marker, path in driver_paths.items()}
+        paths[_entity_marker(binding.entity)] = ("entity",)
+        invocation_plans.append(
+            {
+                "entity": {
+                    "catalog_id": binding.entity.catalog_id,
+                    "entity_id": binding.entity.entity_id,
+                },
+                "driver_kind": driver_kind,
+                "driver": driver_label,
+                "argument_bindings": argument_plan,
+                "estimated_invocations": driver_count,
+            }
+        )
+        previous_stage = stage
+
+    assert previous_stage is not None
+    driving_grain: list[dict[str, Any]] = []
+    for marker, path in paths.items():
+        if marker == _entity_marker(root):
+            continue
+        if marker.startswith("input:"):
+            input_id = marker.split(":", 1)[1]
+            for column in inputs[input_id]["grain"]:
+                driving_grain.append(
+                    {"source": input_id, "member": str(column), "path": path, "input": True}
+                )
+            continue
+        entity = next(
+            (
+                item.driver_entity
+                for item in chain
+                if item.driver_entity is not None and _entity_marker(item.driver_entity) == marker
+            ),
+            None,
+        )
+        if entity is None:
+            continue
+        for member_id in entity.definition.get("grain", []):
+            driving_grain.append(
+                {
+                    "source": f"{entity.catalog_id}::{entity.entity_id}",
+                    "member": str(member_id),
+                    "path": path,
+                    "entity": entity,
+                }
+            )
+    effective = list(driving_grain)
+    root_path = paths[_entity_marker(root)]
+    for member_id in root.definition.get("grain", []):
+        effective.append(
+            {
+                "source": f"{root.catalog_id}::{root.entity_id}",
+                "member": str(member_id),
+                "path": root_path,
+                "entity": root,
+            }
+        )
+    entity_by_marker: dict[str, SemanticEntity] = {}
+    for chain_binding in chain:
+        entity_by_marker[_entity_marker(chain_binding.entity)] = chain_binding.entity
+        if chain_binding.driver_entity is not None:
+            entity_by_marker[_entity_marker(chain_binding.driver_entity)] = (
+                chain_binding.driver_entity
+            )
+    return {
+        "with": f"WITH {', '.join(ctes)}",
+        "source": _quote_ident(previous_stage),
+        "root_alias": _path_alias("_e0", root_path),
+        "paths": paths,
+        "entities": entity_by_marker,
+        "invocation_entities": [item.entity for item in chain],
+        "prevalidated_required_entities": prevalidated_required_entities,
+        "driving_grain": driving_grain,
+        "effective_grain": effective,
+        "invocations": invocation_plans,
+        "estimated_invocations": total_invocations,
+    }
 
 
 def _member_sql(
@@ -668,10 +1358,23 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
         bindings = cast(dict[str, str], query.get("bindings") or {})
         root = _resolve_entity(graph, identities, root_ref, bindings)
         parameters: list[Any] = []
-        aliases: dict[str, str] = {_entity_marker(root): "_e0"}
+        invocation = _compile_invocation_source(
+            catalogs, graph, identities, root, query, bindings, parameters
+        )
+        aliases: dict[str, str] = (
+            {
+                marker: _path_alias("_e0", path)
+                for marker, path in invocation["paths"].items()
+                if not marker.startswith("input:")
+            }
+            if invocation
+            else {_entity_marker(root): "_e0"}
+        )
         joins: list[tuple[_Edge, str]] = []
 
         def add_path(entity: SemanticEntity, requested: list[str] | None = None) -> None:
+            if _entity_marker(entity) in aliases:
+                return
             for edge in _find_path(graph, identities, root, entity, requested, bindings):
                 definition = edge.relationship.definition
                 cardinality = definition["to_cardinality" if edge.forward else "from_cardinality"]
@@ -717,10 +1420,23 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
 
         dimension_items = resolved[: len(dimensions)]
         measure_items = resolved[len(dimensions) :]
-        participating = [root, *(edge.target for edge, _alias in joins)]
+        participating = _unique_entities(
+            [
+                root,
+                *((invocation or {}).get("entities", {}).values()),
+                *(edge.target for edge, _alias in joins),
+            ]
+        )
         lookup: dict[str, tuple[SemanticEntity, dict[str, Any], str]] = {}
         ambiguous: set[str] = set()
-        for entity in participating:
+        required_entities = _unique_entities(
+            [
+                root,
+                *((invocation or {}).get("invocation_entities", [])),
+                *(edge.target for edge, _alias in joins),
+            ]
+        )
+        for entity in required_entities:
             alias = aliases[_entity_marker(entity)]
             for member_id, member in entity.members.items():
                 qualified = f"{entity.catalog_id}::{entity.entity_id}::{member_id}"
@@ -734,6 +1450,47 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
         selects: list[str] = []
         groups: list[str] = []
         output_names: set[str] = set()
+        result_grain: list[str] = []
+        driving_plan_grain: list[dict[str, str]] = []
+        if invocation and not query.get("allow_driving_grain_reduction", False):
+            selected_refs = {
+                (*_ref_key(item), str(item.get("member_id", ""))) for item in dimensions
+            }
+            for grain in invocation["driving_grain"]:
+                base_name = str(grain["member"])
+                if grain.get("entity") is not None:
+                    entity = cast(SemanticEntity, grain["entity"])
+                    ref = (entity.catalog_id, entity.entity_id, base_name)
+                    member = entity.members.get(base_name)
+                    if member is None:
+                        _fail(
+                            "source_binding",
+                            "unknown_driver_grain",
+                            f"Driver grain member {base_name!r} does not exist",
+                        )
+                    sql = _member_sql(entity, member, _path_alias("_e0", grain["path"]))
+                    if ref in selected_refs:
+                        continue
+                else:
+                    sql = f"{_path_alias('_e0', grain['path'])}.{_quote_ident(base_name)}"
+                name = base_name
+                if name in output_names or any(
+                    str(item.get("alias") or item.get("member_id")) == name for item in dimensions
+                ):
+                    name = f"{str(grain['source']).split('::')[-1]}__{base_name}"
+                if name in output_names:
+                    _fail(
+                        "source_binding",
+                        "driving_grain_name_collision",
+                        f"Driving grain output {name!r} is ambiguous",
+                    )
+                output_names.add(name)
+                selects.append(f"{sql} AS {_quote_ident(name)}")
+                groups.append(sql)
+                result_grain.append(name)
+                driving_plan_grain.append(
+                    {"source": str(grain["source"]), "member": base_name, "output_name": name}
+                )
         for item in dimension_items:
             if item.member.get("kind") == "measure":
                 _fail(
@@ -763,6 +1520,7 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
             output_names.add(name)
             selects.append(f"{sql} AS {_quote_ident(name)}")
             groups.append(sql)
+            result_grain.append(name)
         selected_dimension_ids = {str(item.member.get("member_id")) for item in dimension_items}
         for item in measure_items:
             if item.member.get("kind") != "measure":
@@ -791,7 +1549,11 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
                 f"{_aggregate_sql(item.entity, item.member, item.alias)} AS {_quote_ident(name)}"
             )
 
-        from_sql = f"FROM {_source_sql(root, query, parameters)} AS _e0"
+        from_sql = (
+            f"FROM {invocation['source']} AS _e0"
+            if invocation
+            else f"FROM {_source_sql(root, query, parameters)} AS _e0"
+        )
         join_lines: list[str] = []
         for edge, alias in joins:
             definition = edge.relationship.definition
@@ -824,6 +1586,10 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
         having = _compile_filter(query.get("measure_filters"), lookup, parameters)
         filtered = [lookup.get(_filter_key(item)) for item in _filter_members(query.get("filters"))]
         for entity in participating:
+            if _entity_marker(entity) in (
+                (invocation or {}).get("prevalidated_required_entities", set())
+            ):
+                continue
             for group in _required_filters(catalogs, entity):
                 locally_filtered = any(
                     member.get("column") == column
@@ -843,7 +1609,23 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
                     for column in group
                     for mapping in _source_arguments(entity)
                 )
-                if not locally_filtered and not argument_supplied:
+                correlated_argument_supplied = any(
+                    _ref_key(source_binding.get("entity", {}))
+                    == (entity.catalog_id, entity.entity_id)
+                    and isinstance((bound := source_binding.get("arguments", {}).get(column)), dict)
+                    and (
+                        "input_column" in bound
+                        or "member" in bound
+                        or ("parameter" in bound and bound["parameter"] in supplied_parameters)
+                    )
+                    for column in group
+                    for source_binding in query.get("source_bindings", [])
+                )
+                if (
+                    not locally_filtered
+                    and not argument_supplied
+                    and not correlated_argument_supplied
+                ):
                     _fail(
                         "required_filter",
                         "required_filter_missing",
@@ -865,6 +1647,7 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
         sql = "\n".join(
             item
             for item in (
+                invocation["with"] if invocation else "",
                 f"SELECT {', '.join(selects)}",
                 from_sql,
                 *join_lines,
@@ -886,7 +1669,62 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
                 {
                     "root": {"catalog_id": root.catalog_id, "entity_id": root.entity_id},
                     "attachment_alias": root.host.database,
-                    "entities": list(aliases),
+                    "entities": list(
+                        dict.fromkeys(
+                            [
+                                *(
+                                    marker
+                                    for marker in (invocation or {}).get("paths", {})
+                                    if not marker.startswith("input:")
+                                ),
+                                *aliases,
+                            ]
+                        )
+                    ),
+                    **(
+                        {
+                            "driver": {
+                                "kind": invocation["invocations"][0]["driver_kind"],
+                                "source": invocation["invocations"][0]["driver"],
+                            }
+                        }
+                        if invocation
+                        else {}
+                    ),
+                    "invocations": invocation["invocations"] if invocation else [],
+                    "effective_source_grain": [
+                        {
+                            "source": str(item["source"]),
+                            "member": str(item["member"]),
+                            "output_name": next(
+                                (
+                                    grain["output_name"]
+                                    for grain in driving_plan_grain
+                                    if grain["source"] == str(item["source"])
+                                    and grain["member"] == str(item["member"])
+                                ),
+                                str(item["member"]),
+                            ),
+                        }
+                        for item in (
+                            invocation["effective_grain"]
+                            if invocation
+                            else [
+                                {
+                                    "source": f"{root.catalog_id}::{root.entity_id}",
+                                    "member": str(member_id),
+                                }
+                                for member_id in root.definition.get("grain", [])
+                            ]
+                        )
+                    ],
+                    "result_grain": result_grain,
+                    "estimated_invocations": invocation["estimated_invocations"]
+                    if invocation
+                    else 0,
+                    "driving_grain_reduced": bool(
+                        invocation and query.get("allow_driving_grain_reduction", False)
+                    ),
                 }
             ],
             "sql": sql,
