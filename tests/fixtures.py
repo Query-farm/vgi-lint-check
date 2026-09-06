@@ -124,7 +124,7 @@ def func(
     executable_examples=(),
     exec_parse_error=None,
     arguments=(),
-    input_from_args=False,
+    input_from_args=None,
     result_columns=(),
     result_columns_parse_error=None,
     result_dynamic_tables=(),

@@ -127,6 +127,14 @@ def _argument_function_type(value: Any) -> Any:
     return "macro" if value == "scalar_macro" else value
 
 
+def _input_from_args_capability(values: list[bool | None]) -> bool | None:
+    """Preserve explicit capability values and old-runtime discovery gaps."""
+    explicit = {value for value in values if value is not None}
+    if len(explicit) == 1 and all(value is not None for value in values):
+        return explicit.pop()
+    return None
+
+
 def build_catalog(
     snapshot: Snapshot,
     alias: str,
@@ -159,7 +167,7 @@ def build_catalog(
     # as well as name. A name with several overloads of one type keeps all its
     # arguments so semantic compilation can reject the ambiguity explicitly.
     args_by_key: dict[tuple[Any, Any, Any], list[Argument]] = {}
-    input_from_args_by_key: dict[tuple[Any, Any, Any], bool] = {}
+    input_from_args_by_key: dict[tuple[Any, Any, Any], list[bool | None]] = {}
     for r in argument_rows or []:
         key = (
             r.get("schema_name"),
@@ -169,8 +177,9 @@ def build_catalog(
         name = r.get("arg_name")
         if not name:
             continue
-        input_from_args_by_key[key] = input_from_args_by_key.get(key, False) or bool(
-            r.get("input_from_args")
+        capability = r.get("input_from_args") if "input_from_args" in r else None
+        input_from_args_by_key.setdefault(key, []).append(
+            capability if isinstance(capability, bool) else None
         )
         args_by_key.setdefault(key, []).append(
             Argument(
@@ -343,8 +352,10 @@ def build_catalog(
                 # function_type column on argument rows.
                 args_by_key.get((sname, fname, None), []),
             ),
-            input_from_args=input_from_args_by_key.get(
-                (sname, fname, ftype), input_from_args_by_key.get((sname, fname, None), False)
+            input_from_args=_input_from_args_capability(
+                input_from_args_by_key.get(
+                    (sname, fname, ftype), input_from_args_by_key.get((sname, fname, None), [])
+                )
             ),
         )
         # Correlate a table-function to its table so column/desc rules use the

@@ -178,6 +178,7 @@ More generally, this means the same table, view, or table function that carries
     "kind": "dimension",
     "column": "amount",
     "data_type": "DECIMAL(18,2)",
+    "unit": "USD",
     "description": "Booked gross order amount in USD."
   },
   {
@@ -199,6 +200,35 @@ More generally, this means the same table, view, or table function that carries
 ]
 ```
 
+### Add physical units
+
+Use `unit` when every row has the same physical unit. Unit strings are deliberately not tied to an
+ontology, though UCUM spellings are recommended when available. A unit must be non-empty. Do not
+set both `unit` and `unit_parameter`.
+
+For a table-function output whose unit is selected by an argument, map every advertised argument
+choice:
+
+```json
+{
+  "member_id": "temperature",
+  "kind": "dimension",
+  "column": "temperature_2m",
+  "unit_parameter": {
+    "argument": "temperature_unit",
+    "values": {
+      "celsius": "Cel",
+      "fahrenheit": "[degF]"
+    }
+  }
+}
+```
+
+`temperature_unit` must exist exactly once in `vgi_function_arguments()` and in the entity's
+`source.arguments`. If discovery publishes choices, the map must cover all of them. A `sum`, `min`,
+`max`, or `avg` measure over this member inherits the same declaration; counts do not. Declare units
+on derived arithmetic measures explicitly rather than relying on inference.
+
 Choose the kind by meaning:
 
 | Kind | Use it for | Important rules |
@@ -210,6 +240,14 @@ Choose the kind by meaning:
 
 `member_id` is the stable API name. `column` is the physical implementation. Keeping them separate
 lets a physical column be renamed without changing every semantic query.
+
+`column` is always a literal physical column name, including when that name contains a dot. For a
+field inside a DuckDB `STRUCT`, use an explicit path such as
+`"column_path": ["bbox", "xmin"]`. Each segment is quoted independently by the compiler, and the
+first segment must name a discovered top-level column. Declare `data_type` on nested-field members
+because older discovery surfaces may not report the field's type independently. Paths represent
+only static struct-field access; they are not raw SQL and cannot contain expressions or function
+calls. Model validation checks every segment when a detailed `STRUCT(...)` type is discoverable.
 
 Use `title` for a display label and `description` for business meaning. `hidden: true` can keep an
 implementation member available to expressions and relationships without advertising it as a
@@ -309,6 +347,51 @@ produces a left join.
 Use multiple predicate pairs for composite keys. Pairs are combined with `AND`. The default
 `nulls: "not_equal"` uses `=`; `nulls: "equal"` uses `IS NOT DISTINCT FROM`.
 
+Use a typed spatial operator for geometry relationships:
+
+```json
+{"from_member": "geometry", "to_member": "geometry", "operator": "spatial_within"}
+```
+
+Both members must be physical dimensions or identifiers with a `GEOMETRY` type. Use
+`spatial_contains` when the `from` geometry contains the `to` geometry, or `spatial_intersects`
+when overlap is the actual business relationship.
+
+For a key held inside a repeated `LIST<STRUCT>` member, identify the collection side and its field
+path explicitly:
+
+```json
+{
+  "from_member": "connectors",
+  "to_member": "connector_id",
+  "operator": "list_contains",
+  "from_element_path": ["connector_id"]
+}
+```
+
+Exactly one of `from_element_path` or `to_element_path` is required; use an empty path for a LIST of
+scalar values. The compiler emits only typed, quoted `list_transform`/`list_contains` SQL. It never
+accepts an expression string. These predicates do not imply safe cardinality: declare the real
+relationship cardinality, and expect the compiler
+to reject a traversal into a `many` side.
+
+When several logical entity types share one physical registry, qualify the relationship with a
+literal discriminator rather than pretending the identifier alone conveys the entity type:
+
+```json
+"conditions": [
+  {
+    "side": "to",
+    "member": "path",
+    "value": "theme=places/type=place"
+  }
+]
+```
+
+Conditions accept JSON scalar values and equality only. Values are emitted as SQL parameters, not
+interpolated into generated SQL. A condition member must be a physical identifier or dimension on
+the named side.
+
 Relationship endpoints always use stable catalog and entity IDs—never runtime attachment aliases.
 One assertion is enough to navigate in either direction. If both providers independently publish the
 same relationship ID and structurally reversed definition, it becomes `corroborated`. A relationship
@@ -355,6 +438,12 @@ If `since` is positional and `region` is named, the compiler emits:
 events_runtime.main.events(?, "region" := ?)
 ```
 
+A fixed-schema table macro follows the same scalar source-argument contract. It must also publish
+`vgi.result_columns_schema`, and its semantic grain must remain true for every accepted argument
+value. This is useful for a release-selecting macro whose columns do not change. Do not annotate a
+macro with argument-dependent columns or an uncertain row grain; first publish a normalized macro
+or table-function surface with a fixed contract.
+
 It orders positional values by `arg_position` and named values by `field_index`. A mapping with
 `required: false` is omitted when its semantic parameter is absent, allowing the function's physical
 default to apply.
@@ -367,6 +456,9 @@ should add to the tag.
 If the function was created with `defineRowTransformFunction()`, discovery reports
 `input_from_args = true`. That runtime capability lets a semantic query bind positional arguments to
 columns and invoke the function once per driving row. Do not copy it into `vgi.semantic_entity`.
+An explicit `false` means the runtime does not support correlation. A `null`/missing value means the
+installed VGI extension is too old to advertise the capability; upgrade it before testing
+correlated requests. Scalar requests continue to work in that unknown state.
 
 For example, a caller can provide a typed location batch and bind it to a forecast entity:
 
@@ -466,8 +558,12 @@ To focus only on this layer while authoring:
 ```bash
 uv run vgi-lint 'uv run my_worker.py' \
   --no-execute --no-check-links \
-  --select VGI418,VGI419,VGI420,VGI421
+  --select VGI418,VGI419,VGI420,VGI421 \
+  --agent-tasks-file /absolute/path/to/vgi-agent-tests.yaml
 ```
+
+The explicit sidecar path overrides configured and conventional discovery and is resolved to an
+absolute path, so lint behaves the same when invoked outside the worker directory.
 
 ### Resolve several workers together
 
@@ -511,6 +607,26 @@ A semantic request for revenue by customer country looks like this:
 
 `compile_only: true` validates and returns a parameterized SQL plan without preparing, explaining,
 executing, or caching it. Remove that property—or set it to false—only when execution is intended.
+
+Write the document to `request.json` and exercise the supported compiler entry point:
+
+```bash
+vgi-lint semantic-compile <sales-worker> <crm-worker> \
+  --as sales_runtime --as crm_runtime \
+  --request request.json
+```
+
+For the two-location `inputs`/`source_bindings` request shown earlier, use the same command with the
+weather worker:
+
+```bash
+vgi-lint semantic-compile <weather-worker> \
+  --as weather_runtime --request locations-request.json
+```
+
+Confirm that the result contains `CROSS JOIN LATERAL`, two estimated invocations, the driving
+location grain, and the expected `output_units`. `--request -` reads the request from stdin. This
+command always compiles only, even if the JSON says `"compile_only": false`.
 
 If more than one attachment has the same logical `catalog_id`, bind a catalog's `binding_key` to the
 desired runtime alias:
@@ -570,6 +686,10 @@ hidden reference answer.
 | `missing_function_argument_metadata` | The compiler cannot see `vgi_function_arguments()` details | Upgrade/fix the worker or extension metadata |
 | `ambiguous_function_overload` | One semantic source name has several physical overloads | Publish a uniquely named wrapper function/view |
 | `optional_positional_hole` | A later positional value was supplied while an earlier one was omitted | Supply the prefix, use a named physical argument, or publish a wrapper |
+| `unit_parameter_choices_incomplete` | A dynamic unit map omits an advertised argument choice | Add every discovered choice to `values` |
+| `unit_parameter_value_unmapped` | A request/default selected a value absent from the unit map | Correct the request or extend the validated mapping |
+| `correlated_input_not_supported` | The runtime explicitly reports `input_from_args = false` | Use a scalar call or a correlation-capable function |
+| `correlated_input_capability_unknown` | An older runtime cannot report `input_from_args` | Upgrade the VGI extension/runtime before correlating |
 
 ## Completion checklist
 

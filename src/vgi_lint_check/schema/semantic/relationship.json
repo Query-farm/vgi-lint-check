@@ -1,10 +1,90 @@
 {
-  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://query.farm/schema/vgi/semantic/relationship.json",
-  "type":"object","additionalProperties":false,"required":["relationship_id","from","to","from_cardinality","to_cardinality","predicate"],
-  "properties":{
-    "relationship_id":{"$ref":"definitions.json#/$defs/semantic_id"},"title":{"type":"string"},"description":{"type":"string"},
-    "from":{"$ref":"definitions.json#/$defs/entity_ref"},"to":{"$ref":"definitions.json#/$defs/entity_ref"},
-    "from_cardinality":{"$ref":"definitions.json#/$defs/cardinality"},"to_cardinality":{"$ref":"definitions.json#/$defs/cardinality"},
-    "predicate":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","additionalProperties":false,"required":["from_member","to_member"],"properties":{"from_member":{"$ref":"definitions.json#/$defs/semantic_id"},"to_member":{"$ref":"definitions.json#/$defs/semantic_id"},"nulls":{"enum":["not_equal","equal"],"default":"not_equal"}}}}
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://query.farm/schema/vgi/semantic/relationship.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["relationship_id", "from", "to", "from_cardinality", "to_cardinality", "predicate"],
+  "properties": {
+    "relationship_id": {"$ref": "definitions.json#/$defs/semantic_id"},
+    "title": {"type": "string"},
+    "description": {"type": "string"},
+    "from": {"$ref": "definitions.json#/$defs/entity_ref"},
+    "to": {"$ref": "definitions.json#/$defs/entity_ref"},
+    "from_cardinality": {"$ref": "definitions.json#/$defs/cardinality"},
+    "to_cardinality": {"$ref": "definitions.json#/$defs/cardinality"},
+    "conditions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/literal_condition"}
+    },
+    "predicate": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "oneOf": [
+          {"$ref": "#/$defs/equality_predicate"},
+          {"$ref": "#/$defs/spatial_predicate"},
+          {"$ref": "#/$defs/list_predicate"}
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "literal_condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["side", "member", "value"],
+      "properties": {
+        "side": {"enum": ["from", "to"]},
+        "member": {"$ref": "definitions.json#/$defs/semantic_id"},
+        "operator": {"const": "equal"},
+        "value": {"type": ["string", "number", "boolean", "null"]}
+      }
+    },
+    "element_path": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 16,
+      "items": {"type": "string", "minLength": 1, "maxLength": 200}
+    },
+    "equality_predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_member", "to_member"],
+      "properties": {
+        "from_member": {"$ref": "definitions.json#/$defs/semantic_id"},
+        "to_member": {"$ref": "definitions.json#/$defs/semantic_id"},
+        "operator": {"const": "equal"},
+        "nulls": {"enum": ["not_equal", "equal"], "default": "not_equal"}
+      }
+    },
+    "spatial_predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_member", "to_member", "operator"],
+      "properties": {
+        "from_member": {"$ref": "definitions.json#/$defs/semantic_id"},
+        "to_member": {"$ref": "definitions.json#/$defs/semantic_id"},
+        "operator": {"enum": ["spatial_contains", "spatial_within", "spatial_intersects"]}
+      }
+    },
+    "list_predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_member", "to_member", "operator"],
+      "oneOf": [
+        {"required": ["from_element_path"]},
+        {"required": ["to_element_path"]}
+      ],
+      "not": {"required": ["from_element_path", "to_element_path"]},
+      "properties": {
+        "from_member": {"$ref": "definitions.json#/$defs/semantic_id"},
+        "to_member": {"$ref": "definitions.json#/$defs/semantic_id"},
+        "operator": {"const": "list_contains"},
+        "from_element_path": {"$ref": "#/$defs/element_path"},
+        "to_element_path": {"$ref": "#/$defs/element_path"}
+      }
+    }
   }
 }

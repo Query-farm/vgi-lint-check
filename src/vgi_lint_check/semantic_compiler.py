@@ -21,7 +21,12 @@ from .semantic_federation import (
     FederatedSemanticModel,
     build_federated_semantic_model,
 )
-from .semantic_model import SemanticEntity, build_semantic_model, schema_diagnostics
+from .semantic_model import (
+    SemanticEntity,
+    _resolve_nested_type,
+    build_semantic_model,
+    schema_diagnostics,
+)
 from .semantic_schema import validate_instance
 
 DiagnosticStage = Literal[
@@ -31,6 +36,7 @@ DiagnosticStage = Literal[
     "catalog_binding",
     "relationship_resolution",
     "source_binding",
+    "unit_resolution",
     "execution_limit",
     "type_check",
     "fanout",
@@ -50,6 +56,7 @@ _DEFAULT_MAX_STAGE_ROWS = 10_000
 _SAFE_TYPE = re.compile(r"^[A-Za-z][A-Za-z0-9_ ]*(?:\([0-9]+(?:,[0-9]+)?\))?(?:\[\])?$")
 _BINARY_OPERATORS = {"add": "+", "subtract": "-", "multiply": "*", "divide": "/"}
 _FILTER_OPERATORS = {"eq": "=", "neq": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -100,6 +107,26 @@ def _fail(stage: DiagnosticStage, code: str, message: str) -> NoReturn:
 
 def _quote_ident(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
+
+
+def _column_sql(alias: str, value: str) -> str:
+    """Render one physical column name, including names that contain dots."""
+    return f"{alias}.{_quote_ident(value)}"
+
+
+def _member_column_path(member: dict[str, Any]) -> list[str]:
+    path = member.get("column_path")
+    if isinstance(path, list):
+        return [str(segment) for segment in path]
+    column = member.get("column")
+    return [str(column)] if column else []
+
+
+def _member_column_sql(alias: str, member: dict[str, Any]) -> str:
+    path = _member_column_path(member)
+    if not path:
+        raise ValueError("member is not column-backed")
+    return ".".join([alias, *(_quote_ident(segment) for segment in path)])
 
 
 def _quote_literal(value: str) -> str:
@@ -363,8 +390,134 @@ def _member_type(entity: SemanticEntity, member: dict[str, Any]) -> str | None:
     explicit = member.get("output_type") or member.get("data_type")
     if explicit:
         return str(explicit)
-    column = member.get("column")
-    return entity.physical_column_types.get(str(column)) if column else None
+    path = _member_column_path(member)
+    if not path:
+        return None
+    physical_type = entity.physical_column_types.get(path[0])
+    if len(path) == 1 or physical_type is None:
+        return physical_type
+    return _resolve_nested_type(physical_type, path[1:])
+
+
+def _member_unit_definition(
+    entity: SemanticEntity,
+    member: dict[str, Any],
+    visited: frozenset[str] = frozenset(),
+) -> tuple[str, Any] | None:
+    """Return a declared unit, conservatively inheriting through safe aggregations."""
+    member_id = str(member.get("member_id", ""))
+    if member_id in visited:
+        return None
+    if "unit" in member:
+        return "static", member["unit"]
+    if "unit_parameter" in member:
+        return "dynamic", member["unit_parameter"]
+    if (
+        member.get("kind") == "measure"
+        and member.get("aggregation") in {"sum", "min", "max", "avg"}
+        and member.get("member")
+    ):
+        source = entity.members.get(str(member["member"]))
+        if source is not None:
+            return _member_unit_definition(entity, source, visited | {member_id})
+    return None
+
+
+def _source_binding_argument(
+    entity: SemanticEntity, query: dict[str, Any], argument_name: str
+) -> dict[str, Any] | None:
+    matches = [
+        binding
+        for binding in query.get("source_bindings", [])
+        if _ref_key(binding.get("entity", {})) == (entity.catalog_id, entity.entity_id)
+    ]
+    if not matches:
+        return None
+    value = matches[0].get("arguments", {}).get(argument_name)
+    return cast(dict[str, Any], value) if isinstance(value, dict) else None
+
+
+def _decoded_argument_default(argument: Argument) -> Any:
+    if argument.default is None:
+        return _MISSING
+    try:
+        return json.loads(argument.default)
+    except (TypeError, ValueError):
+        _fail(
+            "unit_resolution",
+            "unit_parameter_default_invalid",
+            f"Function argument {argument.name!r} has an invalid JSON default",
+        )
+
+
+def _unit_value_key(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def _resolve_output_unit(
+    entity: SemanticEntity,
+    member: dict[str, Any],
+    output_name: str,
+    query: dict[str, Any],
+) -> tuple[bool, str | None, dict[str, Any] | None]:
+    definition = _member_unit_definition(entity, member)
+    if definition is None:
+        return False, None, None
+    kind, value = definition
+    if kind == "static":
+        return True, str(value), None
+    unit_parameter = cast(dict[str, Any], value)
+    argument_name = str(unit_parameter["argument"])
+    arguments = [item for item in entity.function_arguments if item.name == argument_name]
+    if len(arguments) != 1:
+        _fail(
+            "unit_resolution",
+            "unit_parameter_argument_unavailable",
+            f"Cannot resolve unit argument {argument_name!r} for output {output_name!r}",
+        )
+    mapping = next(
+        (item for item in _source_arguments(entity) if item.get("argument") == argument_name),
+        None,
+    )
+    if mapping is None:
+        _fail(
+            "unit_resolution",
+            "unit_parameter_source_unmapped",
+            f"Unit argument {argument_name!r} is not exposed by the semantic source",
+        )
+    binding = _source_binding_argument(entity, query, argument_name)
+    parameter_name = str((binding or mapping).get("parameter", ""))
+    supplied = query.get("parameters", {}) if isinstance(query.get("parameters"), dict) else {}
+    effective: Any = supplied.get(parameter_name, _MISSING) if parameter_name else _MISSING
+    correlated_binding = binding is not None and ("input_column" in binding or "member" in binding)
+    if correlated_binding:
+        effective = _MISSING
+    if effective is _MISSING and not correlated_binding:
+        effective = _decoded_argument_default(arguments[0])
+    path = f"{entity.catalog_id}::{entity.entity_id}::{member.get('member_id')}"
+    if effective is _MISSING:
+        return (
+            True,
+            None,
+            {
+                "stage": "unit_resolution",
+                "code": "unit_parameter_value_unresolved",
+                "message": f"Unit for output {output_name!r} depends on argument "
+                f"{argument_name!r}, whose effective value is unavailable",
+                "path": path,
+            },
+        )
+    key = _unit_value_key(effective)
+    values = cast(dict[str, str], unit_parameter["values"])
+    if key not in values:
+        _fail(
+            "unit_resolution",
+            "unit_parameter_value_unmapped",
+            f"Unit argument {argument_name!r} has unmapped effective value {key!r}",
+        )
+    return True, values[key], None
 
 
 def _validate_inputs(query: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -556,7 +709,14 @@ def _correlated_call_sql(
         override = overrides.get(name)
         if override is not None and ("input_column" in override or "member" in override):
             correlated = True
-            if not entity.input_from_args:
+            if entity.input_from_args is None:
+                _fail(
+                    "source_binding",
+                    "correlated_input_capability_unknown",
+                    f"Function {entity.entity_id!r} was loaded without input_from_args "
+                    "capability metadata; upgrade the VGI extension/runtime",
+                )
+            if entity.input_from_args is False:
                 _fail(
                     "source_binding",
                     "correlated_input_not_supported",
@@ -620,7 +780,7 @@ def _correlated_call_sql(
                         "unknown_driver_member",
                         f"Unknown driver member {member_id!r}",
                     )
-                if not member.get("column"):
+                if not _member_column_path(member):
                     _fail(
                         "source_binding",
                         "derived_driver_member",
@@ -959,8 +1119,8 @@ def _member_sql(
     member_id = str(member.get("member_id", ""))
     if member_id in stack:
         _fail("type_check", "expression_cycle", f"Cyclic semantic expression at {member_id!r}")
-    if member.get("column"):
-        sql = f"{alias}.{_quote_ident(str(member['column']))}"
+    if _member_column_path(member):
+        sql = _member_column_sql(alias, member)
     elif isinstance(member.get("expression"), dict):
         sql = _expression_sql(entity, member["expression"], alias, (*stack, member_id), False)
     else:
@@ -973,6 +1133,94 @@ def _member_sql(
     if member.get("output_type"):
         return f"CAST({sql} AS {_safe_type(str(member['output_type']))})"
     return sql
+
+
+def _list_element_sql(value_sql: str, path: list[Any]) -> str:
+    if not path:
+        return value_sql
+    access = ".".join(["_item", *(_quote_ident(str(segment)) for segment in path)])
+    return f"list_transform({value_sql}, _item -> {access})"
+
+
+def _relationship_predicate_sql(
+    edge: _Edge,
+    pair: dict[str, Any],
+    source_alias: str,
+    target_alias: str,
+) -> str:
+    if edge.forward:
+        from_entity, from_alias = edge.source, source_alias
+        to_entity, to_alias = edge.target, target_alias
+    else:
+        from_entity, from_alias = edge.target, target_alias
+        to_entity, to_alias = edge.source, source_alias
+    from_member = from_entity.members.get(str(pair.get("from_member", "")))
+    to_member = to_entity.members.get(str(pair.get("to_member", "")))
+    if from_member is None or to_member is None:
+        _fail(
+            "relationship_resolution",
+            "unresolved_relationship_member",
+            f"Relationship {edge.relationship.relationship_id!r} references an unknown member",
+        )
+    from_sql = _member_sql(from_entity, from_member, from_alias)
+    to_sql = _member_sql(to_entity, to_member, to_alias)
+    operator = pair.get("operator", "equal")
+    if operator == "equal":
+        equality = "IS NOT DISTINCT FROM" if pair.get("nulls", "not_equal") == "equal" else "="
+        return f"{from_sql} {equality} {to_sql}"
+    if operator == "spatial_contains":
+        return f"ST_Contains({from_sql}, {to_sql})"
+    if operator == "spatial_within":
+        return f"ST_Within({from_sql}, {to_sql})"
+    if operator == "spatial_intersects":
+        return f"ST_Intersects({from_sql}, {to_sql})"
+    if operator == "list_contains":
+        if "from_element_path" in pair:
+            return (
+                f"list_contains({_list_element_sql(from_sql, pair['from_element_path'])}, {to_sql})"
+            )
+        return f"list_contains({_list_element_sql(to_sql, pair['to_element_path'])}, {from_sql})"
+    _fail(
+        "relationship_resolution",
+        "unsupported_relationship_operator",
+        f"Relationship {edge.relationship.relationship_id!r} uses unsupported "
+        f"operator {operator!r}",
+    )
+
+
+def _relationship_condition_sql(
+    edge: _Edge,
+    condition: dict[str, Any],
+    source_alias: str,
+    target_alias: str,
+    parameters: list[Any],
+) -> str:
+    from_entity = edge.source if edge.forward else edge.target
+    to_entity = edge.target if edge.forward else edge.source
+    from_alias = source_alias if edge.forward else target_alias
+    to_alias = target_alias if edge.forward else source_alias
+    if condition.get("side") == "from":
+        entity, alias = from_entity, from_alias
+    else:
+        entity, alias = to_entity, to_alias
+    member = entity.members.get(str(condition.get("member", "")))
+    if member is None:
+        _fail(
+            "relationship_resolution",
+            "unresolved_relationship_condition_member",
+            f"Relationship {edge.relationship.relationship_id!r} condition references an "
+            "unknown member",
+        )
+    value = condition.get("value")
+    if not _value_compatible(value, _member_type(entity, member)):
+        _fail(
+            "type_check",
+            "incompatible_relationship_condition_value",
+            f"Relationship {edge.relationship.relationship_id!r} condition value is incompatible "
+            f"with member {member.get('member_id')!r}",
+        )
+    parameters.append(value)
+    return f"{_member_sql(entity, member, alias)} IS NOT DISTINCT FROM ?"
 
 
 def _expression_sql(
@@ -1452,6 +1700,18 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
         output_names: set[str] = set()
         result_grain: list[str] = []
         driving_plan_grain: list[dict[str, str]] = []
+        output_units: dict[str, str | None] = {}
+        unit_diagnostics: list[dict[str, Any]] = []
+
+        def record_unit(item: _Resolved, output_name: str) -> None:
+            declared, unit, diagnostic = _resolve_output_unit(
+                item.entity, item.member, output_name, query
+            )
+            if declared:
+                output_units[output_name] = unit
+            if diagnostic is not None:
+                unit_diagnostics.append(diagnostic)
+
         if invocation and not query.get("allow_driving_grain_reduction", False):
             selected_refs = {
                 (*_ref_key(item), str(item.get("member_id", ""))) for item in dimensions
@@ -1521,6 +1781,7 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
             selects.append(f"{sql} AS {_quote_ident(name)}")
             groups.append(sql)
             result_grain.append(name)
+            record_unit(item, name)
         selected_dimension_ids = {str(item.member.get("member_id")) for item in dimension_items}
         for item in measure_items:
             if item.member.get("kind") != "measure":
@@ -1548,6 +1809,7 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
             selects.append(
                 f"{_aggregate_sql(item.entity, item.member, item.alias)} AS {_quote_ident(name)}"
             )
+            record_unit(item, name)
 
         from_sql = (
             f"FROM {invocation['source']} AS _e0"
@@ -1558,28 +1820,16 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
         for edge, alias in joins:
             definition = edge.relationship.definition
             left_alias = aliases[_entity_marker(edge.source)]
+            target_sql = _source_sql(edge.target, query, parameters)
             pairs: list[str] = []
             for pair in definition.get("predicate", []):
-                left_id = pair["from_member"] if edge.forward else pair["to_member"]
-                right_id = pair["to_member"] if edge.forward else pair["from_member"]
-                left = edge.source.members.get(str(left_id))
-                right = edge.target.members.get(str(right_id))
-                if left is None or right is None:
-                    _fail(
-                        "relationship_resolution",
-                        "unresolved_relationship_member",
-                        f"Relationship {edge.relationship.relationship_id!r} references "
-                        "an unknown member",
-                    )
-                operator = (
-                    "IS NOT DISTINCT FROM" if pair.get("nulls", "not_equal") == "equal" else "="
+                pairs.append(_relationship_predicate_sql(edge, pair, left_alias, alias))
+            for condition in definition.get("conditions", []):
+                pairs.append(
+                    _relationship_condition_sql(edge, condition, left_alias, alias, parameters)
                 )
-                left_sql = _member_sql(edge.source, left, left_alias)
-                right_sql = _member_sql(edge.target, right, alias)
-                pairs.append(f"{left_sql} {operator} {right_sql}")
             cardinality = definition["to_cardinality" if edge.forward else "from_cardinality"]
             join_type = "INNER" if cardinality.get("min") == 1 else "LEFT"
-            target_sql = _source_sql(edge.target, query, parameters)
             join_lines.append(f"{join_type} JOIN {target_sql} AS {alias} ON {' AND '.join(pairs)}")
 
         where = _compile_filter(query.get("filters"), lookup, parameters)
@@ -1592,7 +1842,7 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
                 continue
             for group in _required_filters(catalogs, entity):
                 locally_filtered = any(
-                    member.get("column") == column
+                    ".".join(_member_column_path(member)) == column
                     and any(
                         item is not None and item[0] is entity and item[1] is member
                         for item in filtered
@@ -1731,6 +1981,8 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
             "parameters": parameters,
             "validation_scope": "semantic",
             "warnings": warnings,
+            **({"output_units": output_units} if output_units else {}),
+            **({"unit_diagnostics": unit_diagnostics} if unit_diagnostics else {}),
         }
         plan_errors = validate_instance("plan", plan)
         if plan_errors:

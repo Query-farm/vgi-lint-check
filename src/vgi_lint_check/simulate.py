@@ -555,6 +555,16 @@ def tool_describe_table(
                 "name": table,
                 "qualified_name": f"{catalog.qualifier}.{schema}.{table}",
                 "type": str(t.kind),
+                # Keep semantic identity and members ahead of long prose/physical
+                # columns so bounded observations never hide the modeled contract.
+                "semantic_entity": _semantic_tag(t.tags, TAG_SEMANTIC_ENTITY),
+                "semantic_members": _semantic_tag(t.tags, TAG_SEMANTIC_MEMBERS),
+                "semantic_relationships": _semantic_tag(t.tags, TAG_SEMANTIC_RELATIONSHIPS),
+                "semantic_column_members": {
+                    c.name: member
+                    for c in t.columns
+                    if (member := _semantic_tag(c.tags, TAG_SEMANTIC_MEMBER)) is not None
+                },
                 "comment": t.description_llm or t.comment,
                 "doc_md": t.description_md,
                 **({"category": t.category} if t.category else {}),
@@ -566,14 +576,6 @@ def tool_describe_table(
                     {"name": c.name, "type": c.data_type, "comment": c.comment} for c in t.columns
                 ],
                 "examples": [e.sql[:4_000] for e in t.examples[:5] if e.sql],
-                "semantic_entity": _semantic_tag(t.tags, TAG_SEMANTIC_ENTITY),
-                "semantic_members": _semantic_tag(t.tags, TAG_SEMANTIC_MEMBERS),
-                "semantic_relationships": _semantic_tag(t.tags, TAG_SEMANTIC_RELATIONSHIPS),
-                "semantic_column_members": {
-                    c.name: member
-                    for c in t.columns
-                    if (member := _semantic_tag(c.tags, TAG_SEMANTIC_MEMBER)) is not None
-                },
             }
     return {"error": f"no table {schema}.{table!r} — call list_tables to see what exists"}
 
@@ -836,15 +838,21 @@ _ACTOR = (
     '  {"thought":"...","action":"run_sql","sql":"<one SQL statement>"}'
     "  — run one read-only / session-local statement (SELECT, WITH, temp view)\n"
     '  {"thought":"...","action":"query_semantic_model","measures":[{"catalog_id":"...",'
-    '"entity_id":"...","member_id":"..."}],"dimensions":[],"filters":{...}?,'
-    '"order":[]?,"limit":50?,"bindings":{...}?,"parameters":{...}?,"inputs":[]?,'
+    '"entity_id":"...","member_id":"...","alias":"..."?}],"dimensions":[{"catalog_id":"...",'
+    '"entity_id":"...","member_id":"...","granularity":"year"?,"alias":"..."?}]?,'
+    '"filters":{"and":[{"member":"<member id>","operator":"eq|neq|gt|gte|lt|lte",'
+    '"value":"..."}]}?,'
+    '"order":[{"member":"<selected output>","direction":"asc|desc"}]?,"limit":50?,'
+    '"bindings":{...}?,"parameters":{...}?,"inputs":[]?,'
     '"source_bindings":[]?,"execution_limits":{...}?,"compile_only":false?}'
-    "  — compile and execute modeled measures/dimensions using the stable IDs shown by "
-    "list_catalogs and describe tools\n"
+    "  — compile and execute modeled measures/dimensions using the exact stable catalog_id "
+    "shown in semantic_catalog metadata, not the SQL attachment alias; entity/member IDs come "
+    "from list_catalogs and describe tools\n"
     "    Correlated shape: inputs=[{input_id,grain,columns:[{name,type,nullable?}],rows}], "
     "source_bindings=[{entity,driver:{input_id}|{entity,max_rows,filters?,order?},"
     "arguments:{physical_arg:{input_column}|{member}|{parameter}},max_output_rows?}]\n"
-    '  {"thought":"...","action":"final","answer_sql":"<SELECT whose result IS the answer>",'
+    '  {"thought":"...","action":"final","answer_sql":"<SELECT whose result IS the answer; '
+    'omit after a successful query_semantic_model>",'
     '"answer_summary":"...","friction":["missing/confusing metadata, else omit"]}\n\n'
     "RULES (mirror real-agent best practice):\n"
     "- Call describe_table / describe_function to learn columns and signatures before "
@@ -862,6 +870,11 @@ _ACTOR = (
     "describe_function result reports supports_correlated_input, the semantic tool can bind a "
     "bounded typed inputs row set or driver entity through source_bindings; it preserves driver "
     "grain unless allow_driving_grain_reduction is explicitly true.\n"
+    "- Omit compile_only (or set it to false) when answering the task. compile_only=true validates "
+    "and returns a plan but does not execute it or return answer rows.\n"
+    "- After query_semantic_model successfully returns answer rows, send final with a summary and "
+    "omit answer_sql. The semantic result is already the answer; do not recreate or rewrite its "
+    "SQL.\n"
     "- Avoid SELECT * in your final answer; select only the columns the task needs.\n"
     "- The orientation listing below is just a starting map — drill in with the tools."
 )
@@ -1074,8 +1087,9 @@ def run_task(
 
 def _observation(label: str, result: dict[str, Any]) -> str:
     """The delta message fed back to the analyst after a tool call."""
+    limit = 12_000 if label.startswith(("describe_table", "describe_function")) else 1_200
     return (
-        f"RESULT of {label}:\n{_clip(json.dumps(result, default=str))}\n\n"
+        f"RESULT of {label}:\n{_clip(json.dumps(result, default=str), limit)}\n\n"
         "Reply with your next JSON action (or a final answer)."
     )
 

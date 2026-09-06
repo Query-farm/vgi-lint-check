@@ -341,6 +341,35 @@ def test_function_arguments_retain_correlated_input_capability():
     assert next(loaded.iter_all_functions()).input_from_args is True
 
 
+def test_function_arguments_preserve_false_and_unknown_capability():
+    def loaded_capability(row):
+        snap = Snapshot(
+            schemas=[{"database_name": "v", "schema_name": "main", "comment": None, "tags": {}}],
+            functions=[
+                {
+                    "database_name": "v",
+                    "schema_name": "main",
+                    "function_name": "forecast",
+                    "function_type": "table",
+                    "tags": {},
+                }
+            ],
+        )
+        return next(
+            build_catalog(snap, "v", "loc", argument_rows=[row]).iter_all_functions()
+        ).input_from_args
+
+    base = {
+        "schema_name": "main",
+        "function_name": "forecast",
+        "function_type": "table",
+        "arg_name": "latitude",
+        "is_positional": True,
+    }
+    assert loaded_capability({**base, "input_from_args": False}) is False
+    assert loaded_capability(base) is None
+
+
 def test_agent_test_tasks_decoded_on_catalog():
     import json as _json
 

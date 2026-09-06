@@ -3,7 +3,7 @@
   "$id":"https://query.farm/schema/vgi/semantic/plan.json",
   "type":"object","additionalProperties":false,
   "required":["fact_branches","sql","parameters","validation_scope"],
-  "properties":{"fact_branches":{"type":"array","minItems":1,"maxItems":1,"items":{"$ref":"#/$defs/fact_branch"}},"sql":{"type":"string"},"parameters":{"type":"array"},"validation_scope":{"const":"semantic"},"warnings":{"type":"array","items":{"type":"string"}}},
+  "properties":{"fact_branches":{"type":"array","minItems":1,"maxItems":1,"items":{"$ref":"#/$defs/fact_branch"}},"sql":{"type":"string"},"parameters":{"type":"array"},"validation_scope":{"const":"semantic"},"warnings":{"type":"array","items":{"type":"string"}},"output_units":{"type":"object","additionalProperties":{"type":["string","null"]}},"unit_diagnostics":{"type":"array","items":{"$ref":"diagnostic.json"}}},
   "$defs":{
     "grain_item":{"type":"object","additionalProperties":false,"required":["source","member","output_name"],"properties":{"source":{"type":"string"},"member":{"type":"string"},"output_name":{"type":"string"}}},
     "invocation":{"type":"object","additionalProperties":false,"required":["entity","driver_kind","driver","argument_bindings","estimated_invocations"],"properties":{"entity":{"$ref":"definitions.json#/$defs/entity_ref"},"driver_kind":{"enum":["inline_input","entity"]},"driver":{"type":"string"},"argument_bindings":{"type":"array","items":{"type":"object"}},"estimated_invocations":{"type":"integer","minimum":1}}},

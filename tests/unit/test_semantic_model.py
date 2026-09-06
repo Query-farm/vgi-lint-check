@@ -6,6 +6,7 @@ from tests.fixtures import arg, catalog, col, func, schema, table
 from vgi_lint_check.model import ObjectId
 from vgi_lint_check.semantic_federation import build_federated_semantic_model
 from vgi_lint_check.semantic_model import build_semantic_model, schema_diagnostics
+from vgi_lint_check.semantic_schema import validate_instance
 
 
 def dumped(value):
@@ -101,6 +102,87 @@ def test_semantic_schema_rejects_raw_sql_and_unknown_properties():
     errors = schema_diagnostics(semantic_catalog(orders))
     assert errors
     assert "Additional properties" in errors[0].message
+
+
+def test_nested_struct_field_members_validate_against_the_top_level_column():
+    places = table(
+        "sales",
+        "places",
+        tags={
+            "vgi.semantic_entity": dumped({"entity_id": "places", "grain": ["place_id"]}),
+            "vgi.semantic_members": dumped(
+                [
+                    {"member_id": "place_id", "kind": "identifier", "column": "id"},
+                    {
+                        "member_id": "bbox_xmin",
+                        "kind": "dimension",
+                        "column_path": ["bbox", "xmin"],
+                        "data_type": "DOUBLE",
+                    },
+                ]
+            ),
+        },
+        columns=[
+            col("sales", "places", "id"),
+            col("sales", "places", "bbox", dtype="STRUCT(xmin DOUBLE, xmax DOUBLE)"),
+        ],
+    )
+    assert build_semantic_model(semantic_catalog(places)).diagnostics == []
+
+    broken = json.loads(places.tags.raw["vgi.semantic_members"])
+    broken[1]["column_path"] = ["bbox", "missing"]
+    places.tags.raw["vgi.semantic_members"] = dumped(broken)
+    assert {
+        diagnostic.code for diagnostic in build_semantic_model(semantic_catalog(places)).diagnostics
+    } == {"unknown_physical_column_path"}
+
+
+def test_member_schema_distinguishes_literal_columns_from_nested_paths():
+    assert (
+        validate_instance(
+            "member",
+            {"member_id": "nested", "kind": "dimension", "column_path": ["bbox", "xmin"]},
+        )
+        == []
+    )
+    assert (
+        validate_instance(
+            "member",
+            {"member_id": "literal", "kind": "dimension", "column": "bbox.xmin"},
+        )
+        == []
+    )
+    assert validate_instance(
+        "member",
+        {
+            "member_id": "ambiguous",
+            "kind": "dimension",
+            "column": "bbox",
+            "column_path": ["bbox", "xmin"],
+        },
+    )
+
+
+def test_relationship_schema_requires_one_typed_list_collection_side():
+    relationship = {
+        "relationship_id": "com.example.segment_connector",
+        "from": {"catalog_id": "com.example.maps", "entity_id": "segments"},
+        "to": {"catalog_id": "com.example.maps", "entity_id": "connectors"},
+        "from_cardinality": {"min": 0, "max": "many"},
+        "to_cardinality": {"min": 0, "max": "many"},
+        "predicate": [
+            {
+                "from_member": "connectors",
+                "to_member": "id",
+                "operator": "list_contains",
+                "from_element_path": ["connector_id"],
+            }
+        ],
+        "conditions": [{"side": "to", "member": "type", "value": "road"}],
+    }
+    assert validate_instance("relationship", relationship) == []
+    del relationship["predicate"][0]["from_element_path"]
+    assert validate_instance("relationship", relationship)
 
 
 def test_relationship_conflict_and_bad_local_endpoint_are_reported():
@@ -203,6 +285,82 @@ def test_table_function_source_arguments_use_physical_signature_metadata():
     assert build_semantic_model(worker).diagnostics == []
 
 
+def test_dynamic_units_validate_argument_mapping_and_advertised_choices():
+    def codes(
+        *,
+        argument_name="temperature_unit",
+        source_argument_name="temperature_unit",
+        values=None,
+        choices=None,
+    ):
+        entity = func(
+            "main",
+            "weather",
+            "table",
+            tags={
+                "vgi.semantic_entity": dumped(
+                    {
+                        "entity_id": "weather",
+                        "grain": ["reading_id"],
+                        "source": {
+                            "arguments": [
+                                {
+                                    "argument": source_argument_name,
+                                    "parameter": "temperature_unit",
+                                    "required": False,
+                                }
+                            ]
+                        },
+                    }
+                ),
+                "vgi.semantic_members": dumped(
+                    [
+                        {"member_id": "reading_id", "kind": "identifier", "column": "id"},
+                        {
+                            "member_id": "temperature",
+                            "kind": "dimension",
+                            "column": "temperature",
+                            "unit_parameter": {
+                                "argument": argument_name,
+                                "values": values or {"celsius": "Cel", "fahrenheit": "[degF]"},
+                            },
+                        },
+                    ]
+                ),
+            },
+            arguments=[
+                arg(
+                    "temperature_unit",
+                    field_index=0,
+                    is_named=True,
+                    default='"celsius"',
+                    choices=choices,
+                )
+            ],
+        )
+        worker = catalog(
+            schema("main", functions=[entity]),
+            tags={"vgi.semantic_catalog": dumped({"catalog_id": "com.example.weather"})},
+        )
+        return {item.code for item in build_semantic_model(worker).diagnostics}
+
+    assert codes(choices='["celsius", "fahrenheit"]') == set()
+    assert "unit_parameter_choices_incomplete" in codes(
+        values={"celsius": "Cel"}, choices='["celsius", "fahrenheit"]'
+    )
+    assert "unit_parameter_argument_missing" in codes(argument_name="missing")
+    assert "unit_parameter_source_unmapped" in codes(source_argument_name="different")
+
+
+def test_unit_schema_rejects_empty_and_conflicting_units():
+    member = {"member_id": "value", "kind": "dimension", "column": "value"}
+    dynamic = {"unit_parameter": {"argument": "unit", "values": {"metric": "Cel"}}}
+    assert validate_instance("member", {**member, "unit": "percent"}) == []
+    assert validate_instance("member", {**member, **dynamic}) == []
+    assert validate_instance("member", {**member, "unit": ""})
+    assert validate_instance("member", {**member, "unit": "Cel", **dynamic})
+
+
 def test_table_function_source_rejects_missing_metadata_overloads_and_varargs():
     def diagnostics(arguments):
         entity = func(
@@ -214,9 +372,7 @@ def test_table_function_source_rejects_missing_metadata_overloads_and_varargs():
                     {
                         "entity_id": "events",
                         "grain": ["event_id"],
-                        "source": {
-                            "arguments": [{"argument": "since", "parameter": "start"}]
-                        },
+                        "source": {"arguments": [{"argument": "since", "parameter": "start"}]},
                     }
                 ),
                 "vgi.semantic_members": dumped(
@@ -283,6 +439,27 @@ def test_table_function_detects_overload_count_and_unmapped_flattened_parameters
     assert "missing_function_argument_metadata" in incomplete_codes
 
 
+def test_scalar_functions_cannot_host_semantic_entities():
+    scalar = func(
+        "main",
+        "normalize_name",
+        "scalar",
+        tags={
+            "vgi.semantic_entity": dumped({"entity_id": "names", "grain": ["name"]}),
+            "vgi.semantic_members": dumped(
+                [{"member_id": "name", "kind": "identifier", "column": "name"}]
+            ),
+        },
+    )
+    worker = catalog(
+        schema("main", functions=[scalar]),
+        tags={"vgi.semantic_catalog": dumped({"catalog_id": "com.example.names"})},
+    )
+    assert "invalid_semantic_function_kind" in {
+        item.code for item in build_semantic_model(worker).diagnostics
+    }
+
+
 def test_federation_reconciles_reciprocal_assertions_and_detects_duplicate_attachments():
     forward = {
         "relationship_id": "com.example.order_customer",
@@ -291,6 +468,7 @@ def test_federation_reconciles_reciprocal_assertions_and_detects_duplicate_attac
         "from_cardinality": {"min": 0, "max": "many"},
         "to_cardinality": {"min": 1, "max": 1},
         "predicate": [{"from_member": "customer_id", "to_member": "customer_id"}],
+        "conditions": [{"side": "to", "member": "customer_id", "value": "preferred"}],
     }
     reverse = {
         **forward,
@@ -299,6 +477,7 @@ def test_federation_reconciles_reciprocal_assertions_and_detects_duplicate_attac
         "from_cardinality": forward["to_cardinality"],
         "to_cardinality": forward["from_cardinality"],
         "predicate": [{"from_member": "customer_id", "to_member": "customer_id"}],
+        "conditions": [{"side": "from", "member": "customer_id", "value": "preferred"}],
     }
     orders = table(
         "main",

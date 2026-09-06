@@ -54,7 +54,7 @@ class SemanticEntity:
     function_parameters: list[str] = field(default_factory=list)
     function_arguments: list[Argument] = field(default_factory=list)
     function_overload_count: int = 1
-    input_from_args: bool = False
+    input_from_args: bool | None = None
     members: dict[str, dict[str, Any]] = field(default_factory=dict)
     physical_columns: set[str] = field(default_factory=set)
     physical_column_types: dict[str, str] = field(default_factory=dict)
@@ -173,7 +173,14 @@ def build_semantic_model(catalog: Catalog) -> SemanticModel:
                 )
             )
             continue
-        source_kind = "table_function" if hasattr(host, "function_type") else "relation"
+        source_kind = "relation"
+        if isinstance(host, Function):
+            source_kind = (
+                "table_function"
+                if host.function_type.lower()
+                in {"table", "table_function", "table_buffering", "table_macro"}
+                else "unsupported_function"
+            )
         entity = SemanticEntity(catalog_id, entity_id, host.id, source_kind, entity_def)
         if isinstance(host, Function):
             entity.function_parameters = list(host.parameters)
@@ -291,7 +298,195 @@ def _expression_refs(value: Any) -> set[str]:
     return set()
 
 
+def _unit_choice_key(value: Any) -> str:
+    """Use JSON object-key spelling for non-string discovered choices."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def _member_column_path(member: dict[str, Any]) -> list[str]:
+    path = member.get("column_path")
+    if isinstance(path, list):
+        return [str(segment) for segment in path]
+    column = member.get("column")
+    return [str(column)] if column else []
+
+
+def _split_struct_fields(value: str) -> list[str]:
+    fields: list[str] = []
+    start = 0
+    depth = 0
+    quoted = False
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == '"':
+            if quoted and index + 1 < len(value) and value[index + 1] == '"':
+                index += 1
+            else:
+                quoted = not quoted
+        elif not quoted:
+            if char in "(<[":
+                depth += 1
+            elif char in ")>]":
+                depth -= 1
+            elif char == "," and depth == 0:
+                fields.append(value[start:index].strip())
+                start = index + 1
+        index += 1
+    fields.append(value[start:].strip())
+    return fields
+
+
+def _struct_fields(data_type: str) -> dict[str, str] | None:
+    stripped = data_type.strip()
+    if not stripped.upper().startswith("STRUCT(") or not stripped.endswith(")"):
+        return None
+    result: dict[str, str] = {}
+    for field_definition in _split_struct_fields(stripped[7:-1]):
+        if field_definition.startswith('"'):
+            end = 1
+            while end < len(field_definition):
+                if field_definition[end] == '"':
+                    if end + 1 < len(field_definition) and field_definition[end + 1] == '"':
+                        end += 2
+                        continue
+                    break
+                end += 1
+            if end >= len(field_definition):
+                return None
+            name = field_definition[1:end].replace('""', '"')
+            child_type = field_definition[end + 1 :].strip()
+        else:
+            pieces = field_definition.split(None, 1)
+            if len(pieces) != 2:
+                return None
+            name, child_type = pieces
+        result[name] = child_type
+    return result
+
+
+def _resolve_nested_type(data_type: str, path: list[str]) -> str | None:
+    current = data_type
+    for segment in path:
+        fields = _struct_fields(current)
+        if fields is None or segment not in fields:
+            return None
+        current = fields[segment]
+    return current
+
+
+def _member_physical_type(entity: SemanticEntity, member: dict[str, Any]) -> str | None:
+    explicit = member.get("output_type") or member.get("data_type")
+    if explicit:
+        return str(explicit)
+    path = _member_column_path(member)
+    if not path:
+        return None
+    data_type = entity.physical_column_types.get(path[0])
+    if data_type is None or len(path) == 1:
+        return data_type
+    return _resolve_nested_type(data_type, path[1:])
+
+
+def _list_element_type(data_type: str, path: list[str]) -> str | None:
+    value = data_type.strip()
+    if value.endswith("[]"):
+        element = value[:-2].strip()
+    elif value.upper().startswith("LIST(") and value.endswith(")"):
+        element = value[5:-1].strip()
+    else:
+        return None
+    return _resolve_nested_type(element, path) if path else element
+
+
+def _validate_unit_parameter(
+    entity: SemanticEntity,
+    member_id: str,
+    member: dict[str, Any],
+    source_arguments: list[Any],
+    diagnostics: list[SemanticDiagnostic],
+) -> None:
+    definition = member.get("unit_parameter")
+    if not isinstance(definition, dict):
+        return
+    argument_name = str(definition.get("argument", ""))
+    matches = [argument for argument in entity.function_arguments if argument.name == argument_name]
+    if not matches:
+        diagnostics.append(
+            SemanticDiagnostic(
+                entity.host,
+                "unit_parameter_argument_missing",
+                f"member {member_id!r} unit_parameter references missing function argument "
+                f"{argument_name!r}",
+            )
+        )
+        return
+    if len(matches) != 1 or entity.function_overload_count > 1:
+        diagnostics.append(
+            SemanticDiagnostic(
+                entity.host,
+                "unit_parameter_argument_ambiguous",
+                f"member {member_id!r} unit_parameter argument {argument_name!r} is ambiguous",
+            )
+        )
+        return
+    mappings = [
+        item
+        for item in source_arguments
+        if isinstance(item, dict) and item.get("argument") == argument_name
+    ]
+    if len(mappings) != 1:
+        diagnostics.append(
+            SemanticDiagnostic(
+                entity.host,
+                "unit_parameter_source_unmapped",
+                f"member {member_id!r} unit_parameter argument {argument_name!r} must be "
+                "exposed by exactly one semantic source-argument mapping",
+            )
+        )
+    choices = matches[0].choices
+    if choices is None:
+        return
+    try:
+        decoded = json.loads(choices)
+    except (TypeError, ValueError):
+        decoded = None
+    if not isinstance(decoded, list):
+        diagnostics.append(
+            SemanticDiagnostic(
+                entity.host,
+                "unit_parameter_choices_invalid",
+                f"function argument {argument_name!r} advertises invalid JSON choices",
+            )
+        )
+        return
+    values = definition.get("values")
+    if not isinstance(values, dict):
+        return
+    missing = sorted(
+        _unit_choice_key(choice) for choice in decoded if _unit_choice_key(choice) not in values
+    )
+    if missing:
+        diagnostics.append(
+            SemanticDiagnostic(
+                entity.host,
+                "unit_parameter_choices_incomplete",
+                f"member {member_id!r} unit mapping does not cover advertised choices {missing!r}",
+            )
+        )
+
+
 def _validate_entity(entity: SemanticEntity, diagnostics: list[SemanticDiagnostic]) -> None:
+    if entity.source_kind == "unsupported_function":
+        diagnostics.append(
+            SemanticDiagnostic(
+                entity.host,
+                "invalid_semantic_function_kind",
+                "semantic entities on functions require a table function or table macro",
+            )
+        )
     source = entity.definition.get("source", {})
     arguments = source.get("arguments", []) if isinstance(source, dict) else []
     if arguments and entity.source_kind != "table_function":
@@ -483,9 +678,10 @@ def _validate_entity(entity: SemanticEntity, diagnostics: list[SemanticDiagnosti
             )
         )
     for member_id, member in entity.members.items():
+        _validate_unit_parameter(entity, member_id, member, arguments, diagnostics)
         if (
             member.get("kind") != "measure"
-            and not member.get("column")
+            and not _member_column_path(member)
             and not member.get("expression")
         ):
             diagnostics.append(
@@ -495,15 +691,29 @@ def _validate_entity(entity: SemanticEntity, diagnostics: list[SemanticDiagnosti
                     f"member {member_id!r} needs a column or typed expression",
                 )
             )
-        column = member.get("column")
-        if column and entity.physical_columns and str(column) not in entity.physical_columns:
-            diagnostics.append(
-                SemanticDiagnostic(
-                    entity.host,
-                    "unknown_physical_column",
-                    f"member {member_id!r} references unknown column {column!r}",
+        column_path = _member_column_path(member)
+        if column_path:
+            if entity.physical_columns and column_path[0] not in entity.physical_columns:
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        entity.host,
+                        "unknown_physical_column",
+                        f"member {member_id!r} references unknown column root {column_path[0]!r}",
+                    )
                 )
-            )
+            elif (
+                len(column_path) > 1
+                and (root_type := entity.physical_column_types.get(column_path[0]))
+                and _resolve_nested_type(root_type, column_path[1:]) is None
+            ):
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        entity.host,
+                        "unknown_physical_column_path",
+                        f"member {member_id!r} references unknown nested field path "
+                        f"{'.'.join(column_path)!r} in {root_type}",
+                    )
+                )
         refs = _expression_refs(member.get("expression"))
         unknown = sorted(refs - entity.members.keys())
         if unknown:
@@ -588,13 +798,25 @@ def _normalize_relationship(value: dict[str, Any]) -> dict[str, Any]:
             {
                 "from_member": pair.get("from_member"),
                 "to_member": pair.get("to_member"),
+                "operator": pair.get("operator", "equal"),
                 "nulls": pair.get("nulls", "not_equal"),
+                **(
+                    {"from_element_path": pair["from_element_path"]}
+                    if "from_element_path" in pair
+                    else {}
+                ),
+                **(
+                    {"to_element_path": pair["to_element_path"]}
+                    if "to_element_path" in pair
+                    else {}
+                ),
             }
             for pair in value.get("predicate", [])
         ],
         key=lambda pair: (
             str(pair["from_member"]),
             str(pair["to_member"]),
+            str(pair["operator"]),
             str(pair["nulls"]),
         ),
     )
@@ -607,12 +829,26 @@ def _normalize_relationship(value: dict[str, Any]) -> dict[str, Any]:
             **({"roles": sorted(raw["roles"])} if isinstance(raw.get("roles"), list) else {}),
         }
 
+    conditions = sorted(
+        [
+            {
+                "side": item.get("side"),
+                "member": item.get("member"),
+                "operator": item.get("operator", "equal"),
+                "value": item.get("value"),
+            }
+            for item in value.get("conditions", [])
+        ],
+        key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+    )
+
     direct = {
         "from": value.get("from"),
         "to": value.get("to"),
         "from_cardinality": cardinality(value.get("from_cardinality")),
         "to_cardinality": cardinality(value.get("to_cardinality")),
         "predicate": predicates,
+        "conditions": conditions,
     }
     reversed_value = {
         "from": direct["to"],
@@ -624,15 +860,40 @@ def _normalize_relationship(value: dict[str, Any]) -> dict[str, Any]:
                 {
                     "from_member": pair["to_member"],
                     "to_member": pair["from_member"],
+                    "operator": {
+                        "spatial_contains": "spatial_within",
+                        "spatial_within": "spatial_contains",
+                    }.get(pair["operator"], pair["operator"]),
                     "nulls": pair["nulls"],
+                    **(
+                        {"to_element_path": pair["from_element_path"]}
+                        if "from_element_path" in pair
+                        else {}
+                    ),
+                    **(
+                        {"from_element_path": pair["to_element_path"]}
+                        if "to_element_path" in pair
+                        else {}
+                    ),
                 }
                 for pair in predicates
             ],
             key=lambda pair: (
                 str(pair["from_member"]),
                 str(pair["to_member"]),
+                str(pair["operator"]),
                 str(pair["nulls"]),
             ),
+        ),
+        "conditions": sorted(
+            [
+                {
+                    **item,
+                    "side": "to" if item["side"] == "from" else "from",
+                }
+                for item in conditions
+            ],
+            key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
         ),
     }
     direct_json = json.dumps(direct, sort_keys=True, separators=(",", ":"))
@@ -665,12 +926,15 @@ def _validate_relationships(
                     )
                 )
         for pair in relationship.get("predicate", []):
+            pair_members: list[dict[str, Any] | None] = []
             for index, member_field in ((0, "from_member"), (1, "to_member")):
                 entity = endpoints[index]
                 if entity is None:
+                    pair_members.append(None)
                     continue
                 member_id = str(pair.get(member_field, ""))
                 member = entity.members.get(member_id)
+                pair_members.append(member)
                 if member is None:
                     diagnostics.append(
                         SemanticDiagnostic(
@@ -691,6 +955,76 @@ def _validate_relationships(
                             "identifier/dimension",
                         )
                     )
+            operator = pair.get("operator", "equal")
+            if None in endpoints or None in pair_members:
+                continue
+            from_entity, to_entity = endpoints
+            from_member, to_member = pair_members
+            assert from_entity is not None and to_entity is not None
+            assert from_member is not None and to_member is not None
+            types = [
+                _member_physical_type(from_entity, from_member),
+                _member_physical_type(to_entity, to_member),
+            ]
+            if str(operator).startswith("spatial_"):
+                incompatible = [
+                    data_type
+                    for data_type in types
+                    if data_type is not None and not data_type.upper().startswith("GEOMETRY")
+                ]
+                if incompatible:
+                    diagnostics.append(
+                        SemanticDiagnostic(
+                            host,
+                            "invalid_spatial_relationship_type",
+                            f"spatial relationship members must be GEOMETRY, got {types!r}",
+                        )
+                    )
+            elif operator == "list_contains":
+                collection_index = 0 if "from_element_path" in pair else 1
+                path = pair.get(
+                    "from_element_path" if collection_index == 0 else "to_element_path", []
+                )
+                collection_type = types[collection_index]
+                if (
+                    collection_type is not None
+                    and _list_element_type(collection_type, [str(item) for item in path]) is None
+                ):
+                    diagnostics.append(
+                        SemanticDiagnostic(
+                            host,
+                            "invalid_list_relationship_type",
+                            f"list_contains collection member must be a LIST with a valid "
+                            f"element path, got {collection_type!r}",
+                        )
+                    )
+        for condition in relationship.get("conditions", []):
+            index = 0 if condition.get("side") == "from" else 1
+            entity = endpoints[index]
+            if entity is None:
+                continue
+            member_id = str(condition.get("member", ""))
+            member = entity.members.get(member_id)
+            if member is None:
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        host,
+                        "unresolved_relationship_condition_member",
+                        f"relationship condition references unknown member {member_id!r}",
+                    )
+                )
+            elif (
+                member.get("kind") not in {"identifier", "dimension", "time_dimension"}
+                or "expression" in member
+            ):
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        host,
+                        "invalid_relationship_condition_member",
+                        f"relationship condition member {member_id!r} must be a physical "
+                        "identifier/dimension",
+                    )
+                )
 
 
 def _warn_duplicate_relationships(

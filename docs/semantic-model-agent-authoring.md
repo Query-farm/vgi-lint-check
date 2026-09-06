@@ -21,21 +21,28 @@ from a version string.
 
 ## Workflow
 
-1. Inventory tables, views, and table functions. Record physical columns, constraints, required
-   filters, arguments, and examples. For table functions, inspect `vgi_function_arguments()` and
+1. Inventory tables, views, table functions, and fixed-schema table macros. Record physical
+   columns, constraints, required filters, arguments, and examples. For functions and macros,
+   inspect `vgi_function_arguments()` and
    preserve both `arg_position` and `field_index` in any consumer model.
 2. Propose a globally stable `catalog_id`, optional `catalog_instance_id`, and `binding_key`.
 3. Identify candidate entities and state the exact row grain of each.
 4. Ask the human to confirm uncertain business names, definitions, grain, and identifiers.
-5. Add dimensions and time dimensions. State timezone and allowed granularities explicitly.
+5. Add dimensions and time dimensions. State timezone, allowed granularities, and known physical
+   units explicitly. For argument-selected units, map every advertised argument choice.
+   Treat `column` as one literal physical identifier. Represent nested DuckDB `STRUCT` fields with
+   explicit `column_path` arrays (for example, `["bbox", "xmin"]`) and provide their `data_type`;
+   never encode an expression in a column path.
 6. Add base measures, derived measures, and conservative additivity.
+   Only model a table macro when it publishes a fixed `vgi.result_columns_schema` and its grain is
+   invariant across arguments.
 7. Add relationships using stable endpoint/member IDs and directional cardinality. Prefer one
    assertion; use reciprocal assertions only when independently owned catalogs genuinely attest.
 8. Put relationships between two foreign catalogs in a deliberately designated federation worker,
    never opportunistically in an unrelated worker.
 9. Run a local lint, then lint a composed attachment set for cross-catalog resolution.
-10. Compile representative requests with `compile_only: true`. Execute only against authorized test
-    data.
+10. Compile representative requests with `vgi-lint semantic-compile ... --request request.json`.
+    Execute only against authorized test data.
 11. Give the human a final report listing edits, confirmed assumptions, unresolved questions,
     validation commands, representative plans, and intentionally deferred relationships.
 
@@ -85,6 +92,16 @@ grain. For entity-driven use, bind fully qualified physical members from one dec
 a conservative `max_rows`. For a chained pipeline, give each function one binding and verify the
 invocation order, accumulated effective grain, total estimated invocations, and cycle rejection.
 Never represent these dataflow edges as `vgi.semantic_relationships`.
+
+Treat `input_from_args` as tri-state discovery metadata: true permits correlated compilation,
+explicit false denies it, and null/missing means the installed extension cannot report the
+capability. Do not turn unknown into false or copy any of the three values into semantic tags.
+
+For unit-bearing dimensions, time dimensions, and measures, use either `unit` or `unit_parameter`,
+never both. Prefer UCUM strings where available, but do not invent conversions or units. Verify that
+the dynamic argument resolves exactly once, is exposed through `source.arguments`, and that its map
+covers all discovered choices. Aggregations `sum`, `min`, `max`, and `avg` inherit the referenced
+member's unit; do not infer units across derived arithmetic expressions.
 
 ## Reusable task prompt
 

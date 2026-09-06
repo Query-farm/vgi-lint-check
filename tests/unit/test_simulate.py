@@ -177,6 +177,25 @@ def test_describe_table_ships_the_required_filters_rule_with_the_data():
     assert "required_filters" in sim._ACTOR
 
 
+def test_semantic_actor_documents_order_shape_and_execution_mode():
+    assert "exact stable catalog_id" in sim._ACTOR
+    assert "not the SQL attachment alias" in sim._ACTOR
+    assert '"order":[{"member":"<selected output>","direction":"asc|desc"}]?' in sim._ACTOR
+    assert (
+        '"filters":{"and":[{"member":"<member id>","operator":"eq|neq|gt|gte|lt|lte"' in sim._ACTOR
+    )
+    assert "compile_only=true validates" in sim._ACTOR
+    assert "omit answer_sql" in sim._ACTOR
+
+
+def test_describe_observations_retain_semantic_metadata_beyond_default_clip():
+    result = {"semantic_members": [{"member_id": "event_count"}], "padding": "x" * 2_000}
+    assert "event_count" in sim._observation("describe_table historical", result)
+    assert len(sim._observation("list_tables", result)) < len(
+        sim._observation("describe_table historical", result)
+    )
+
+
 def test_multi_catalog_discovery_requires_explicit_catalog():
     alpha = F.catalog(F.schema("main", tables=[F.table("main", "alpha_rows")]))
     beta = F.catalog(F.schema("main", tables=[F.table("main", "beta_rows")]))
@@ -267,6 +286,8 @@ def test_tool_list_tables_and_describe():
     conv = sim.tool_describe_function(cat, "main", "convert")
     assert conv["arguments"][0]["calling"] == "positional"
     assert conv["usage"] == f"{cat.qualifier}.main.convert(v, unit)"
+    assert conv["input_from_args"] is None
+    assert conv["supports_correlated_input"] is None
 
     # mixed table-input + named function: usage makes the := convention explicit
     fit = sim.tool_describe_function(cat, "main", "fit")

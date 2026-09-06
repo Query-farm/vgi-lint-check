@@ -127,6 +127,346 @@ def test_cross_catalog_plan_is_deterministic_and_parameterized(commerce):
     ]
 
 
+def test_nested_struct_field_members_compile_and_satisfy_required_filters():
+    places = table(
+        "places",
+        "place",
+        tags={
+            "vgi.semantic_entity": json.dumps({"entity_id": "place", "grain": ["place_id"]}),
+            "vgi.semantic_members": json.dumps(
+                [
+                    {"member_id": "place_id", "kind": "identifier", "column": "id"},
+                    {
+                        "member_id": "category",
+                        "kind": "dimension",
+                        "column": "basic_category",
+                    },
+                    *[
+                        {
+                            "member_id": f"bbox_{axis}",
+                            "kind": "dimension",
+                            "column_path": ["bbox", axis],
+                            "data_type": "DOUBLE",
+                            "unit": "deg",
+                            "hidden": True,
+                        }
+                        for axis in ("xmin", "xmax", "ymin", "ymax")
+                    ],
+                    {
+                        "member_id": "place_count",
+                        "kind": "measure",
+                        "aggregation": "count_rows",
+                        "additivity": "additive",
+                    },
+                ]
+            ),
+            TAG_REQUIRED_FILTERS: json.dumps(
+                [["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]]
+            ),
+        },
+        columns=[
+            col("places", "place", "id"),
+            col("places", "place", "basic_category"),
+            col(
+                "places",
+                "place",
+                "bbox",
+                dtype="STRUCT(xmin DOUBLE, xmax DOUBLE, ymin DOUBLE, ymax DOUBLE)",
+            ),
+        ],
+    )
+    worker = fixture_catalog(
+        fixture_schema("places", tables=[places]),
+        tags={
+            "vgi.semantic_catalog": json.dumps(
+                {"catalog_id": "farm.query.maps", "binding_key": "maps"}
+            )
+        },
+    )
+    predicates = [
+        {
+            "member": f"bbox_{axis}",
+            "operator": operator,
+            "value": value,
+        }
+        for axis, operator, value in (
+            ("xmin", "gte", 4.88),
+            ("xmax", "lte", 4.91),
+            ("ymin", "gte", 52.36),
+            ("ymax", "lte", 52.38),
+        )
+    ]
+    result = compile_semantic_query(
+        {"v": worker},
+        {
+            "measures": [
+                {
+                    "catalog_id": "farm.query.maps",
+                    "entity_id": "place",
+                    "member_id": "place_count",
+                }
+            ],
+            "dimensions": [
+                {
+                    "catalog_id": "farm.query.maps",
+                    "entity_id": "place",
+                    "member_id": "category",
+                }
+            ],
+            "filters": {"and": predicates},
+        },
+    )
+    assert result["ok"] is True, result
+    assert '_e0."bbox"."xmin" >= ?' in result["plan"]["sql"]
+    assert '_e0."bbox"."ymax" <= ?' in result["plan"]["sql"]
+    assert result["plan"]["parameters"] == [4.88, 4.91, 52.36, 52.38]
+
+
+def test_literal_dotted_column_name_is_not_treated_as_a_struct_path():
+    source = table(
+        "source",
+        "events",
+        tags={
+            "vgi.semantic_entity": json.dumps({"entity_id": "events", "grain": ["id"]}),
+            "vgi.semantic_members": json.dumps(
+                [
+                    {"member_id": "id", "kind": "identifier", "column": "id"},
+                    {
+                        "member_id": "literal_dot",
+                        "kind": "dimension",
+                        "column": "literal.dot",
+                    },
+                    {
+                        "member_id": "event_count",
+                        "kind": "measure",
+                        "aggregation": "count_rows",
+                        "additivity": "additive",
+                    },
+                ]
+            ),
+            TAG_REQUIRED_FILTERS: json.dumps([["literal.dot"]]),
+        },
+        columns=[col("source", "events", "id"), col("source", "events", "literal.dot")],
+    )
+    worker = fixture_catalog(
+        fixture_schema("source", tables=[source]),
+        tags={
+            "vgi.semantic_catalog": json.dumps(
+                {"catalog_id": "com.example.dotted", "binding_key": "dotted"}
+            )
+        },
+    )
+    result = compile_semantic_query(
+        {"worker": worker},
+        {
+            "measures": [
+                {
+                    "catalog_id": "com.example.dotted",
+                    "entity_id": "events",
+                    "member_id": "event_count",
+                }
+            ],
+            "filters": {"member": "literal_dot", "operator": "eq", "value": "yes"},
+        },
+    )
+    assert result["ok"] is True, result
+    assert '_e0."literal.dot" = ?' in result["plan"]["sql"]
+    assert '_e0."literal"."dot"' not in result["plan"]["sql"]
+
+
+@pytest.mark.parametrize(
+    ("predicate", "root_member", "root_type", "expected"),
+    [
+        (
+            {
+                "from_member": "geometry",
+                "to_member": "geometry",
+                "operator": "spatial_within",
+            },
+            {"member_id": "geometry", "kind": "dimension", "column": "geometry", "hidden": True},
+            "GEOMETRY",
+            'ST_Within(_e0."geometry", _e1."geometry")',
+        ),
+        (
+            {
+                "from_member": "connectors",
+                "to_member": "zone_id",
+                "operator": "list_contains",
+                "from_element_path": ["connector_id"],
+            },
+            {
+                "member_id": "connectors",
+                "kind": "dimension",
+                "column": "connectors",
+                "hidden": True,
+            },
+            "STRUCT(connector_id VARCHAR)[]",
+            'list_contains(list_transform(_e0."connectors", '
+            '_item -> _item."connector_id"), _e1."id")',
+        ),
+    ],
+)
+def test_typed_relationship_predicates_compile_without_raw_sql(
+    predicate, root_member, root_type, expected
+):
+    relationship = {
+        "relationship_id": "com.example.event_zone",
+        "from": {"catalog_id": "com.example.geo", "entity_id": "events"},
+        "to": {"catalog_id": "com.example.geo", "entity_id": "zones"},
+        "from_cardinality": {"min": 0, "max": "many"},
+        "to_cardinality": {"min": 0, "max": 1},
+        "predicate": [predicate],
+        "conditions": [{"side": "to", "member": "zone_type", "value": "district"}],
+    }
+    events = table(
+        "geo",
+        "events",
+        tags={
+            "vgi.semantic_entity": json.dumps({"entity_id": "events", "grain": ["event_id"]}),
+            "vgi.semantic_members": json.dumps(
+                [
+                    {"member_id": "event_id", "kind": "identifier", "column": "id"},
+                    root_member,
+                    {
+                        "member_id": "event_count",
+                        "kind": "measure",
+                        "aggregation": "count_rows",
+                        "additivity": "additive",
+                    },
+                ]
+            ),
+            "vgi.semantic_relationships": json.dumps([relationship]),
+        },
+        columns=[
+            col("geo", "events", "id"),
+            col("geo", "events", root_member["column"], dtype=root_type),
+        ],
+    )
+    zones = table(
+        "geo",
+        "zones",
+        tags={
+            "vgi.semantic_entity": json.dumps({"entity_id": "zones", "grain": ["zone_id"]}),
+            "vgi.semantic_members": json.dumps(
+                [
+                    {"member_id": "zone_id", "kind": "identifier", "column": "id"},
+                    {"member_id": "zone_name", "kind": "dimension", "column": "name"},
+                    {"member_id": "zone_type", "kind": "dimension", "column": "type"},
+                    {
+                        "member_id": "geometry",
+                        "kind": "dimension",
+                        "column": "geometry",
+                        "hidden": True,
+                    },
+                ]
+            ),
+        },
+        columns=[
+            col("geo", "zones", "id"),
+            col("geo", "zones", "name"),
+            col("geo", "zones", "type"),
+            col("geo", "zones", "geometry", dtype="GEOMETRY"),
+        ],
+    )
+    worker = fixture_catalog(
+        fixture_schema("geo", tables=[events, zones]),
+        tags={"vgi.semantic_catalog": json.dumps({"catalog_id": "com.example.geo"})},
+    )
+    result = compile_semantic_query(
+        {"geo": worker},
+        {
+            "measures": [
+                {
+                    "catalog_id": "com.example.geo",
+                    "entity_id": "events",
+                    "member_id": "event_count",
+                }
+            ],
+            "dimensions": [
+                {
+                    "catalog_id": "com.example.geo",
+                    "entity_id": "zones",
+                    "member_id": "zone_name",
+                }
+            ],
+        },
+    )
+    assert result["ok"] is True, result
+    assert expected in result["plan"]["sql"]
+    assert '_e1."type" IS NOT DISTINCT FROM ?' in result["plan"]["sql"]
+    assert result["plan"]["parameters"] == ["district"]
+
+
+def test_fixed_schema_table_macro_compiles_as_a_scalar_single_fact_source():
+    historical = func(
+        "gers",
+        "changelog_at",
+        ftype="table_macro",
+        parameters=["release"],
+        arguments=[arg("release", position=0, field_index=0, is_positional=True)],
+        tags={
+            "vgi.result_columns_schema": json.dumps(
+                [
+                    {"name": "id", "type": "VARCHAR", "description": "GERS identifier"},
+                    {
+                        "name": "change_type",
+                        "type": "VARCHAR",
+                        "description": "Change classification",
+                    },
+                ]
+            ),
+            "vgi.semantic_entity": json.dumps(
+                {
+                    "entity_id": "historical_changelog",
+                    "grain": ["id"],
+                    "source": {
+                        "arguments": [
+                            {"argument": "release", "parameter": "release", "required": True}
+                        ]
+                    },
+                }
+            ),
+            "vgi.semantic_members": json.dumps(
+                [
+                    {"member_id": "id", "kind": "identifier", "column": "id"},
+                    {
+                        "member_id": "change_type",
+                        "kind": "dimension",
+                        "column": "change_type",
+                    },
+                    {
+                        "member_id": "record_count",
+                        "kind": "measure",
+                        "aggregation": "count_rows",
+                        "additivity": "additive",
+                    },
+                ]
+            ),
+        },
+    )
+    historical.id = ObjectId("v", historical.kind, schema="gers", name="changelog_at")
+    worker = fixture_catalog(
+        fixture_schema("gers", functions=[historical]),
+        tags={"vgi.semantic_catalog": json.dumps({"catalog_id": "farm.query.maps"})},
+    )
+    result = compile_semantic_query(
+        {"maps": worker},
+        {
+            "measures": [
+                {
+                    "catalog_id": "farm.query.maps",
+                    "entity_id": "historical_changelog",
+                    "member_id": "record_count",
+                }
+            ],
+            "parameters": {"release": "2026-06-17.0"},
+        },
+    )
+    assert result["ok"] is True, result
+    assert 'FROM "v"."gers"."changelog_at"(?) AS _e0' in result["plan"]["sql"]
+    assert result["plan"]["parameters"] == ["2026-06-17.0"]
+
+
 def _table_function_catalog(*, hole: bool = False):
     physical_arguments = (
         [
@@ -414,6 +754,11 @@ def test_inline_input_compiles_and_executes_correlated_lateral_function():
         unsupported = compile_semantic_query({"weather": worker}, request)
         assert unsupported["ok"] is False
         assert unsupported["diagnostics"][0]["code"] == "correlated_input_not_supported"
+        function.input_from_args = None
+        unknown = compile_semantic_query({"weather": worker}, request)
+        assert unknown["ok"] is False
+        assert unknown["diagnostics"][0]["code"] == "correlated_input_capability_unknown"
+        assert "upgrade" in unknown["diagnostics"][0]["message"]
         function.input_from_args = True
 
         bad_type = deepcopy(request)
@@ -431,6 +776,186 @@ def test_inline_input_compiles_and_executes_correlated_lateral_function():
         assert len(result["result"]["rows"]) == 4
     finally:
         connection.close()
+
+
+def test_units_are_reported_for_static_defaulted_and_explicit_outputs():
+    worker = _rehome(_forecast_catalog(), "weather")
+    function = next(worker.iter_all_functions())
+    entity = json.loads(function.tags.raw["vgi.semantic_entity"])
+    entity["source"]["arguments"].append(
+        {
+            "argument": "temperature_unit",
+            "parameter": "temperature_unit",
+            "required": False,
+        }
+    )
+    function.tags.raw["vgi.semantic_entity"] = json.dumps(entity)
+    members = json.loads(function.tags.raw["vgi.semantic_members"])
+    next(item for item in members if item["member_id"] == "temperature")["unit_parameter"] = {
+        "argument": "temperature_unit",
+        "values": {"celsius": "Cel", "fahrenheit": "[degF]"},
+    }
+    next(item for item in members if item["member_id"] == "time")["unit"] = "s"
+    function.tags.raw["vgi.semantic_members"] = json.dumps(members)
+    function.arguments.append(
+        arg(
+            "temperature_unit",
+            "VARCHAR",
+            field_index=3,
+            is_named=True,
+            default='"celsius"',
+            choices='["celsius", "fahrenheit"]',
+        )
+    )
+    request = {
+        "measures": [
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "average_temperature",
+            }
+        ],
+        "dimensions": [
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "time",
+            }
+        ],
+        "parameters": {"latitude": 52.52, "longitude": 13.41},
+    }
+    defaulted = compile_semantic_query({"weather": worker}, request)
+    assert defaulted["ok"] is True, defaulted
+    assert validate_instance("result", defaulted) == []
+    assert defaulted["plan"]["output_units"] == {
+        "time": "s",
+        "average_temperature": "Cel",
+    }
+    explicit = compile_semantic_query(
+        {"weather": worker},
+        {**request, "parameters": {**request["parameters"], "temperature_unit": "fahrenheit"}},
+    )
+    assert explicit["ok"] is True, explicit
+    assert explicit["plan"]["output_units"]["average_temperature"] == "[degF]"
+    assert explicit["plan"]["parameters"] == [52.52, 13.41, "fahrenheit"]
+
+    bad = compile_semantic_query(
+        {"weather": worker},
+        {**request, "parameters": {**request["parameters"], "temperature_unit": "kelvin"}},
+    )
+    assert bad["ok"] is False
+    assert bad["diagnostics"][0]["code"] == "unit_parameter_value_unmapped"
+
+
+def test_correlated_unit_value_is_reported_as_unresolved_metadata():
+    worker = _rehome(_forecast_catalog(), "weather")
+    function = next(worker.iter_all_functions())
+    entity = json.loads(function.tags.raw["vgi.semantic_entity"])
+    entity["source"]["arguments"].append(
+        {"argument": "temperature_unit", "parameter": "temperature_unit"}
+    )
+    function.tags.raw["vgi.semantic_entity"] = json.dumps(entity)
+    members = json.loads(function.tags.raw["vgi.semantic_members"])
+    next(item for item in members if item["member_id"] == "temperature")["unit_parameter"] = {
+        "argument": "temperature_unit",
+        "values": {"celsius": "Cel", "fahrenheit": "[degF]"},
+    }
+    function.tags.raw["vgi.semantic_members"] = json.dumps(members)
+    function.arguments.append(
+        arg(
+            "temperature_unit",
+            "VARCHAR",
+            position=2,
+            field_index=3,
+            is_positional=True,
+            default='"celsius"',
+        )
+    )
+    request = {
+        "measures": [
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "average_temperature",
+            }
+        ],
+        "inputs": [
+            {
+                "input_id": "locations",
+                "grain": ["location_id"],
+                "columns": [
+                    {"name": "location_id", "type": "VARCHAR"},
+                    {"name": "latitude", "type": "DOUBLE"},
+                    {"name": "longitude", "type": "DOUBLE"},
+                    {"name": "temperature_unit", "type": "VARCHAR"},
+                ],
+                "rows": [["berlin", 52.52, 13.41, "fahrenheit"]],
+            }
+        ],
+        "source_bindings": [
+            {
+                "entity": {
+                    "catalog_id": "farm.query.open_meteo",
+                    "entity_id": "forecast_hourly",
+                },
+                "driver": {"input_id": "locations"},
+                "arguments": {
+                    "latitude": {"input_column": "latitude"},
+                    "longitude": {"input_column": "longitude"},
+                    "temperature_unit": {"input_column": "temperature_unit"},
+                },
+            }
+        ],
+    }
+    result = compile_semantic_query({"weather": worker}, request)
+    assert result["ok"] is True, result
+    assert result["plan"]["output_units"] == {"average_temperature": None}
+    assert result["plan"]["unit_diagnostics"][0]["code"] == ("unit_parameter_value_unresolved")
+    assert "fahrenheit" in result["plan"]["parameters"]
+    assert validate_instance("result", result) == []
+
+
+def test_static_measure_unit_is_reported_without_changing_sql_or_parameters():
+    worker = _rehome(_forecast_catalog(), "weather")
+    function = next(worker.iter_all_functions())
+    members = json.loads(function.tags.raw["vgi.semantic_members"])
+    next(item for item in members if item["member_id"] == "average_temperature")["unit"] = "percent"
+    function.tags.raw["vgi.semantic_members"] = json.dumps(members)
+    request = {
+        "measures": [
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "average_temperature",
+            }
+        ],
+        "parameters": {"latitude": 52.52, "longitude": 13.41},
+    }
+    baseline = compile_semantic_query({"weather": _rehome(_forecast_catalog(), "weather")}, request)
+    result = compile_semantic_query({"weather": worker}, request)
+    assert result["ok"] is True, result
+    assert result["plan"]["output_units"] == {"average_temperature": "percent"}
+    assert result["plan"]["sql"] == baseline["plan"]["sql"]
+    assert result["plan"]["parameters"] == baseline["plan"]["parameters"]
+
+
+def test_scalar_function_remains_usable_when_correlated_capability_is_unknown():
+    worker = _rehome(_forecast_catalog(), "weather")
+    next(worker.iter_all_functions()).input_from_args = None
+    result = compile_semantic_query(
+        {"weather": worker},
+        {
+            "measures": [
+                {
+                    "catalog_id": "farm.query.open_meteo",
+                    "entity_id": "forecast_hourly",
+                    "member_id": "average_temperature",
+                }
+            ],
+            "parameters": {"latitude": 52.52, "longitude": 13.41},
+        },
+    )
+    assert result["ok"] is True, result
 
 
 def _sites_catalog():

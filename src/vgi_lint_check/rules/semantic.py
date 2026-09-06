@@ -30,6 +30,7 @@ class SemanticTagSchema(Rule):
         ObjectKind.VIEW,
         ObjectKind.COLUMN,
         ObjectKind.TABLE_FUNCTION,
+        ObjectKind.MACRO,
     )
     summary = "Semantic JSON tags must conform to the published JSON Schemas."
 
@@ -55,6 +56,7 @@ class SemanticModelConsistency(Rule):
         ObjectKind.VIEW,
         ObjectKind.COLUMN,
         ObjectKind.TABLE_FUNCTION,
+        ObjectKind.MACRO,
     )
     summary = "Semantic identities, grains, members and relationships must resolve consistently."
 
@@ -114,6 +116,7 @@ class SemanticTagScope(Rule):
         ObjectKind.VIEW,
         ObjectKind.COLUMN,
         ObjectKind.TABLE_FUNCTION,
+        ObjectKind.MACRO,
     )
     summary = "Semantic tags must be carried by the object kinds that give them context."
 
@@ -137,11 +140,13 @@ class SemanticTagScope(Rule):
                 ObjectKind.TABLE,
                 ObjectKind.VIEW,
                 ObjectKind.TABLE_FUNCTION,
+                ObjectKind.MACRO,
             },
             TAG_SEMANTIC_MEMBERS: {
                 ObjectKind.TABLE,
                 ObjectKind.VIEW,
                 ObjectKind.TABLE_FUNCTION,
+                ObjectKind.MACRO,
             },
             TAG_SEMANTIC_MEMBER: {ObjectKind.COLUMN},
             TAG_SEMANTIC_RELATIONSHIPS: {
@@ -149,6 +154,7 @@ class SemanticTagScope(Rule):
                 ObjectKind.TABLE,
                 ObjectKind.VIEW,
                 ObjectKind.TABLE_FUNCTION,
+                ObjectKind.MACRO,
             },
         }
         for object_id, tags in objects:

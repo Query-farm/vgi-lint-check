@@ -188,6 +188,12 @@ def app() -> None:
     help="Keep the subprocess worker pool warm this many seconds (default 300; 0 = leave the "
     "vgi extension's 5s default). Avoids cold-starting the worker across slow LLM/rule phases.",
 )
+@click.option(
+    "--agent-tasks-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Private YAML agent-task sidecar; overrides config and conventional discovery.",
+)
 @click.option("--config", "config_path", type=click.Path(exists=True, dir_okay=False), default=None)
 @click.option(
     "--trace",
@@ -241,6 +247,7 @@ def lint(
     attach_options: tuple[str, ...],
     setup_sql: tuple[str, ...],
     worker_idle_timeout: int | None,
+    agent_tasks_file: Path | None,
     config_path: str | None,
     trace_path: str | None,
     traceback: bool,
@@ -280,6 +287,7 @@ def lint(
         baseline=baseline,
         attach_options=attach_options,
         setup_sql=setup_sql,
+        agent_tasks_file=agent_tasks_file,
     )
     _warn_unknown_selectors(cfg)
     location = location or cfg.location
@@ -451,6 +459,70 @@ def semantic_cmd(
         for relationship in payload["relationships"]
     ):
         raise SystemExit(EXIT_FINDINGS)
+
+
+@app.command(name="semantic-compile")
+@click.argument("locations", nargs=-1, required=True)
+@click.option("--as", "aliases", multiple=True, help="Attachment alias, positionally paired.")
+@click.option(
+    "--request",
+    "request_path",
+    required=True,
+    type=str,
+    metavar="FILE|-",
+    help="Semantic query JSON file, or - for stdin.",
+)
+@click.option("--install/--no-install", default=True)
+@click.option("--spatial/--no-spatial", default=True)
+@click.option("--traceback", is_flag=True)
+@click.pass_context
+def semantic_compile_cmd(
+    ctx: click.Context,
+    locations: tuple[str, ...],
+    aliases: tuple[str, ...],
+    request_path: str,
+    install: bool,
+    spatial: bool,
+    traceback: bool,
+) -> None:
+    """Compile a semantic request without executing its generated SQL."""
+    from .core import with_attached_catalogs
+    from .semantic_compiler import compile_semantic_query
+
+    try:
+        validate_contract()
+        if aliases and len(aliases) != len(locations):
+            raise ValueError("repeat --as exactly once per LOCATION, or omit it")
+        raw = sys.stdin.read() if request_path == "-" else Path(request_path).read_text("utf-8")
+        request = json.loads(raw)
+        if not isinstance(request, dict):
+            raise ValueError("semantic request must be a JSON object")
+        request = {**request, "compile_only": True}
+        specs: list[tuple[str, str | None, str | None]] = [
+            (location, None, aliases[index] if aliases else None)
+            for index, location in enumerate(locations)
+        ]
+        payload = with_attached_catalogs(
+            specs,
+            lambda catalogs, _connection: compile_semantic_query(catalogs, request),
+            install=install,
+            spatial=spatial,
+        )
+    except WorkerConnectionError as exc:
+        click.secho(f"error: {exc}", fg="red", err=True)
+        ctx.exit(EXIT_CONNECTION)
+    except (OSError, json.JSONDecodeError, ValueError, TagContractError) as exc:
+        click.secho(f"error: {exc}", fg="red", err=True)
+        ctx.exit(EXIT_TOOL_ERROR)
+    except Exception as exc:  # noqa: BLE001 - top-level CLI guard
+        if traceback:
+            raise
+        click.secho(f"error: {type(exc).__name__}: {exc}", fg="red", err=True)
+        ctx.exit(EXIT_TOOL_ERROR)
+
+    click.echo(json.dumps(payload, indent=2, sort_keys=True))
+    if not payload.get("ok"):
+        ctx.exit(EXIT_FINDINGS)
 
 
 @app.command(name="semantic-simulate")
@@ -1138,9 +1210,12 @@ def _apply_cli_overrides(
     attach_options: tuple[str, ...] = (),
     setup_sql: tuple[str, ...] = (),
     worker_idle_timeout: int | None = None,
+    agent_tasks_file: Path | None = None,
 ) -> None:
     if worker_idle_timeout is not None:
         cfg.worker_idle_timeout = worker_idle_timeout
+    if agent_tasks_file is not None:
+        cfg.agent_tasks_file = str(agent_tasks_file.resolve())
     for item in attach_options:
         if "=" not in item:
             raise click.UsageError(f"--attach-option expects KEY=VALUE, got {item!r}")
