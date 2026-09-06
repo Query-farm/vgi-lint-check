@@ -599,6 +599,74 @@ def test_table_function_compiler_executes_positional_then_named_arguments():
         connection.close()
 
 
+def test_member_template_expands_before_compilation():
+    readings = table(
+        "main",
+        "readings",
+        tags={
+            "vgi.semantic_entity": json.dumps({"entity_id": "readings", "grain": ["reading_id"]}),
+            "vgi.semantic_members": json.dumps(
+                [
+                    {"member_id": "reading_id", "kind": "identifier", "column": "id"},
+                    {
+                        "template_id": "weather_values",
+                        "template": {
+                            "kind": "dimension",
+                            "data_type": "DOUBLE",
+                            "unit": "Cel",
+                        },
+                        "members": [
+                            {"member_id": "temperature_gfs", "column": "temperature_gfs"},
+                            {"member_id": "temperature_ecmwf", "column": "temperature_ecmwf"},
+                        ],
+                    },
+                    {
+                        "member_id": "average_gfs",
+                        "kind": "measure",
+                        "aggregation": "avg",
+                        "member": "temperature_gfs",
+                        "additivity": "non_additive",
+                    },
+                ]
+            ),
+        },
+        columns=[
+            col("main", "readings", "id"),
+            col("main", "readings", "temperature_gfs", dtype="DOUBLE"),
+            col("main", "readings", "temperature_ecmwf", dtype="DOUBLE"),
+        ],
+    )
+    worker = fixture_catalog(
+        fixture_schema("main", tables=[readings]),
+        tags={"vgi.semantic_catalog": json.dumps({"catalog_id": "com.example.weather"})},
+    )
+    result = compile_semantic_query(
+        {"weather": worker},
+        {
+            "measures": [
+                {
+                    "catalog_id": "com.example.weather",
+                    "entity_id": "readings",
+                    "member_id": "average_gfs",
+                }
+            ],
+            "dimensions": [
+                {
+                    "catalog_id": "com.example.weather",
+                    "entity_id": "readings",
+                    "member_id": "temperature_ecmwf",
+                }
+            ],
+        },
+    )
+    assert result["ok"] is True, result
+    assert '_e0."temperature_ecmwf" AS "temperature_ecmwf"' in result["plan"]["sql"]
+    assert result["plan"]["output_units"] == {
+        "temperature_ecmwf": "Cel",
+        "average_gfs": "Cel",
+    }
+
+
 def _forecast_catalog():
     function = func(
         "main",
@@ -625,6 +693,26 @@ def _forecast_catalog():
             "vgi.semantic_members": json.dumps(
                 [
                     {"member_id": "time_key", "kind": "identifier", "column": "time"},
+                    {
+                        "member_id": "requested_latitude",
+                        "kind": "dimension",
+                        "source_argument": "latitude",
+                        "data_type": "DOUBLE",
+                        "unit": "deg",
+                    },
+                    {
+                        "member_id": "requested_longitude",
+                        "kind": "dimension",
+                        "source_argument": "longitude",
+                        "data_type": "DOUBLE",
+                        "unit": "deg",
+                    },
+                    {
+                        "member_id": "requested_forecast_days",
+                        "kind": "dimension",
+                        "source_argument": "forecast_days",
+                        "data_type": "INTEGER",
+                    },
                     {
                         "member_id": "time",
                         "kind": "time_dimension",
@@ -663,6 +751,112 @@ def _forecast_catalog():
         fixture_schema("main", functions=[function]),
         tags={"vgi.semantic_catalog": json.dumps({"catalog_id": "farm.query.open_meteo"})},
     )
+
+
+def test_scalar_source_argument_dimensions_compile_from_values_and_defaults():
+    worker = _rehome(_forecast_catalog(), "weather")
+    request = {
+        "measures": [
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "average_temperature",
+            }
+        ],
+        "dimensions": [
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "requested_latitude",
+            },
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "requested_forecast_days",
+            },
+        ],
+        "filters": {
+            "member": "requested_latitude",
+            "operator": "eq",
+            "value": 52.52,
+        },
+        "parameters": {"latitude": 52.52, "longitude": 13.41},
+    }
+    result = compile_semantic_query({"weather": worker}, request)
+    assert result["ok"] is True, result
+    assert result["plan"]["parameters"] == [52.52, 3, 52.52, 13.41, 52.52, 52.52]
+    assert 'CAST(? AS DOUBLE) AS "requested_latitude"' in result["plan"]["sql"]
+    assert 'CAST(? AS INTEGER) AS "requested_forecast_days"' in result["plan"]["sql"]
+    assert "WHERE CAST(? AS DOUBLE) = ?" in result["plan"]["sql"]
+    assert "GROUP BY 1, 2" in result["plan"]["sql"]
+    assert result["plan"]["sql"].count("?") == len(result["plan"]["parameters"])
+    assert result["plan"]["output_units"] == {"requested_latitude": "deg"}
+    connection = haybarn.connect()
+    try:
+        connection.execute("ATTACH ':memory:' AS weather")
+        connection.execute(
+            "CREATE MACRO weather.main.forecast_hourly"
+            "(latitude, longitude, forecast_days := 3) AS TABLE "
+            "SELECT TIMESTAMP '2026-01-01' + i * INTERVAL 1 HOUR AS time, "
+            "latitude + longitude + i AS temperature FROM range(forecast_days) r(i)"
+        )
+        executed = execute_semantic_query({"weather": worker}, connection, request)
+        assert executed["ok"] is True, executed
+        assert executed["result"]["rows"][0][:2] == (52.52, 3)
+    finally:
+        connection.close()
+
+
+def test_correlated_source_argument_dimension_uses_the_driver_column():
+    worker = _rehome(_forecast_catalog(), "weather")
+    request = {
+        "measures": [
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "average_temperature",
+            }
+        ],
+        "dimensions": [
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "requested_latitude",
+            }
+        ],
+        "inputs": [
+            {
+                "input_id": "locations",
+                "grain": ["location_id"],
+                "columns": [
+                    {"name": "location_id", "type": "VARCHAR"},
+                    {"name": "latitude", "type": "DOUBLE"},
+                    {"name": "longitude", "type": "DOUBLE"},
+                ],
+                "rows": [["berlin", 52.52, 13.41], ["tokyo", 35.69, 139.69]],
+            }
+        ],
+        "source_bindings": [
+            {
+                "entity": {
+                    "catalog_id": "farm.query.open_meteo",
+                    "entity_id": "forecast_hourly",
+                },
+                "driver": {"input_id": "locations"},
+                "arguments": {
+                    "latitude": {"input_column": "latitude"},
+                    "longitude": {"input_column": "longitude"},
+                },
+            }
+        ],
+    }
+    result = compile_semantic_query({"weather": worker}, request)
+    assert result["ok"] is True, result
+    assert '_e0."driver"."latitude" AS "requested_latitude"' in result["plan"]["sql"]
+    assert result["plan"]["fact_branches"][0]["result_grain"] == [
+        "location_id",
+        "requested_latitude",
+    ]
 
 
 def test_inline_input_compiles_and_executes_correlated_lateral_function():
@@ -1048,7 +1242,12 @@ def test_entity_driven_lateral_execution_preserves_driver_grain():
                     "catalog_id": "com.example.assets",
                     "entity_id": "sites",
                     "member_id": "site_name",
-                }
+                },
+                {
+                    "catalog_id": "farm.query.open_meteo",
+                    "entity_id": "forecast_hourly",
+                    "member_id": "requested_latitude",
+                },
             ],
             "source_bindings": [
                 {
@@ -1087,8 +1286,10 @@ def test_entity_driven_lateral_execution_preserves_driver_grain():
         assert result["result"]["columns"] == [
             "site_id",
             "site_name",
+            "requested_latitude",
             "average_temperature",
         ]
+        assert result["result"]["rows"][0][2] == 52.52
         assert len(result["result"]["rows"]) == 1
         missing = deepcopy(request)
         del missing["source_bindings"][0]["driver"]["filters"]

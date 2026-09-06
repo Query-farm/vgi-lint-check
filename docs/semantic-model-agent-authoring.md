@@ -30,10 +30,14 @@ from a version string.
 4. Ask the human to confirm uncertain business names, definitions, grain, and identifiers.
 5. Add dimensions and time dimensions. State timezone, allowed granularities, and known physical
    units explicitly. For argument-selected units, map every advertised argument choice.
+   Model invocation values that users need to select with `source_argument`; retain the public
+   parameter name only in the entity's existing `source.arguments` mapping.
    Treat `column` as one literal physical identifier. Represent nested DuckDB `STRUCT` fields with
    explicit `column_path` arrays (for example, `["bbox", "xmin"]`) and provide their `data_type`;
    never encode an expression in a column path.
 6. Add base measures, derived measures, and conservative additivity.
+   Use a packed member template for a large semantically uniform family, but inspect every expanded
+   member and split the family whenever types, units, or meanings differ.
    Only model a table macro when it publishes a fixed `vgi.result_columns_schema` and its grain is
    invariant across arguments.
 7. Add relationships using stable endpoint/member IDs and directional cardinality. Prefer one
@@ -84,6 +88,12 @@ Verify that every mapping resolves exactly once, every required physical scalar 
 and every optional mapping has a physical default. The current compiler rejects overload ambiguity,
 varargs, table inputs, and requests that create a positional hole. Flattened
 `duckdb_functions().parameters` metadata is not sufficient to infer a safe call.
+
+If a function argument is useful query context but absent from its returned columns, publish a
+dimension or time dimension with `source_argument` and an explicit type. Verify scalar compilation
+with both an explicit value and any advertised default. For correlated compilation, verify that the
+selected member projects the actual bound input column or driver member rather than a scalar
+default.
 
 When a row-transform function reports `input_from_args = true`, demonstrate both scalar and
 correlated use. Author a compile-only request with a small typed `inputs` row set, bind only

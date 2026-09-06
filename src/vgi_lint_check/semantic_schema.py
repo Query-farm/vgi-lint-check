@@ -16,6 +16,7 @@ SCHEMA_NAMES = (
     "catalog",
     "entity",
     "member",
+    "member-template",
     "members",
     "relationship",
     "relationships",

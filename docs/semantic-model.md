@@ -62,6 +62,37 @@ identifier segments such as `["bbox", "xmin"]`. This distinction is deliberate: 
 guess whether punctuation in a physical name is syntax. Each path segment is quoted independently,
 and model validation checks the complete path when discovery provides a detailed `STRUCT` type.
 
+A dimension or time dimension on a table-function entity may use `source_argument` instead of a
+column, column path, or expression. Its value is the effective physical function argument selected
+by the existing `source.arguments` mapping. The member must declare `data_type` or `output_type`,
+and the named physical argument must resolve exactly once and be exposed exactly once. For scalar
+calls the compiler emits a typed parameter containing the supplied semantic value or discovered
+physical default. For correlated calls it projects the bound input column or driver member. This
+allows requested latitude, longitude, unit choice, model, or similar invocation context to be
+selected, filtered, grouped, and referenced by typed expressions even when the function does not
+repeat that value in every output row. `source_argument` is metadata-backed and cannot be combined
+with `column`, `column_path`, or `expression`.
+
+The packed `vgi.semantic_members` array may contain a member template alongside concrete members:
+
+```json
+{
+  "template_id": "ensemble_temperatures",
+  "template": {"kind": "dimension", "data_type": "DOUBLE", "unit": "Cel"},
+  "members": [
+    {"member_id": "temperature_gfs", "column": "temperature_gfs"},
+    {"member_id": "temperature_ecmwf", "column": "temperature_ecmwf"}
+  ]
+}
+```
+
+Each entry is shallow-merged over `template`, then validated as an ordinary member before model
+resolution. Entry fields override defaults. Template IDs must be unique within one carrier, every
+entry must provide `member_id`, and one packed document may expand to at most 500 members. Templates
+cannot nest and perform no interpolation or runtime code execution. Consumers expose only the
+expanded concrete members, so queries, plans, native column members, and downstream agents need no
+template-specific behavior.
+
 Base measures support `count_rows`, `count`, `count_distinct`, `sum`, `min`, `max` and `avg`.
 Derived members use the typed expression AST; raw SQL, arbitrary functions, windows and nested
 aggregates are not part of the contract. `output_type` is optional and means an enforced DuckDB

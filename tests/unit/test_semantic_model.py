@@ -163,6 +163,88 @@ def test_member_schema_distinguishes_literal_columns_from_nested_paths():
     )
 
 
+def test_member_schema_accepts_source_arguments_and_rejects_competing_sources():
+    member = {
+        "member_id": "latitude",
+        "kind": "dimension",
+        "source_argument": "latitude",
+        "data_type": "DOUBLE",
+    }
+    assert validate_instance("member", member) == []
+    assert validate_instance("member", {**member, "column": "latitude"})
+
+
+def test_packed_member_templates_expand_to_ordinary_members():
+    events = table(
+        "sales",
+        "events",
+        tags={
+            "vgi.semantic_entity": dumped({"entity_id": "events", "grain": ["event_id"]}),
+            "vgi.semantic_members": dumped(
+                [
+                    {"member_id": "event_id", "kind": "identifier", "column": "id"},
+                    {
+                        "template_id": "scores",
+                        "template": {
+                            "kind": "dimension",
+                            "data_type": "DOUBLE",
+                            "unit": "percent",
+                        },
+                        "members": [
+                            {"member_id": "quality", "column": "quality_score"},
+                            {"member_id": "confidence", "column": "confidence_score"},
+                        ],
+                    },
+                ]
+            ),
+        },
+        columns=[
+            col("sales", "events", "id"),
+            col("sales", "events", "quality_score", dtype="DOUBLE"),
+            col("sales", "events", "confidence_score", dtype="DOUBLE"),
+        ],
+    )
+    worker = semantic_catalog(events)
+    assert schema_diagnostics(worker) == []
+    model = build_semantic_model(worker)
+    assert model.diagnostics == []
+    assert model.entities[("com.example.sales", "events")].members["quality"] == {
+        "member_id": "quality",
+        "kind": "dimension",
+        "column": "quality_score",
+        "data_type": "DOUBLE",
+        "unit": "percent",
+    }
+
+
+def test_member_template_reports_invalid_expansion_and_duplicate_template_id():
+    events = table(
+        "sales",
+        "events",
+        tags={
+            "vgi.semantic_entity": dumped({"entity_id": "events", "grain": ["event_id"]}),
+            "vgi.semantic_members": dumped(
+                [
+                    {"member_id": "event_id", "kind": "identifier", "column": "id"},
+                    {
+                        "template_id": "scores",
+                        "template": {"data_type": "DOUBLE"},
+                        "members": [{"member_id": "missing_kind", "column": "quality_score"}],
+                    },
+                    {
+                        "template_id": "scores",
+                        "template": {"kind": "dimension", "data_type": "DOUBLE"},
+                        "members": [{"member_id": "quality", "column": "quality_score"}],
+                    },
+                ]
+            ),
+        },
+        columns=[col("sales", "events", "id"), col("sales", "events", "quality_score")],
+    )
+    codes = {item.code for item in build_semantic_model(semantic_catalog(events)).diagnostics}
+    assert {"duplicate_member_template", "invalid_expanded_member"} <= codes
+
+
 def test_relationship_schema_requires_one_typed_list_collection_side():
     relationship = {
         "relationship_id": "com.example.segment_connector",
@@ -270,7 +352,15 @@ def test_table_function_source_arguments_use_physical_signature_metadata():
                 }
             ),
             "vgi.semantic_members": dumped(
-                [{"member_id": "event_id", "kind": "identifier", "column": "event_id"}]
+                [
+                    {"member_id": "event_id", "kind": "identifier", "column": "event_id"},
+                    {
+                        "member_id": "requested_region",
+                        "kind": "dimension",
+                        "source_argument": "region",
+                        "data_type": "VARCHAR",
+                    },
+                ]
             ),
         },
         arguments=[
@@ -283,6 +373,53 @@ def test_table_function_source_arguments_use_physical_signature_metadata():
         tags={"vgi.semantic_catalog": dumped({"catalog_id": "com.example.events"})},
     )
     assert build_semantic_model(worker).diagnostics == []
+
+
+def test_source_argument_dimension_requires_a_mapped_unambiguous_compatible_argument():
+    entity = func(
+        "main",
+        "events",
+        "table",
+        tags={
+            "vgi.semantic_entity": dumped(
+                {
+                    "entity_id": "events",
+                    "grain": ["event_id"],
+                    "source": {"arguments": [{"argument": "region", "parameter": "region"}]},
+                }
+            ),
+            "vgi.semantic_members": dumped(
+                [
+                    {"member_id": "event_id", "kind": "identifier", "column": "event_id"},
+                    {
+                        "member_id": "requested_region",
+                        "kind": "dimension",
+                        "source_argument": "missing",
+                        "data_type": "DOUBLE",
+                    },
+                ]
+            ),
+        },
+        arguments=[arg("region", "VARCHAR", field_index=0, is_named=True)],
+    )
+    worker = catalog(
+        schema("main", functions=[entity]),
+        tags={"vgi.semantic_catalog": dumped({"catalog_id": "com.example.events"})},
+    )
+    codes = {item.code for item in build_semantic_model(worker).diagnostics}
+    assert "source_argument_member_missing" in codes
+
+    members = json.loads(entity.tags.raw["vgi.semantic_members"])
+    members[1]["source_argument"] = "region"
+    entity.tags.raw["vgi.semantic_members"] = dumped(members)
+    codes = {item.code for item in build_semantic_model(worker).diagnostics}
+    assert "source_argument_member_type_mismatch" in codes
+
+    definition = json.loads(entity.tags.raw["vgi.semantic_entity"])
+    definition["source"]["arguments"] = []
+    entity.tags.raw["vgi.semantic_entity"] = dumped(definition)
+    codes = {item.code for item in build_semantic_model(worker).diagnostics}
+    assert "source_argument_member_unmapped" in codes
 
 
 def test_dynamic_units_validate_argument_mapping_and_advertised_choices():

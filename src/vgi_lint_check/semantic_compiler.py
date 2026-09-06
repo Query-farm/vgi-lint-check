@@ -12,6 +12,7 @@ import json
 import math
 import re
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, NoReturn, cast
 
@@ -57,6 +58,8 @@ _SAFE_TYPE = re.compile(r"^[A-Za-z][A-Za-z0-9_ ]*(?:\([0-9]+(?:,[0-9]+)?\))?(?:\
 _BINARY_OPERATORS = {"add": "+", "subtract": "-", "multiply": "*", "divide": "/"}
 _FILTER_OPERATORS = {"eq": "=", "neq": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 _MISSING = object()
+
+_SourceArgumentRenderer = Callable[[SemanticEntity, dict[str, Any]], str]
 
 
 @dataclass(frozen=True)
@@ -423,6 +426,34 @@ def _member_unit_definition(
     return None
 
 
+def _member_uses_source_argument(
+    entity: SemanticEntity,
+    member: dict[str, Any],
+    visited: frozenset[str] = frozenset(),
+) -> bool:
+    member_id = str(member.get("member_id", ""))
+    if member_id in visited:
+        return False
+    if member.get("source_argument") is not None:
+        return True
+
+    def expression_refs(value: Any) -> set[str]:
+        if isinstance(value, dict):
+            refs = {str(value["member"])} if value.get("op") == "member" else set()
+            for child in value.values():
+                refs.update(expression_refs(child))
+            return refs
+        if isinstance(value, list):
+            return {ref for child in value for ref in expression_refs(child)}
+        return set()
+
+    return any(
+        _member_uses_source_argument(entity, entity.members[ref], visited | {member_id})
+        for ref in expression_refs(member.get("expression"))
+        if ref in entity.members
+    )
+
+
 def _source_binding_argument(
     entity: SemanticEntity, query: dict[str, Any], argument_name: str
 ) -> dict[str, Any] | None:
@@ -435,6 +466,17 @@ def _source_binding_argument(
         return None
     value = matches[0].get("arguments", {}).get(argument_name)
     return cast(dict[str, Any], value) if isinstance(value, dict) else None
+
+
+def _source_binding_definition(
+    entity: SemanticEntity, query: dict[str, Any]
+) -> dict[str, Any] | None:
+    matches = [
+        binding
+        for binding in query.get("source_bindings", [])
+        if _ref_key(binding.get("entity", {})) == (entity.catalog_id, entity.entity_id)
+    ]
+    return cast(dict[str, Any], matches[0]) if len(matches) == 1 else None
 
 
 def _decoded_argument_default(argument: Argument) -> Any:
@@ -1114,15 +1156,34 @@ def _compile_invocation_source(
 
 
 def _member_sql(
-    entity: SemanticEntity, member: dict[str, Any], alias: str, stack: tuple[str, ...] = ()
+    entity: SemanticEntity,
+    member: dict[str, Any],
+    alias: str,
+    stack: tuple[str, ...] = (),
+    source_argument_renderer: _SourceArgumentRenderer | None = None,
 ) -> str:
     member_id = str(member.get("member_id", ""))
     if member_id in stack:
         _fail("type_check", "expression_cycle", f"Cyclic semantic expression at {member_id!r}")
     if _member_column_path(member):
         sql = _member_column_sql(alias, member)
+    elif member.get("source_argument") is not None:
+        if source_argument_renderer is None:
+            _fail(
+                "source_binding",
+                "source_argument_value_unavailable",
+                f"Source-argument member {member_id!r} is unavailable in this query context",
+            )
+        sql = source_argument_renderer(entity, member)
     elif isinstance(member.get("expression"), dict):
-        sql = _expression_sql(entity, member["expression"], alias, (*stack, member_id), False)
+        sql = _expression_sql(
+            entity,
+            member["expression"],
+            alias,
+            (*stack, member_id),
+            False,
+            source_argument_renderer,
+        )
     else:
         _fail(
             "type_check",
@@ -1229,6 +1290,7 @@ def _expression_sql(
     alias: str,
     stack: tuple[str, ...],
     aggregate_members: bool,
+    source_argument_renderer: _SourceArgumentRenderer | None = None,
 ) -> str:
     op = str(expression.get("op", ""))
     if op == "member":
@@ -1237,38 +1299,60 @@ def _expression_sql(
         if member is None:
             _fail("type_check", "unknown_expression_member", f"Unknown member {member_id!r}")
         if aggregate_members and member.get("kind") == "measure":
-            return _aggregate_sql(entity, member, alias, stack)
-        return _member_sql(entity, member, alias, stack)
+            return _aggregate_sql(entity, member, alias, stack, source_argument_renderer)
+        return _member_sql(entity, member, alias, stack, source_argument_renderer)
     if op == "literal":
         return _literal_sql(expression.get("value"))
     if op in (*_BINARY_OPERATORS, "safe_divide"):
-        left = _expression_sql(entity, expression["left"], alias, stack, aggregate_members)
-        right = _expression_sql(entity, expression["right"], alias, stack, aggregate_members)
+        left = _expression_sql(
+            entity, expression["left"], alias, stack, aggregate_members, source_argument_renderer
+        )
+        right = _expression_sql(
+            entity, expression["right"], alias, stack, aggregate_members, source_argument_renderer
+        )
         if op == "safe_divide":
             return f"({left} / NULLIF({right}, 0))"
         return f"({left} {_BINARY_OPERATORS[op]} {right})"
     if op == "coalesce":
         args = [
-            _expression_sql(entity, item, alias, stack, aggregate_members)
+            _expression_sql(entity, item, alias, stack, aggregate_members, source_argument_renderer)
             for item in expression.get("args", [])
         ]
         return f"COALESCE({', '.join(args)})"
     if op == "nullif":
-        left = _expression_sql(entity, expression["value"], alias, stack, aggregate_members)
+        left = _expression_sql(
+            entity, expression["value"], alias, stack, aggregate_members, source_argument_renderer
+        )
         other = expression.get("other", {"op": "literal", "value": 0})
-        right = _expression_sql(entity, other, alias, stack, aggregate_members)
+        right = _expression_sql(
+            entity, other, alias, stack, aggregate_members, source_argument_renderer
+        )
         return f"NULLIF({left}, {right})"
     if op == "cast":
-        value = _expression_sql(entity, expression["value"], alias, stack, aggregate_members)
+        value = _expression_sql(
+            entity, expression["value"], alias, stack, aggregate_members, source_argument_renderer
+        )
         return f"CAST({value} AS {_safe_type(str(expression['type']))})"
     if op == "case":
-        when = _expression_sql(entity, expression["when"], alias, stack, aggregate_members)
-        then = _expression_sql(entity, expression["then"], alias, stack, aggregate_members)
+        when = _expression_sql(
+            entity, expression["when"], alias, stack, aggregate_members, source_argument_renderer
+        )
+        then = _expression_sql(
+            entity, expression["then"], alias, stack, aggregate_members, source_argument_renderer
+        )
         otherwise = expression.get("else")
         suffix = (
             ""
             if otherwise is None
-            else f" ELSE {_expression_sql(entity, otherwise, alias, stack, aggregate_members)}"
+            else " ELSE "
+            + _expression_sql(
+                entity,
+                otherwise,
+                alias,
+                stack,
+                aggregate_members,
+                source_argument_renderer,
+            )
         )
         return f"CASE WHEN {when} THEN {then}{suffix} END"
     _fail("sql_generation", "unsupported_expression", "Unsupported semantic expression")
@@ -1276,14 +1360,25 @@ def _expression_sql(
 
 
 def _aggregate_sql(
-    entity: SemanticEntity, member: dict[str, Any], alias: str, stack: tuple[str, ...] = ()
+    entity: SemanticEntity,
+    member: dict[str, Any],
+    alias: str,
+    stack: tuple[str, ...] = (),
+    source_argument_renderer: _SourceArgumentRenderer | None = None,
 ) -> str:
     member_id = str(member.get("member_id", ""))
     if member_id in stack:
         _fail("type_check", "measure_cycle", f"Cyclic derived measure at {member_id!r}")
     expression = member.get("expression")
     if isinstance(expression, dict):
-        sql = _expression_sql(entity, expression, alias, (*stack, member_id), True)
+        sql = _expression_sql(
+            entity,
+            expression,
+            alias,
+            (*stack, member_id),
+            True,
+            source_argument_renderer,
+        )
     else:
         aggregation = str(member.get("aggregation", ""))
         if not aggregation:
@@ -1302,7 +1397,9 @@ def _aggregate_sql(
                     "unknown_measure_input",
                     f"Measure {member_id!r} has unknown input {member.get('member')!r}",
                 )
-            value = _member_sql(entity, input_member, alias)
+            value = _member_sql(
+                entity, input_member, alias, source_argument_renderer=source_argument_renderer
+            )
             sql = (
                 f"COUNT(DISTINCT {value})"
                 if aggregation == "count_distinct"
@@ -1454,15 +1551,24 @@ def _filter_key(member: Any) -> str:
 
 
 def _compile_filter(
-    value: Any, lookup: dict[str, tuple[SemanticEntity, dict[str, Any], str]], parameters: list[Any]
+    value: Any,
+    lookup: dict[str, tuple[SemanticEntity, dict[str, Any], str]],
+    parameters: list[Any],
+    source_argument_renderer: _SourceArgumentRenderer | None = None,
 ) -> str | None:
     if value is None:
         return None
     if "and" in value:
-        parts = [cast(str, _compile_filter(item, lookup, parameters)) for item in value["and"]]
+        parts = [
+            cast(str, _compile_filter(item, lookup, parameters, source_argument_renderer))
+            for item in value["and"]
+        ]
         return f"({' AND '.join(parts)})"
     if "or" in value:
-        parts = [cast(str, _compile_filter(item, lookup, parameters)) for item in value["or"]]
+        parts = [
+            cast(str, _compile_filter(item, lookup, parameters, source_argument_renderer))
+            for item in value["or"]
+        ]
         return f"({' OR '.join(parts)})"
     found = lookup.get(_filter_key(value.get("member")))
     if found is None:
@@ -1473,9 +1579,9 @@ def _compile_filter(
         )
     entity, member, alias = found
     lhs = (
-        _aggregate_sql(entity, member, alias)
+        _aggregate_sql(entity, member, alias, source_argument_renderer=source_argument_renderer)
         if member.get("kind") == "measure"
-        else _member_sql(entity, member, alias)
+        else _member_sql(entity, member, alias, source_argument_renderer=source_argument_renderer)
     )
     operator = str(value.get("operator", ""))
     if operator == "is_null":
@@ -1609,6 +1715,110 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
         invocation = _compile_invocation_source(
             catalogs, graph, identities, root, query, bindings, parameters
         )
+
+        def render_source_argument_member(entity: SemanticEntity, member: dict[str, Any]) -> str:
+            argument_name = str(member.get("source_argument", ""))
+            physical = [
+                argument for argument in entity.function_arguments if argument.name == argument_name
+            ]
+            mappings = [
+                mapping
+                for mapping in _source_arguments(entity)
+                if mapping.get("argument") == argument_name
+            ]
+            if len(physical) != 1 or len(mappings) != 1:
+                _fail(
+                    "model_resolution",
+                    "source_argument_member_unresolved",
+                    f"Cannot resolve source argument {argument_name!r} for member "
+                    f"{member.get('member_id')!r}",
+                )
+            argument = physical[0]
+            mapping = mappings[0]
+            source_binding = _source_binding_definition(entity, query)
+            override = (
+                source_binding.get("arguments", {}).get(argument_name)
+                if source_binding is not None
+                else None
+            )
+            if isinstance(override, dict) and "input_column" in override:
+                assert source_binding is not None
+                if invocation is None:
+                    _fail(
+                        "source_binding",
+                        "source_argument_value_unavailable",
+                        f"Source argument {argument_name!r} has no compiled input driver",
+                    )
+                driver = cast(dict[str, Any], source_binding.get("driver", {}))
+                input_id = str(driver.get("input_id", ""))
+                path = invocation["paths"].get(f"input:{input_id}")
+                if path is None:
+                    _fail(
+                        "source_binding",
+                        "source_argument_value_unavailable",
+                        f"Input driver {input_id!r} is unavailable for member "
+                        f"{member.get('member_id')!r}",
+                    )
+                return f"{_path_alias('_e0', path)}.{_quote_ident(str(override['input_column']))}"
+            if isinstance(override, dict) and "member" in override:
+                if invocation is None:
+                    _fail(
+                        "source_binding",
+                        "source_argument_value_unavailable",
+                        f"Source argument {argument_name!r} has no compiled entity driver",
+                    )
+                ref = cast(dict[str, Any], override["member"])
+                driver_entity = _resolve_entity(graph, identities, ref, bindings)
+                driver_member = driver_entity.members.get(str(ref.get("member_id", "")))
+                path = invocation["paths"].get(_entity_marker(driver_entity))
+                if driver_member is None or path is None:
+                    _fail(
+                        "source_binding",
+                        "source_argument_value_unavailable",
+                        f"Entity driver value is unavailable for member "
+                        f"{member.get('member_id')!r}",
+                    )
+                return _member_sql(driver_entity, driver_member, _path_alias("_e0", path))
+
+            parameter_name = str(
+                (override if isinstance(override, dict) else mapping).get("parameter", "")
+            )
+            supplied = query.get("parameters", {})
+            value: Any = (
+                supplied.get(parameter_name, _MISSING)
+                if isinstance(supplied, dict) and parameter_name
+                else _MISSING
+            )
+            if value is _MISSING and argument.default is not None:
+                try:
+                    value = json.loads(argument.default)
+                except (TypeError, ValueError):
+                    _fail(
+                        "source_binding",
+                        "source_argument_default_invalid",
+                        f"Function argument {argument_name!r} has an invalid JSON default",
+                    )
+            if value is _MISSING:
+                _fail(
+                    "required_filter"
+                    if mapping.get("required", True) is not False
+                    else "source_binding",
+                    "missing_source_parameter"
+                    if mapping.get("required", True) is not False
+                    else "source_argument_value_unavailable",
+                    f"Source argument {argument_name!r} has no effective value for member "
+                    f"{member.get('member_id')!r}",
+                )
+            if not _value_compatible(value, argument.type):
+                _fail(
+                    "type_check",
+                    "incompatible_parameter_type",
+                    f"Parameter {parameter_name!r} is incompatible with argument {argument_name!r}",
+                )
+            parameters.append(value)
+            member_type = str(member.get("data_type") or member.get("output_type"))
+            return f"CAST(? AS {_safe_type(member_type)})"
+
         aliases: dict[str, str] = (
             {
                 marker: _path_alias("_e0", path)
@@ -1758,7 +1968,12 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
                     "not_a_dimension",
                     f"{item.member.get('member_id')!r} is a measure",
                 )
-            sql = _member_sql(item.entity, item.member, item.alias)
+            sql = _member_sql(
+                item.entity,
+                item.member,
+                item.alias,
+                source_argument_renderer=render_source_argument_member,
+            )
             granularity = item.selection.get("granularity")
             if granularity:
                 allowed = item.member.get("granularities", [])
@@ -1779,7 +1994,9 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
                 _fail("request_validation", "duplicate_output", f"Duplicate output name {name!r}")
             output_names.add(name)
             selects.append(f"{sql} AS {_quote_ident(name)}")
-            groups.append(sql)
+            groups.append(
+                str(len(selects)) if _member_uses_source_argument(item.entity, item.member) else sql
+            )
             result_grain.append(name)
             record_unit(item, name)
         selected_dimension_ids = {str(item.member.get("member_id")) for item in dimension_items}
@@ -1806,9 +2023,13 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
             if name in output_names:
                 _fail("request_validation", "duplicate_output", f"Duplicate output name {name!r}")
             output_names.add(name)
-            selects.append(
-                f"{_aggregate_sql(item.entity, item.member, item.alias)} AS {_quote_ident(name)}"
+            aggregate = _aggregate_sql(
+                item.entity,
+                item.member,
+                item.alias,
+                source_argument_renderer=render_source_argument_member,
             )
+            selects.append(f"{aggregate} AS {_quote_ident(name)}")
             record_unit(item, name)
 
         from_sql = (
@@ -1832,8 +2053,12 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
             join_type = "INNER" if cardinality.get("min") == 1 else "LEFT"
             join_lines.append(f"{join_type} JOIN {target_sql} AS {alias} ON {' AND '.join(pairs)}")
 
-        where = _compile_filter(query.get("filters"), lookup, parameters)
-        having = _compile_filter(query.get("measure_filters"), lookup, parameters)
+        where = _compile_filter(
+            query.get("filters"), lookup, parameters, render_source_argument_member
+        )
+        having = _compile_filter(
+            query.get("measure_filters"), lookup, parameters, render_source_argument_member
+        )
         filtered = [lookup.get(_filter_key(item)) for item in _filter_members(query.get("filters"))]
         for entity in participating:
             if _entity_marker(entity) in (

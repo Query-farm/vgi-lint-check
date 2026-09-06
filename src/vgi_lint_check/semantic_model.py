@@ -32,6 +32,8 @@ SEMANTIC_TAG_SCHEMAS = {
     TAG_SEMANTIC_RELATIONSHIPS: "relationships",
 }
 
+_MAX_EXPANDED_MEMBERS = 500
+
 
 @dataclass(frozen=True)
 class SemanticDiagnostic:
@@ -211,9 +213,8 @@ def build_semantic_model(catalog: Catalog) -> SemanticModel:
             }
         packed = _decode(host.tags.get(TAG_SEMANTIC_MEMBERS))
         if isinstance(packed, list):
-            for member in packed:
-                if isinstance(member, dict):
-                    _add_member(entity, member, host.id, diagnostics)
+            for member in _expand_member_templates(packed, host.id, diagnostics):
+                _add_member(entity, member, host.id, diagnostics)
         if isinstance(host, Table):
             for column in host.columns:
                 native = _decode(column.tags.get(TAG_SEMANTIC_MEMBER))
@@ -282,6 +283,61 @@ def _add_member(
         )
     elif previous is None:
         entity.members[member_id] = member
+
+
+def _expand_member_templates(
+    values: list[Any], host: ObjectId, diagnostics: list[SemanticDiagnostic]
+) -> list[dict[str, Any]]:
+    """Expand bounded packed-member defaults into ordinary member definitions."""
+    expanded: list[dict[str, Any]] = []
+    template_ids: set[str] = set()
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        if "template_id" not in value:
+            expanded.append(value)
+            continue
+        template_id = str(value.get("template_id", ""))
+        if template_id in template_ids:
+            diagnostics.append(
+                SemanticDiagnostic(
+                    host,
+                    "duplicate_member_template",
+                    f"member template {template_id!r} is declared more than once",
+                )
+            )
+        template_ids.add(template_id)
+        defaults = value.get("template")
+        members = value.get("members")
+        if not isinstance(defaults, dict) or not isinstance(members, list):
+            continue
+        for index, override in enumerate(members):
+            if not isinstance(override, dict):
+                continue
+            member = {**defaults, **override}
+            errors = validate_instance("member", member)
+            if errors:
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        host,
+                        "invalid_expanded_member",
+                        f"member template {template_id!r} entry {index} is invalid: "
+                        + "; ".join(errors),
+                    )
+                )
+                continue
+            expanded.append(member)
+    if len(expanded) > _MAX_EXPANDED_MEMBERS:
+        diagnostics.append(
+            SemanticDiagnostic(
+                host,
+                "member_template_expansion_limit",
+                f"packed semantic members expand to {len(expanded)} entries; "
+                f"the limit is {_MAX_EXPANDED_MEMBERS}",
+            )
+        )
+        return expanded[:_MAX_EXPANDED_MEMBERS]
+    return expanded
 
 
 def _expression_refs(value: Any) -> set[str]:
@@ -388,6 +444,30 @@ def _member_physical_type(entity: SemanticEntity, member: dict[str, Any]) -> str
     if data_type is None or len(path) == 1:
         return data_type
     return _resolve_nested_type(data_type, path[1:])
+
+
+def _normalized_type(value: str | None) -> str:
+    raw = " ".join(str(value or "").strip().upper().split())
+    return {
+        "STRING": "VARCHAR",
+        "TEXT": "VARCHAR",
+        "INT": "INTEGER",
+        "INT4": "INTEGER",
+        "INT8": "BIGINT",
+        "FLOAT": "REAL",
+        "FLOAT8": "DOUBLE",
+        "BOOL": "BOOLEAN",
+    }.get(raw, raw)
+
+
+def _types_compatible(source: str | None, target: str | None) -> bool:
+    left, right = _normalized_type(source), _normalized_type(target)
+    if not left or not right or left == "ANY" or right == "ANY":
+        return True
+    if left == right:
+        return True
+    numeric = ["TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "REAL", "DOUBLE"]
+    return left in numeric and right in numeric
 
 
 def _list_element_type(data_type: str, path: list[str]) -> str | None:
@@ -679,10 +759,77 @@ def _validate_entity(entity: SemanticEntity, diagnostics: list[SemanticDiagnosti
         )
     for member_id, member in entity.members.items():
         _validate_unit_parameter(entity, member_id, member, arguments, diagnostics)
+        source_argument = member.get("source_argument")
+        if source_argument is not None:
+            source_name = str(source_argument)
+            source_matches = [
+                argument for argument in entity.function_arguments if argument.name == source_name
+            ]
+            source_mappings = [
+                item
+                for item in arguments
+                if isinstance(item, dict) and item.get("argument") == source_name
+            ]
+            if entity.source_kind != "table_function":
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        entity.host,
+                        "source_argument_member_on_relation",
+                        f"member {member_id!r} uses source_argument on a relation",
+                    )
+                )
+            elif not source_matches:
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        entity.host,
+                        "source_argument_member_missing",
+                        f"member {member_id!r} references missing function argument "
+                        f"{source_name!r}",
+                    )
+                )
+            elif len(source_matches) != 1 or entity.function_overload_count > 1:
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        entity.host,
+                        "source_argument_member_ambiguous",
+                        f"member {member_id!r} source argument {source_name!r} is ambiguous",
+                    )
+                )
+            elif len(source_mappings) != 1:
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        entity.host,
+                        "source_argument_member_unmapped",
+                        f"member {member_id!r} source argument {source_name!r} must be "
+                        "exposed by exactly one semantic source-argument mapping",
+                    )
+                )
+            declared_type = member.get("data_type") or member.get("output_type")
+            if not declared_type:
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        entity.host,
+                        "source_argument_member_type_required",
+                        f"member {member_id!r} backed by a source argument needs data_type "
+                        "or output_type",
+                    )
+                )
+            elif len(source_matches) == 1 and not _types_compatible(
+                str(declared_type), source_matches[0].type
+            ):
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        entity.host,
+                        "source_argument_member_type_mismatch",
+                        f"member {member_id!r} type {declared_type!r} is incompatible with "
+                        f"function argument {source_name!r} type {source_matches[0].type!r}",
+                    )
+                )
         if (
             member.get("kind") != "measure"
             and not _member_column_path(member)
             and not member.get("expression")
+            and source_argument is None
         ):
             diagnostics.append(
                 SemanticDiagnostic(

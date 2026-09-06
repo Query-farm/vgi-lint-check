@@ -38,5 +38,7 @@ consumers must normalize both. Federation is explicit and safe across runtime al
 need bindings when several instances share one logical identity. The conservative compiler rejects
 some valid SQL rather than guessing cardinality or repairing fanout invisibly.
 
-Multi-fact metrics, temporal/spatial predicates and arbitrary SQL expressions remain future work.
-They can be added without changing existing stable IDs or the single-branch request shape.
+Multi-fact metrics, temporal predicates and arbitrary SQL expressions remain future work. Typed
+spatial and repeated-field relationship predicates have since been added without introducing a raw
+SQL escape hatch. The remaining features can be added without changing existing stable IDs or the
+single-branch request shape.

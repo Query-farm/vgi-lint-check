@@ -64,7 +64,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["member_id", "kind"],
-          "not": {"anyOf": [{"required": ["unit", "unit_parameter"]}, {"required": ["column", "column_path"]}]},
+          "not": {"anyOf": [{"required": ["unit", "unit_parameter"]}, {"required": ["column", "column_path"]}, {"required": ["source_argument", "column"]}, {"required": ["source_argument", "column_path"]}, {"required": ["source_argument", "expression"]}]},
           "properties": {
             "member_id": {"$ref": "definitions.json#/$defs/semantic_id"},
             "kind": {"const": "dimension"},
@@ -75,6 +75,7 @@
             "hidden": {"type": "boolean"},
             "column": {"type": "string", "minLength": 1},
             "column_path": {"$ref": "#/$defs/column_path"},
+            "source_argument": {"type": "string", "minLength": 1},
             "expression": {"$ref": "expression.json"},
             "unit": {"type": "string", "minLength": 1},
             "unit_parameter": {"$ref": "#/$defs/unit_parameter"}
@@ -89,7 +90,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["member_id", "kind", "timezone", "granularities"],
-          "not": {"anyOf": [{"required": ["unit", "unit_parameter"]}, {"required": ["column", "column_path"]}]},
+          "not": {"anyOf": [{"required": ["unit", "unit_parameter"]}, {"required": ["column", "column_path"]}, {"required": ["source_argument", "column"]}, {"required": ["source_argument", "column_path"]}, {"required": ["source_argument", "expression"]}]},
           "properties": {
             "member_id": {"$ref": "definitions.json#/$defs/semantic_id"},
             "kind": {"const": "time_dimension"},
@@ -100,6 +101,7 @@
             "hidden": {"type": "boolean"},
             "column": {"type": "string", "minLength": 1},
             "column_path": {"$ref": "#/$defs/column_path"},
+            "source_argument": {"type": "string", "minLength": 1},
             "expression": {"$ref": "expression.json"},
             "timezone": {"type": "string", "minLength": 1},
             "granularities": {

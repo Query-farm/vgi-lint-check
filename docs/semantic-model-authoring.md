@@ -255,6 +255,53 @@ normal choice.
 
 `output_type` is operational: the compiler emits a DuckDB `CAST`. Do not use it merely as prose.
 
+For a table function, a dimension may describe invocation context that is not repeated in the
+function's result columns. Reference the physical argument—rather than duplicating its semantic
+parameter name—with `source_argument`:
+
+```json
+{
+  "member_id": "requested_latitude",
+  "kind": "dimension",
+  "source_argument": "latitude",
+  "data_type": "DOUBLE",
+  "unit": "deg"
+}
+```
+
+The entity's `source.arguments` mapping still controls the public query parameter. The compiler
+uses an explicit scalar value, the discovered physical default, or the column/member bound by a
+correlated invocation. Declare `data_type` or `output_type`, and do not combine `source_argument`
+with `column`, `column_path`, or `expression`. These members can be selected, filtered, grouped, or
+used by typed expressions; they cannot be relationship keys because those must remain physical.
+
+When many packed members share the same semantics, use a bounded member template instead of copying
+the complete definition:
+
+```json
+{
+  "template_id": "ensemble_temperatures",
+  "template": {
+    "kind": "dimension",
+    "data_type": "DOUBLE",
+    "unit_parameter": {
+      "argument": "temperature_unit",
+      "values": {"celsius": "Cel", "fahrenheit": "[degF]"}
+    }
+  },
+  "members": [
+    {"member_id": "temperature_gfs", "column": "temperature_gfs"},
+    {"member_id": "temperature_ecmwf", "column": "temperature_ecmwf"}
+  ]
+}
+```
+
+Expansion is a shallow merge: an entry overrides a top-level template field. Every expansion is
+validated against the normal member schema and participates in the usual duplicate/member-reference
+checks. There is no placeholder interpolation, nested template, or executable generation language.
+Keep each template semantically uniform; split members into separate templates when their units,
+types, kinds, or descriptions differ.
+
 ### 4. Define measures deliberately
 
 Base measures support these aggregations:
@@ -510,6 +557,10 @@ DuckDB 1.5 exposes semantic tags on tables and table functions, but not native o
 Store all members in the packed `vgi.semantic_members` array on the same table or view that carries
 `vgi.semantic_entity` (or on the table function when that carrier is supported).
 
+Member templates are available only in this packed array. Native `vgi.semantic_member` column tags
+always describe one concrete member. Consumers expand templates before merging packed and native
+members.
+
 When DuckDB exposes column tags, you may also put one `vgi.semantic_member` value directly on each
 column. A native member may omit `column`; the hosting column supplies it. Consumers merge packed and
 native representations by `member_id`:
@@ -531,6 +582,7 @@ The JSON Schemas are the source of truth for tag shapes:
 vgi-lint spec --schema catalog
 vgi-lint spec --schema entity
 vgi-lint spec --schema member
+vgi-lint spec --schema member-template
 vgi-lint spec --schema relationship
 vgi-lint spec --schema query
 ```
