@@ -22,7 +22,7 @@ def pytest_addoption(parser):
         "--run-ai",
         action="store_true",
         default=False,
-        help="run @pytest.mark.ai tests against the configured Anthropic API",
+        help="run @pytest.mark.ai tests against the configured Claude CLI or Anthropic API backend",
     )
 
 

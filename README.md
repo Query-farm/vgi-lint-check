@@ -290,6 +290,7 @@ use `--agent-tasks-file` or `[simulate] agent_tasks_file` to override it.
 ```bash
 vgi-lint simulate <worker>              # run the suite (gates on --min-pass-rate)
 vgi-lint simulate <worker> --agent-tasks-file vgi-agent-tests.yaml
+vgi-lint lint <worker> --agent-tasks-file /absolute/path/to/vgi-agent-tests.yaml
 vgi-lint simulate <worker> --suggest 5  # authoring: propose candidate tasks as tag JSON
 
 # Compose workers and test whether an agent can use their federated semantic model.
@@ -301,11 +302,19 @@ vgi-lint semantic-simulate <sales-worker> <crm-worker> \
 The repository's semantic end-to-end suite is offline by default. It loads the committed
 `examples/semantic/ecommerce-workers.json` catalogs and data, runs the semantic lint rules,
 federates them, compiles representative requests, executes the generated SQL, and grades a
-scripted agent interaction. The corresponding real-model acceptance test is explicitly opt-in:
+scripted agent interaction. The corresponding real-model acceptance test is explicitly opt-in.
+By default it uses the authenticated Claude Code CLI subscription through the pruned `claude`
+backend (no Claude Code tools, MCP servers, settings, `CLAUDE.md`, or default system prompt):
 
 ```bash
-ANTHROPIC_API_KEY=... uv run --with anthropic pytest --run-ai \
-  tests/ai/test_semantic_agent.py
+uv run pytest --run-ai tests/ai/test_semantic_agent.py
+```
+
+Use the pay-per-token API backend for production-API parity or CI:
+
+```bash
+VGI_LINT_AI_BACKEND=api ANTHROPIC_API_KEY=... \
+  uv run --with anthropic pytest --run-ai tests/ai/test_semantic_agent.py
 ```
 
 - **Grading is layered, strongest wins:** (1) compare the analyst's answer to the
@@ -396,6 +405,8 @@ The reserved vocabulary now includes an optional federated semantic model. Start
 [semantic model specification](docs/semantic-model.md) for normative behavior, or give a coding
 agent the [agent authoring playbook](docs/semantic-model-agent-authoring.md). Packaged Draft 2020-12
 schemas are exposed by `vgi-lint spec --format json` or `vgi-lint spec --schema member`.
+Compile a request without executing it with
+`vgi-lint semantic-compile <worker> --as runtime_alias --request request.json`.
 
 VGI workers attach metadata via tags; `vgi-lint` recognizes these reserved keys
 (set them on the catalog, a schema, a table/view, or — where noted — a function).

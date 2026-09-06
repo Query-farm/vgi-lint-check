@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      VGI_LINT_AI_BACKEND: api
       VGI_LINT_AI_MODEL: ${{ inputs.model }}
     steps:
       - uses: actions/checkout@v5
