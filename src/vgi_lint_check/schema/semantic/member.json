@@ -18,6 +18,7 @@
         "description": {"type": "string", "minLength": 1, "maxLength": 4000},
         "data_type": {"type": "string", "minLength": 1, "maxLength": 100},
         "output_type": {"type": "string", "minLength": 1, "maxLength": 100},
+        "conformance_id": {"$ref": "definitions.json#/$defs/semantic_id"},
         "hidden": {"type": "boolean"}
       }
     },
@@ -50,6 +51,7 @@
             "description": {"type": "string"},
             "data_type": {"type": "string"},
             "output_type": {"type": "string"},
+            "conformance_id": {"$ref": "definitions.json#/$defs/semantic_id"},
             "hidden": {"type": "boolean"},
             "column": {"type": "string", "minLength": 1},
             "column_path": {"$ref": "#/$defs/column_path"}
@@ -72,6 +74,7 @@
             "description": {"type": "string"},
             "data_type": {"type": "string"},
             "output_type": {"type": "string"},
+            "conformance_id": {"$ref": "definitions.json#/$defs/semantic_id"},
             "hidden": {"type": "boolean"},
             "column": {"type": "string", "minLength": 1},
             "column_path": {"$ref": "#/$defs/column_path"},
@@ -98,6 +101,7 @@
             "description": {"type": "string"},
             "data_type": {"type": "string"},
             "output_type": {"type": "string"},
+            "conformance_id": {"$ref": "definitions.json#/$defs/semantic_id"},
             "hidden": {"type": "boolean"},
             "column": {"type": "string", "minLength": 1},
             "column_path": {"$ref": "#/$defs/column_path"},
@@ -123,6 +127,21 @@
       "maxItems": 16,
       "items": {"type": "string", "minLength": 1, "maxLength": 200}
     },
+    "local_filter": {
+      "oneOf": [
+        {"type":"object","additionalProperties":false,"required":["and"],"properties":{"and":{"type":"array","minItems":1,"maxItems":100,"items":{"$ref":"#/$defs/local_filter"}}}},
+        {"type":"object","additionalProperties":false,"required":["or"],"properties":{"or":{"type":"array","minItems":1,"maxItems":100,"items":{"$ref":"#/$defs/local_filter"}}}},
+        {"$ref":"#/$defs/local_filter_predicate"}
+      ]
+    },
+    "local_filter_predicate": {
+      "oneOf": [
+        {"type":"object","additionalProperties":false,"required":["member","operator","value"],"properties":{"member":{"$ref":"definitions.json#/$defs/semantic_id"},"operator":{"enum":["eq","neq","gt","gte","lt","lte"]},"value":{}}},
+        {"type":"object","additionalProperties":false,"required":["member","operator","values"],"properties":{"member":{"$ref":"definitions.json#/$defs/semantic_id"},"operator":{"enum":["in","not_in"]},"values":{"type":"array","minItems":1,"maxItems":100}}},
+        {"type":"object","additionalProperties":false,"required":["member","operator","values"],"properties":{"member":{"$ref":"definitions.json#/$defs/semantic_id"},"operator":{"const":"between"},"values":{"type":"array","minItems":2,"maxItems":2}}},
+        {"type":"object","additionalProperties":false,"required":["member","operator"],"properties":{"member":{"$ref":"definitions.json#/$defs/semantic_id"},"operator":{"enum":["is_null","is_not_null"]}}}
+      ]
+    },
     "measure": {
       "allOf": [
         {"$ref": "#/$defs/base"},
@@ -145,7 +164,8 @@
             "expression": {"$ref": "expression.json"},
             "additivity": {"$ref": "definitions.json#/$defs/additivity"},
             "unit": {"type": "string", "minLength": 1},
-            "unit_parameter": {"$ref": "#/$defs/unit_parameter"}
+            "unit_parameter": {"$ref": "#/$defs/unit_parameter"},
+            "filter": {"$ref": "#/$defs/local_filter"}
           }
         }
       ]

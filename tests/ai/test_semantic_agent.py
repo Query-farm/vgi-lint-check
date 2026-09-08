@@ -48,6 +48,10 @@ def test_agent_uses_the_semantic_model(tmp_path: Path) -> None:
             tasks=tasks,
         )
         assert report.pass_rate == 1.0, json.loads(render_json(report))
-        assert report.verdicts[0].grader == "reference"
+        assert {verdict.name for verdict in report.verdicts} == {
+            "revenue by customer country",
+            "revenue and customers by country",
+        }
+        assert all(verdict.grader == "reference" for verdict in report.verdicts)
     finally:
         connection.close()

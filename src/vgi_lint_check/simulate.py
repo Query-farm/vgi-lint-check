@@ -840,7 +840,9 @@ _ACTOR = (
     '  {"thought":"...","action":"query_semantic_model","measures":[{"catalog_id":"...",'
     '"entity_id":"...","member_id":"...","alias":"..."?,"missing_fact_value":"null|zero"?}],'
     '"dimensions":[{"catalog_id":"...","entity_id":"...","member_id":"...",'
-    '"granularity":"year"?,"alias":"..."?,"branch_relationship_paths":[]?}]?,'
+    '"granularity":"year"?,"alias":"..."?,"branch_relationship_paths":[]?,'
+    '"branch_members":[]?}]?,"derived_measures":[{"name":"...",'
+    '"expression":{...},"output_type":"...","unit":"..."?}]?,'
     '"filters":{"and":[{"member":"<member id>","operator":"eq|neq|gt|gte|lt|lte",'
     '"value":"..."}]}?,'
     '"order":[{"member":"<selected output>","direction":"asc|desc"}]?,"limit":50?,'
@@ -850,8 +852,9 @@ _ACTOR = (
     "shown in semantic_catalog metadata, not the SQL attachment alias; entity/member IDs come "
     "from list_catalogs and describe tools\n"
     "    Multi-fact shape: select measures from up to ten roots at one exact shared dimension "
-    "grain. Use branch_relationship_paths on a dimension when roots need different safe paths; "
-    "missing values stay null unless an additive numeric measure requests zero.\n"
+    "grain. Use branch_relationship_paths for different safe paths. Different members require "
+    "matching conformance_id metadata and explicit branch_members. Cross-fact derived_measures "
+    "require an explicit null/zero missing_fact_value on every referenced base measure.\n"
     "    Correlated shape: inputs=[{input_id,grain,columns:[{name,type,nullable?}],rows}], "
     "source_bindings=[{entity,driver:{input_id}|{entity,max_rows,filters?,order?},"
     "arguments:{physical_arg:{input_column}|{member}|{parameter}},max_output_rows?}]\n"

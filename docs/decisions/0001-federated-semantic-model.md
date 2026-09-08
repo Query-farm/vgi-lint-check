@@ -26,7 +26,14 @@ It aggregates each fact root independently and stitches those aggregates only at
 the same stable semantic identity, using a distinct key spine and null-safe joins. Missing fact
 values remain null unless an additive numeric measure explicitly opts into a typed zero. Shared
 population filters run in every branch; selected-measure filters run after stitching. The first
-multi-fact release deliberately excludes branch-specific populations and new cross-fact arithmetic.
+multi-fact release excluded branch-specific populations and new cross-fact arithmetic.
+
+The contract now permits explicit conformance between different member identities. Equivalent
+members declare the same `conformance_id`, and a query names every per-root substitution; names are
+never treated as proof. Model-owned filters are allowed on base aggregates and compile to
+parameterized SQL `FILTER`. Query-level cross-fact derived measures are typed, post-stitch
+expressions over selected base outputs. They require explicit missing-value policy for every input,
+cannot chain, and provide no raw-SQL escape hatch.
 
 The compiler also supports bounded correlated table-function pipelines driven by typed query-local
 inputs or another semantic entity. Invocation edges are dataflow, not semantic relationships. The
@@ -43,8 +50,7 @@ consumers must normalize both. Federation is explicit and safe across runtime al
 need bindings when several instances share one logical identity. The conservative compiler rejects
 some valid SQL rather than guessing cardinality or repairing fanout invisibly.
 
-Cross-fact derived metrics, branch-specific filters, conformance groups between different member
-identities, temporal predicates, and arbitrary SQL expressions remain future work. Typed spatial and
-repeated-field relationship predicates have since been added without introducing a raw SQL escape
-hatch. The remaining features can be added without changing existing stable IDs or the single-fact
-request shape.
+Branch-specific population filters, temporal predicates, derived-measure chaining, and arbitrary
+SQL expressions remain future work. Typed spatial and repeated-field relationship predicates have
+also been added without introducing a raw SQL escape hatch. These additions do not change existing
+stable IDs or the single-fact request shape.

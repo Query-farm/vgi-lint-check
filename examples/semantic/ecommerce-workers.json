@@ -14,6 +14,10 @@
           {
             "name": "revenue by customer country",
             "prompt": "Using the modeled business definitions, return total revenue by customer country, largest revenue first. Return exactly the columns country and revenue."
+          },
+          {
+            "name": "revenue and customers by country",
+            "prompt": "Using only modeled business definitions, return total revenue and current customer count by country. Use the semantic query tool to combine both fact roots and return exactly country, revenue, and customer_count, ordered by country."
           }
         ]
       },
@@ -172,6 +176,11 @@
       {
         "name": "revenue by customer country",
         "reference_sql": "SELECT c.country, CAST(SUM(o.amount) AS DECIMAL(18,2)) AS revenue FROM sales_runtime.main.orders o JOIN crm_runtime.main.customers c USING (customer_id) GROUP BY c.country ORDER BY revenue DESC",
+        "required_tools": ["query_semantic_model"]
+      },
+      {
+        "name": "revenue and customers by country",
+        "reference_sql": "WITH revenue AS (SELECT c.country, CAST(SUM(o.amount) AS DECIMAL(18,2)) AS revenue FROM sales_runtime.main.orders o JOIN crm_runtime.main.customers c USING (customer_id) GROUP BY c.country), customer_counts AS (SELECT country, COUNT(*) AS customer_count FROM crm_runtime.main.customers GROUP BY country), keys AS (SELECT country FROM revenue UNION SELECT country FROM customer_counts) SELECT keys.country, revenue.revenue, customer_counts.customer_count FROM keys LEFT JOIN revenue USING (country) LEFT JOIN customer_counts USING (country) ORDER BY keys.country",
         "required_tools": ["query_semantic_model"]
       }
     ]

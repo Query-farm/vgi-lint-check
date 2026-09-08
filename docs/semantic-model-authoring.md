@@ -324,6 +324,17 @@ Every measure also declares additivity:
 When uncertain, choose the more restrictive declaration. Incorrectly calling a measure additive can
 produce plausible but wrong totals.
 
+A base aggregate may own a model `filter`. Use only local, non-measure member IDs. Values are
+parameterized and compile to aggregate `FILTER (WHERE ...)`:
+
+```json
+{"member_id":"completed_revenue","kind":"measure","aggregation":"sum","member":"amount","filter":{"member":"status","operator":"eq","value":"completed"},"additivity":"additive"}
+```
+
+This defines the measure population but does not satisfy `vgi.required_filters`, which protects
+source access. Filters on derived model measures are rejected; put the rule on referenced base
+aggregates.
+
 Derived measures use a small typed expression tree rather than raw SQL. For example, average order
 value can reference the two measures above:
 
@@ -696,8 +707,8 @@ Filters use parameters rather than interpolated values. Dimension filters compil
 measure filters to `HAVING`. Ordering can reference selected output names only. Dimension-only
 queries must specify `root_entity` so the compiler knows which grain anchors the query.
 
-The compiler can combine measures from up to ten fact roots when every selected dimension has the
-same stable semantic identity and is safely reachable from every root. It aggregates each fact
+The compiler can combine measures from up to ten fact roots when every selected dimension is safely
+conformed and reachable from every root. Exact semantic identity is the simplest case. It aggregates each fact
 branch first, constructs the union of dimension keys, and then joins the aggregates at that exact
 grain. It never joins raw facts together or traverses into a `many` side.
 
@@ -741,15 +752,36 @@ For example, revenue from `orders` and customer count from `customers` can share
 
 Use `branch_relationship_paths` only when roots need different paths to the same dimension. Each
 entry names one selected fact root; an omitted root uses the dimension's ordinary
-`relationship_path` or normal unique-path discovery. The paths do not declare equivalence between
-different members—the dimension reference itself must be identical in every branch.
+`relationship_path` or normal unique-path discovery. Paths do not declare equivalence. To conform
+different members, declare the same stable `conformance_id` on both and explicitly substitute one:
+
+```json
+{
+  "catalog_id": "com.example.crm", "entity_id": "customers", "member_id": "customer_id",
+  "alias": "customer",
+  "branch_members": [{
+    "root": {"catalog_id": "com.example.sales", "entity_id": "orders"},
+    "member": {"catalog_id": "com.example.sales", "entity_id": "orders", "member_id": "customer_id"}
+  }]
+}
+```
+
+The compiler never infers conformance from names. It validates type, kind, time/granularity, and
+unit semantics for each explicit substitution.
 
 Missing branch values stay `NULL` by default. `missing_fact_value: "zero"` is allowed only for a
 measure that is both additive and provably numeric; it is not a general display default. Population
 `filters` are applied to every branch and therefore must be safe and meaningful from every root.
 Selected-measure `measure_filters`, ordering, and limit apply after stitching. Branch-specific
-population filters and new arithmetic across fact roots are not supported; publish or select
-existing measures side by side.
+population filters remain unsupported. Cross-fact arithmetic is explicit and typed:
+
+```json
+{"derived_measures":[{"name":"revenue_per_customer","expression":{"op":"safe_divide","left":{"op":"member","member":"revenue"},"right":{"op":"member","member":"customer_count"}},"output_type":"DECIMAL(18,2)","unit":"USD/customer"}]}
+```
+
+Every referenced base selection must spell out `missing_fact_value: "null"` or `"zero"`. A formula
+must span at least two roots, can reference only selected base output names, cannot reference
+another query-level derived measure, and cannot contain raw SQL. Units are explicit, never inferred.
 
 In Cupola, the `query_semantic_model` tool accepts this request directly. In this repository, the
 reference compiler and executable examples are exercised by the tests in
@@ -786,6 +818,8 @@ hidden reference answer.
 | `ambiguous_catalog_binding` | The same logical catalog is attached more than once | Supply a `binding_key -> alias` binding |
 | `fanout_unsafe` | The requested path enters a many endpoint | Change the model/query or introduce a safe bridge/pre-aggregated entity |
 | `incompatible_branch_grain` | Multi-fact branches do not produce the same conformed or correlated grain | Select dimensions reachable from every root and use the same driving grain |
+| `conformance_id_mismatch` | A branch substitution is outside the canonical conformance group | Give genuinely equivalent members the same stable `conformance_id` |
+| `derived_measure_missing_value_policy_required` | Cross-fact arithmetic could inherit an accidental null/zero policy | Set `missing_fact_value` explicitly on every referenced measure |
 | `zero_fill_not_safe` | `missing_fact_value: "zero"` was requested for a measure not proven additive and numeric | Keep the default `null` policy or correct the measure's type/additivity if the business semantics justify it |
 | `multi_fact_filter_ambiguous` | A bare population-filter member identifies different entities | Use a fully qualified member reference |
 | `missing_function_argument_metadata` | The compiler cannot see `vgi_function_arguments()` details | Upgrade/fix the worker or extension metadata |

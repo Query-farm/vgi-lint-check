@@ -1298,6 +1298,7 @@ def _expression_sql(
     stack: tuple[str, ...],
     aggregate_members: bool,
     source_argument_renderer: _SourceArgumentRenderer | None = None,
+    parameters: list[Any] | None = None,
 ) -> str:
     op = str(expression.get("op", ""))
     if op == "member":
@@ -1306,46 +1307,86 @@ def _expression_sql(
         if member is None:
             _fail("type_check", "unknown_expression_member", f"Unknown member {member_id!r}")
         if aggregate_members and member.get("kind") == "measure":
-            return _aggregate_sql(entity, member, alias, stack, source_argument_renderer)
+            return _aggregate_sql(
+                entity, member, alias, stack, source_argument_renderer, parameters
+            )
         return _member_sql(entity, member, alias, stack, source_argument_renderer)
     if op == "literal":
         return _literal_sql(expression.get("value"))
     if op in (*_BINARY_OPERATORS, "safe_divide"):
         left = _expression_sql(
-            entity, expression["left"], alias, stack, aggregate_members, source_argument_renderer
+            entity,
+            expression["left"],
+            alias,
+            stack,
+            aggregate_members,
+            source_argument_renderer,
+            parameters,
         )
         right = _expression_sql(
-            entity, expression["right"], alias, stack, aggregate_members, source_argument_renderer
+            entity,
+            expression["right"],
+            alias,
+            stack,
+            aggregate_members,
+            source_argument_renderer,
+            parameters,
         )
         if op == "safe_divide":
             return f"({left} / NULLIF({right}, 0))"
         return f"({left} {_BINARY_OPERATORS[op]} {right})"
     if op == "coalesce":
         args = [
-            _expression_sql(entity, item, alias, stack, aggregate_members, source_argument_renderer)
+            _expression_sql(
+                entity, item, alias, stack, aggregate_members, source_argument_renderer, parameters
+            )
             for item in expression.get("args", [])
         ]
         return f"COALESCE({', '.join(args)})"
     if op == "nullif":
         left = _expression_sql(
-            entity, expression["value"], alias, stack, aggregate_members, source_argument_renderer
+            entity,
+            expression["value"],
+            alias,
+            stack,
+            aggregate_members,
+            source_argument_renderer,
+            parameters,
         )
         other = expression.get("other", {"op": "literal", "value": 0})
         right = _expression_sql(
-            entity, other, alias, stack, aggregate_members, source_argument_renderer
+            entity, other, alias, stack, aggregate_members, source_argument_renderer, parameters
         )
         return f"NULLIF({left}, {right})"
     if op == "cast":
         value = _expression_sql(
-            entity, expression["value"], alias, stack, aggregate_members, source_argument_renderer
+            entity,
+            expression["value"],
+            alias,
+            stack,
+            aggregate_members,
+            source_argument_renderer,
+            parameters,
         )
         return f"CAST({value} AS {_safe_type(str(expression['type']))})"
     if op == "case":
         when = _expression_sql(
-            entity, expression["when"], alias, stack, aggregate_members, source_argument_renderer
+            entity,
+            expression["when"],
+            alias,
+            stack,
+            aggregate_members,
+            source_argument_renderer,
+            parameters,
         )
         then = _expression_sql(
-            entity, expression["then"], alias, stack, aggregate_members, source_argument_renderer
+            entity,
+            expression["then"],
+            alias,
+            stack,
+            aggregate_members,
+            source_argument_renderer,
+            parameters,
         )
         otherwise = expression.get("else")
         suffix = (
@@ -1359,6 +1400,7 @@ def _expression_sql(
                 stack,
                 aggregate_members,
                 source_argument_renderer,
+                parameters,
             )
         )
         return f"CASE WHEN {when} THEN {then}{suffix} END"
@@ -1372,6 +1414,7 @@ def _aggregate_sql(
     alias: str,
     stack: tuple[str, ...] = (),
     source_argument_renderer: _SourceArgumentRenderer | None = None,
+    parameters: list[Any] | None = None,
 ) -> str:
     member_id = str(member.get("member_id", ""))
     if member_id in stack:
@@ -1385,6 +1428,7 @@ def _aggregate_sql(
             (*stack, member_id),
             True,
             source_argument_renderer,
+            parameters,
         )
     else:
         aggregation = str(member.get("aggregation", ""))
@@ -1412,9 +1456,72 @@ def _aggregate_sql(
                 if aggregation == "count_distinct"
                 else f"{aggregation.upper()}({value})"
             )
+        model_filter = member.get("filter")
+        if model_filter is not None:
+            if parameters is None:
+                _fail(
+                    "sql_generation",
+                    "measure_filter_parameters_unavailable",
+                    f"Measure {member_id!r} filter cannot bind parameters in this context",
+                )
+            sql += (
+                " FILTER (WHERE "
+                + _compile_model_measure_filter(
+                    entity, model_filter, alias, parameters, source_argument_renderer
+                )
+                + ")"
+            )
     if member.get("output_type"):
         return f"CAST({sql} AS {_safe_type(str(member['output_type']))})"
     return sql
+
+
+def _compile_model_measure_filter(
+    entity: SemanticEntity,
+    value: dict[str, Any],
+    alias: str,
+    parameters: list[Any],
+    source_argument_renderer: _SourceArgumentRenderer | None = None,
+) -> str:
+    """Compile a model-owned aggregate FILTER over members on the same entity."""
+    if "and" in value or "or" in value:
+        key = "and" if "and" in value else "or"
+        parts = [
+            _compile_model_measure_filter(
+                entity, child, alias, parameters, source_argument_renderer
+            )
+            for child in value[key]
+        ]
+        return "(" + f" {key.upper()} ".join(parts) + ")"
+    member_id = str(value.get("member", ""))
+    member = entity.members.get(member_id)
+    if member is None or member.get("kind") == "measure":
+        _fail(
+            "model_resolution",
+            "invalid_measure_filter_member",
+            f"Measure filter member {member_id!r} must identify a local non-measure member",
+        )
+    lhs = _member_sql(entity, member, alias, source_argument_renderer=source_argument_renderer)
+    operator = str(value.get("operator", ""))
+    if operator == "is_null":
+        return f"{lhs} IS NULL"
+    if operator == "is_not_null":
+        return f"{lhs} IS NOT NULL"
+    values = list(value.get("values", [])) if "values" in value else [value.get("value")]
+    parameters.extend(values)
+    if operator in {"in", "not_in"}:
+        placeholders = ", ".join("?" for _ in values)
+        return f"{lhs} {'IN' if operator == 'in' else 'NOT IN'} ({placeholders})"
+    if operator == "between":
+        return f"{lhs} BETWEEN ? AND ?"
+    sql_operator = _FILTER_OPERATORS.get(operator)
+    if sql_operator is None:
+        _fail(
+            "model_resolution",
+            "invalid_measure_filter_operator",
+            f"Unknown operator {operator!r}",
+        )
+    return f"{lhs} {sql_operator} ?"
 
 
 def _catalog_identities(catalogs: dict[str, Catalog]) -> dict[str, dict[str, Any]]:
@@ -1586,7 +1693,13 @@ def _compile_filter(
         )
     entity, member, alias = found
     lhs = (
-        _aggregate_sql(entity, member, alias, source_argument_renderer=source_argument_renderer)
+        _aggregate_sql(
+            entity,
+            member,
+            alias,
+            source_argument_renderer=source_argument_renderer,
+            parameters=parameters,
+        )
         if member.get("kind") == "measure"
         else _member_sql(entity, member, alias, source_argument_renderer=source_argument_renderer)
     )
@@ -1647,6 +1760,11 @@ def _validate_multi_fact_output_names(query: dict[str, Any]) -> None:
         if name in names:
             _fail("request_validation", "duplicate_output", f"Duplicate output name {name!r}")
         names.add(name)
+    for derived in query.get("derived_measures", []):
+        name = str(derived.get("name", ""))
+        if name in names:
+            _fail("request_validation", "duplicate_output", f"Duplicate output name {name!r}")
+        names.add(name)
 
 
 def _validate_branch_relationship_paths(
@@ -1672,6 +1790,110 @@ def _validate_branch_relationship_paths(
                     f"for root {key[0]!r}.{key[1]!r}",
                 )
             seen.add(key)
+
+
+def _validate_branch_members(
+    graph: FederatedSemanticModel,
+    identities: dict[str, dict[str, Any]],
+    bindings: dict[str, str],
+    dimensions: list[dict[str, Any]],
+    roots: list[dict[str, str]],
+) -> None:
+    """Validate explicit conformed-member substitutions for fact branches."""
+    root_keys = {_ref_key(root) for root in roots}
+    for dimension in dimensions:
+        overrides = list(dimension.get("branch_members", []))
+        if not overrides:
+            continue
+        canonical_entity = _resolve_entity(graph, identities, dimension, bindings)
+        canonical = canonical_entity.members.get(str(dimension.get("member_id", "")))
+        if canonical is None or canonical.get("kind") == "measure":
+            _fail(
+                "model_resolution",
+                "invalid_conformed_dimension",
+                "The canonical conformed member must identify a non-measure member",
+            )
+        conformance_id = canonical.get("conformance_id")
+        if not conformance_id:
+            _fail(
+                "model_resolution",
+                "conformance_id_required",
+                f"Canonical member {canonical.get('member_id')!r} needs conformance_id",
+            )
+        seen: set[tuple[str, str]] = set()
+        for override in overrides:
+            root_key = _ref_key(override.get("root", {}))
+            if root_key not in root_keys:
+                _fail(
+                    "request_validation",
+                    "invalid_branch_member_root",
+                    f"Conformed member override targets non-fact root "
+                    f"{root_key[0]!r}.{root_key[1]!r}",
+                )
+            if root_key in seen:
+                _fail(
+                    "request_validation",
+                    "duplicate_branch_member",
+                    f"Conformed dimension {dimension.get('member_id')!r} has multiple "
+                    "member overrides for one fact root",
+                )
+            seen.add(root_key)
+            ref = cast(dict[str, Any], override.get("member", {}))
+            entity = _resolve_entity(graph, identities, ref, bindings)
+            member = entity.members.get(str(ref.get("member_id", "")))
+            if member is None or member.get("kind") == "measure":
+                _fail(
+                    "model_resolution",
+                    "invalid_conformed_dimension",
+                    "A conformed branch member must identify a non-measure member",
+                )
+            if member.get("conformance_id") != conformance_id:
+                _fail(
+                    "type_check",
+                    "conformance_id_mismatch",
+                    f"Member {member.get('member_id')!r} does not declare conformance_id "
+                    f"{conformance_id!r}",
+                )
+            canonical_type = _normalized_type(_member_type(canonical_entity, canonical))
+            branch_type = _normalized_type(_member_type(entity, member))
+            if not canonical_type or not branch_type:
+                _fail(
+                    "type_check",
+                    "conformed_member_type_unknown",
+                    "Conformed members must declare or expose a discoverable type",
+                )
+            if canonical_type != branch_type:
+                _fail(
+                    "type_check",
+                    "conformed_member_type_mismatch",
+                    f"Conformed members {canonical.get('member_id')!r} and "
+                    f"{member.get('member_id')!r} must have the same type",
+                )
+            if (canonical.get("kind") == "time_dimension") != (
+                member.get("kind") == "time_dimension"
+            ):
+                _fail(
+                    "type_check",
+                    "conformed_member_kind_mismatch",
+                    "Time dimensions may only be conformed with other time dimensions",
+                )
+            if canonical.get("kind") == "time_dimension":
+                if canonical.get("timezone") != member.get("timezone") or canonical.get(
+                    "week_start", "monday"
+                ) != member.get("week_start", "monday"):
+                    _fail(
+                        "type_check",
+                        "conformed_time_semantics_mismatch",
+                        "Conformed time dimensions must use the same timezone and week start",
+                    )
+                granularity = dimension.get("granularity")
+                if granularity and granularity not in member.get("granularities", []):
+                    _fail(
+                        "type_check",
+                        "conformed_granularity_unsupported",
+                        f"Branch member {member.get('member_id')!r} does not support "
+                        f"granularity {granularity!r}",
+                    )
 
 
 def _validate_multi_fact_population_filters(
@@ -1724,9 +1946,25 @@ def _validate_multi_fact_population_filters(
 def _dimension_for_branch(selection: dict[str, Any], root: dict[str, str]) -> dict[str, Any]:
     result = deepcopy(selection)
     overrides = result.pop("branch_relationship_paths", [])
+    member_overrides = result.pop("branch_members", [])
     selected = [item for item in overrides if _ref_key(item.get("root", {})) == _ref_key(root)]
     if selected:
         result["relationship_path"] = list(selected[0].get("relationship_path", []))
+    member_selected = [
+        item for item in member_overrides if _ref_key(item.get("root", {})) == _ref_key(root)
+    ]
+    if member_selected:
+        override = member_selected[0]
+        member = override["member"]
+        result.update(
+            {
+                "catalog_id": member["catalog_id"],
+                "entity_id": member["entity_id"],
+                "member_id": member["member_id"],
+            }
+        )
+        if "relationship_path" in override:
+            result["relationship_path"] = list(override["relationship_path"])
     return result
 
 
@@ -1906,6 +2144,107 @@ def _compile_stitched_measure_filter(
     return f"{lhs} {sql_operator} ?"
 
 
+def _derived_member_refs(value: Any) -> set[str]:
+    if isinstance(value, list):
+        return {ref for child in value for ref in _derived_member_refs(child)}
+    if not isinstance(value, dict):
+        return set()
+    refs = {str(value.get("member", ""))} if value.get("op") == "member" else set()
+    for child in value.values():
+        if isinstance(child, (dict, list)):
+            refs.update(_derived_member_refs(child))
+    return refs
+
+
+def _selected_measure_type(
+    graph: FederatedSemanticModel,
+    identities: dict[str, dict[str, Any]],
+    selection: dict[str, Any],
+    bindings: dict[str, str],
+) -> str | None:
+    entity = _resolve_entity(graph, identities, selection, bindings)
+    member = entity.members.get(str(selection.get("member_id", "")))
+    if member is None or member.get("kind") != "measure":
+        return None
+    if member.get("output_type"):
+        return str(member["output_type"])
+    aggregation = str(member.get("aggregation", ""))
+    if aggregation in {"count", "count_rows", "count_distinct"}:
+        return "BIGINT"
+    source = entity.members.get(str(member.get("member", "")))
+    return _member_type(entity, source) if source is not None else None
+
+
+def _compile_derived_expression(
+    value: dict[str, Any],
+    selected_types: dict[str, str],
+    parameters: list[Any],
+) -> tuple[str, str]:
+    op = str(value.get("op", ""))
+    if op == "member":
+        name = str(value.get("member", ""))
+        if name not in selected_types:
+            _fail(
+                "request_validation",
+                "derived_measure_member_not_selected",
+                f"Derived measure references unselected or ambiguous output {name!r}",
+            )
+        return f'"_stitched".{_quote_ident(name)}', selected_types[name]
+    if op == "literal":
+        literal = value.get("value")
+        parameters.append(literal)
+        inferred = (
+            "BOOLEAN"
+            if isinstance(literal, bool)
+            else "BIGINT"
+            if isinstance(literal, int)
+            else "DOUBLE"
+            if isinstance(literal, float)
+            else "VARCHAR"
+            if isinstance(literal, str)
+            else "ANY"
+        )
+        return "?", inferred
+    if op in (*_BINARY_OPERATORS, "safe_divide"):
+        left, left_type = _compile_derived_expression(value["left"], selected_types, parameters)
+        right, right_type = _compile_derived_expression(value["right"], selected_types, parameters)
+        for operand_type in (left_type, right_type):
+            if _SAFE_NUMERIC_TYPE.fullmatch(_normalized_type(operand_type)) is None:
+                _fail(
+                    "type_check",
+                    "derived_measure_requires_numeric_operand",
+                    f"Operator {op!r} requires numeric operands",
+                )
+        sql = (
+            f"({left} / NULLIF({right}, 0))"
+            if op == "safe_divide"
+            else f"({left} {_BINARY_OPERATORS[op]} {right})"
+        )
+        return sql, "DOUBLE" if op in {"divide", "safe_divide"} else left_type
+    if op == "coalesce":
+        compiled = [
+            _compile_derived_expression(item, selected_types, parameters)
+            for item in value.get("args", [])
+        ]
+        return f"COALESCE({', '.join(item[0] for item in compiled)})", compiled[0][1]
+    if op == "nullif":
+        left, left_type = _compile_derived_expression(value["value"], selected_types, parameters)
+        right, _ = _compile_derived_expression(
+            value.get("other", {"op": "literal", "value": 0}), selected_types, parameters
+        )
+        return f"NULLIF({left}, {right})", left_type
+    if op == "cast":
+        sql, _ = _compile_derived_expression(value["value"], selected_types, parameters)
+        output_type = _safe_type(str(value["type"]))
+        return f"CAST({sql} AS {output_type})", output_type
+    _fail(
+        "type_check",
+        "unsupported_cross_fact_expression",
+        f"Expression operator {op!r} is not supported for cross-fact measures",
+    )
+    raise AssertionError("unreachable")
+
+
 def _compile_multi_fact_query(
     catalogs: dict[str, Catalog],
     query: dict[str, Any],
@@ -1924,6 +2263,8 @@ def _compile_multi_fact_query(
     dimensions = list(query.get("dimensions", []))
     _validate_multi_fact_output_names(query)
     _validate_branch_relationship_paths(dimensions, roots)
+    _validate_branch_members(graph, identities, bindings, dimensions, roots)
+    _validate_branch_members(graph, identities, bindings, dimensions, roots)
     _validate_multi_fact_population_filters(graph, identities, bindings, query.get("filters"))
     partitions = _partition_multi_fact_sources(query, roots)
 
@@ -1939,6 +2280,7 @@ def _compile_multi_fact_query(
         branch_query["source_bindings"] = source_bindings
         branch_query["inputs"] = inputs
         branch_query.pop("measure_filters", None)
+        branch_query.pop("derived_measures", None)
         branch_query.pop("order", None)
         branch_query.pop("limit", None)
         compiled = _compile_semantic_query(catalogs, branch_query, branch_mode=True)
@@ -2040,10 +2382,75 @@ def _compile_multi_fact_query(
         ]
 
     parameters = [value for plan in branch_plans for value in plan["parameters"]]
+    derived_definitions = list(query.get("derived_measures", []))
+    selected_by_name = {str(item.get("alias") or item.get("member_id")): item for item in measures}
+    selected_types: dict[str, str] = {}
+    if derived_definitions:
+        for name, selection in selected_by_name.items():
+            selected_result_type = _selected_measure_type(graph, identities, selection, bindings)
+            if not selected_result_type:
+                _fail(
+                    "type_check",
+                    "derived_measure_input_type_unknown",
+                    f"Selected measure {name!r} has no provable result type",
+                )
+            selected_types[name] = selected_result_type
+    derived_selects: list[str] = []
+    for derived in derived_definitions:
+        name = str(derived["name"])
+        refs = _derived_member_refs(derived["expression"])
+        unknown = sorted(refs - selected_by_name.keys())
+        if unknown:
+            _fail(
+                "request_validation",
+                "derived_measure_member_not_selected",
+                f"Derived measure {name!r} references unselected outputs {unknown!r}",
+            )
+        referenced_roots = {_ref_key(selected_by_name[ref]) for ref in refs}
+        if len(referenced_roots) < 2:
+            _fail(
+                "request_validation",
+                "derived_measure_requires_multiple_facts",
+                f"Derived measure {name!r} must reference measures from at least two facts",
+            )
+        unspecified = sorted(
+            ref for ref in refs if "missing_fact_value" not in selected_by_name[ref]
+        )
+        if unspecified:
+            _fail(
+                "request_validation",
+                "derived_measure_missing_value_policy_required",
+                f"Derived measure {name!r} requires explicit missing_fact_value for "
+                f"{unspecified!r}",
+            )
+        expression, _ = _compile_derived_expression(
+            cast(dict[str, Any], derived["expression"]), selected_types, parameters
+        )
+        output_type = _safe_type(str(derived["output_type"]))
+        derived_selects.append(f"CAST({expression} AS {output_type}) AS {_quote_ident(name)}")
+        selected_types[name] = output_type
+
+    filter_selections = list(measures)
+    filter_expressions = dict(measure_expressions)
+    if derived_definitions:
+        for derived in derived_definitions:
+            name = str(derived["name"])
+            filter_selections.append(
+                {
+                    "catalog_id": "query",
+                    "entity_id": "derived",
+                    "member_id": name,
+                    "alias": name,
+                }
+            )
+        filter_expressions = {
+            name: f'"_projected".{_quote_ident(name)}'
+            for name in [*dimension_names, *selected_types]
+        }
     outer_filter = _compile_stitched_measure_filter(
-        query.get("measure_filters"), measures, measure_expressions, parameters
+        query.get("measure_filters"), filter_selections, filter_expressions, parameters
     )
-    output_names = {*dimension_names, *measure_expressions}
+    output_names = {*dimension_names, *measure_expressions, *selected_types}
     order_lines: list[str] = []
     for item in query.get("order", []):
         order_member = str(item.get("member", ""))
@@ -2055,16 +2462,39 @@ def _compile_multi_fact_query(
             )
         order_lines.append(f"{_quote_ident(order_member)} {str(item['direction']).upper()}")
     limit = min(10_000, max(1, int(query.get("limit", 1000))))
-    sql = "\n".join(
-        [
-            "WITH " + ",\n".join(ctes),
-            "SELECT " + ", ".join(select_items),
-            *from_lines,
-            *([f"WHERE {outer_filter}"] if outer_filter else []),
-            *([f"ORDER BY {', '.join(order_lines)}"] if order_lines else []),
-            f"LIMIT {limit}",
-        ]
-    )
+    if derived_definitions:
+        ctes.append(
+            '"_stitched" AS (\nSELECT '
+            + ", ".join(select_items)
+            + "\n"
+            + "\n".join(from_lines)
+            + "\n)"
+        )
+        ctes.append(
+            '"_projected" AS (\nSELECT "_stitched".*, '
+            + ", ".join(derived_selects)
+            + '\nFROM "_stitched"\n)'
+        )
+        sql = "\n".join(
+            [
+                "WITH " + ",\n".join(ctes),
+                'SELECT * FROM "_projected"',
+                *([f"WHERE {outer_filter}"] if outer_filter else []),
+                *([f"ORDER BY {', '.join(order_lines)}"] if order_lines else []),
+                f"LIMIT {limit}",
+            ]
+        )
+    else:
+        sql = "\n".join(
+            [
+                "WITH " + ",\n".join(ctes),
+                "SELECT " + ", ".join(select_items),
+                *from_lines,
+                *([f"WHERE {outer_filter}"] if outer_filter else []),
+                *([f"ORDER BY {', '.join(order_lines)}"] if order_lines else []),
+                f"LIMIT {limit}",
+            ]
+        )
 
     output_units: dict[str, str | None] = {}
     unit_diagnostics: list[dict[str, Any]] = []
@@ -2084,6 +2514,9 @@ def _compile_multi_fact_query(
         for warning in plan.get("warnings", []):
             if warning not in warnings:
                 warnings.append(warning)
+    for derived in derived_definitions:
+        if "unit" in derived:
+            output_units[str(derived["name"])] = str(derived["unit"])
 
     plan = {
         "fact_branches": [branch for item in branch_plans for branch in item["fact_branches"]],
@@ -2093,6 +2526,16 @@ def _compile_multi_fact_query(
             "branch_roots": roots,
             "measure_branches": measure_branches,
             "missing_fact_values": missing_values,
+            **(
+                {
+                    "derived_measures": [
+                        {"name": str(item["name"]), "output_type": str(item["output_type"])}
+                        for item in derived_definitions
+                    ]
+                }
+                if derived_definitions
+                else {}
+            ),
         },
         "sql": sql,
         "parameters": parameters,
@@ -2205,6 +2648,18 @@ def _compile_semantic_query(
                 "request_validation",
                 "branch_relationship_paths_require_multi_fact",
                 "branch_relationship_paths is only meaningful with multiple fact roots",
+            )
+        if any(item.get("branch_members") for item in dimensions):
+            _fail(
+                "request_validation",
+                "branch_members_require_multi_fact",
+                "branch_members is only meaningful with multiple fact roots",
+            )
+        if query.get("derived_measures"):
+            _fail(
+                "request_validation",
+                "derived_measures_require_multi_fact",
+                "Query-level derived measures require multiple fact roots",
             )
         root_ref = measures[0] if measures else query.get("root_entity")
         if not isinstance(root_ref, dict):
@@ -2531,6 +2986,7 @@ def _compile_semantic_query(
                 item.member,
                 item.alias,
                 source_argument_renderer=render_source_argument_member,
+                parameters=parameters,
             )
             selects.append(f"{aggregate} AS {_quote_ident(name)}")
             record_unit(item, name)

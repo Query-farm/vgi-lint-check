@@ -354,6 +354,16 @@ def _expression_refs(value: Any) -> set[str]:
     return set()
 
 
+def _model_filter_predicates(value: Any) -> list[dict[str, Any]]:
+    """Return the leaves of a schema-validated, entity-local measure filter."""
+    if not isinstance(value, dict):
+        return []
+    children = value.get("and") if "and" in value else value.get("or")
+    if isinstance(children, list):
+        return [leaf for child in children for leaf in _model_filter_predicates(child)]
+    return [value]
+
+
 def _unit_choice_key(value: Any) -> str:
     """Use JSON object-key spelling for non-string discovered choices."""
     if isinstance(value, str):
@@ -468,6 +478,25 @@ def _types_compatible(source: str | None, target: str | None) -> bool:
         return True
     numeric = ["TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "REAL", "DOUBLE"]
     return left in numeric and right in numeric
+
+
+def _value_compatible(value: Any, target: str | None) -> bool:
+    if value is None or not target:
+        return True
+    normalized = _normalized_type(target)
+    if normalized in {"", "ANY"}:
+        return True
+    if normalized == "BOOLEAN":
+        return isinstance(value, bool)
+    if normalized.startswith(("TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT")):
+        return isinstance(value, int) and not isinstance(value, bool)
+    if normalized.startswith(("REAL", "DOUBLE", "DECIMAL", "NUMERIC")):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if normalized.startswith(("VARCHAR", "CHAR", "TEXT", "DATE", "TIME", "TIMESTAMP", "UUID")):
+        return isinstance(value, str)
+    if normalized.endswith("[]"):
+        return isinstance(value, list)
+    return True
 
 
 def _list_element_type(data_type: str, path: list[str]) -> str | None:
@@ -759,6 +788,56 @@ def _validate_entity(entity: SemanticEntity, diagnostics: list[SemanticDiagnosti
         )
     for member_id, member in entity.members.items():
         _validate_unit_parameter(entity, member_id, member, arguments, diagnostics)
+        if member.get("filter") is not None and member.get("expression") is not None:
+            diagnostics.append(
+                SemanticDiagnostic(
+                    entity.host,
+                    "derived_measure_filter_unsupported",
+                    f"derived measure {member_id!r} cannot own a filter; put filters on "
+                    "its referenced aggregate measures",
+                )
+            )
+        for predicate in _model_filter_predicates(member.get("filter")):
+            filter_member_id = str(predicate.get("member", ""))
+            filter_member = entity.members.get(filter_member_id)
+            if filter_member is None:
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        entity.host,
+                        "unknown_measure_filter_member",
+                        f"measure {member_id!r} filter references unknown local member "
+                        f"{filter_member_id!r}",
+                    )
+                )
+            elif filter_member.get("kind") == "measure":
+                diagnostics.append(
+                    SemanticDiagnostic(
+                        entity.host,
+                        "measure_filter_requires_dimension",
+                        f"measure {member_id!r} filter member {filter_member_id!r} must not "
+                        "be a measure",
+                    )
+                )
+            else:
+                values = (
+                    list(predicate.get("values", []))
+                    if "values" in predicate
+                    else ([predicate.get("value")] if "value" in predicate else [])
+                )
+                incompatible = [
+                    value
+                    for value in values
+                    if not _value_compatible(value, _member_physical_type(entity, filter_member))
+                ]
+                if incompatible:
+                    diagnostics.append(
+                        SemanticDiagnostic(
+                            entity.host,
+                            "measure_filter_value_type_mismatch",
+                            f"measure {member_id!r} filter values are incompatible with "
+                            f"member {filter_member_id!r}",
+                        )
+                    )
         source_argument = member.get("source_argument")
         if source_argument is not None:
             source_name = str(source_argument)

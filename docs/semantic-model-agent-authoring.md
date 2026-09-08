@@ -35,7 +35,8 @@ from a version string.
    Treat `column` as one literal physical identifier. Represent nested DuckDB `STRUCT` fields with
    explicit `column_path` arrays (for example, `["bbox", "xmin"]`) and provide their `data_type`;
    never encode an expression in a column path.
-6. Add base measures, derived measures, and conservative additivity.
+6. Add base measures, model-owned filters where business definitions require them, derived
+   measures, and conservative additivity. Model filters use only local non-measure members.
    Use a packed member template for a large semantically uniform family, but inspect every expanded
    member and split the family whenever types, units, or meanings differ.
    Only model a table macro when it publishes a fixed `vgi.result_columns_schema` and its grain is
@@ -47,7 +48,8 @@ from a version string.
 9. Run a local lint, then lint a composed attachment set for cross-catalog resolution.
 10. Compile representative requests with `vgi-lint semantic-compile ... --request request.json`.
     Include a multi-fact request when the composed model has measures on several roots. Verify exact
-    conformed dimension identity, per-root paths, missing-value policy, and the stitch plan. Execute
+    conformed dimension identity or explicit `conformance_id` substitutions, per-root paths,
+    missing-value policy, cross-fact formulas, and the stitch plan. Execute
     only against authorized test data.
 11. Give the human a final report listing edits, confirmed assumptions, unresolved questions,
     validation commands, representative plans, and intentionally deferred relationships.
@@ -120,6 +122,9 @@ member's unit; do not infer units across derived arithmetic expressions.
 When users need measures from several roots, do not invent a relationship between the fact tables.
 Select one stable dimension member that each root can reach through existing safe to-one paths. Add
 `branch_relationship_paths` to the request only when roots require different unambiguous paths.
+When branches genuinely expose different equivalent members, ask the human to confirm the
+equivalence, declare the same stable `conformance_id`, and use an explicit `branch_members`
+substitution. Never infer conformance from equal names.
 Confirm that every branch reports the same `result_grain` and that the plan contains
 `stitch.strategy = conformed_dimension_spine`.
 
@@ -128,6 +133,11 @@ additive numeric measure. Never use zero to hide missing dimension coverage, una
 non-additive calculation. Put shared population restrictions in `filters`; use `measure_filters`
 only for already selected measures after stitching. If different branches need different
 populations, report that limitation instead of weakening or rewriting the request.
+
+For cross-fact arithmetic, use query `derived_measures`, reference selected output names only, and
+require an explicit `missing_fact_value` on every referenced base measure—even when it is `null`.
+Require a declared output type and an explicit unit when meaningful. Do not introduce raw SQL,
+derived-on-derived chains, or formulas that do not actually span multiple roots.
 
 ## Reusable task prompt
 

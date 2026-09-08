@@ -98,6 +98,13 @@ Derived members use the typed expression AST; raw SQL, arbitrary functions, wind
 aggregates are not part of the contract. `output_type` is optional and means an enforced DuckDB
 `CAST`; it is not descriptive metadata. Otherwise the compiler infers the type.
 
+A base measure may own a `filter` using the bounded Boolean/predicate shape, but its `member`
+leaves are local member IDs and must resolve to non-measures on the same entity. Values are always
+parameters. The compiler emits aggregate `FILTER (WHERE ...)`, so the rule travels with the
+measure. It does not satisfy a source required-filter obligation because it does not reduce
+provider calls or the source row set. Filters on derived model measures are rejected; put the rule
+on their referenced base aggregates.
+
 Additivity is `additive`, `non_additive`, or `semi_additive` with prohibited dimensions. An explicit
 annotation may only be more restrictive than what an aggregation implies.
 
@@ -213,12 +220,19 @@ for a single-root request. Cross-catalog to-one dimension enrichment is supporte
 branch. A traversal into a `many` endpoint is rejected for every aggregation, including
 `count_distinct`; the compiler never hides fanout with `DISTINCT` or implicit pre-aggregation.
 
-For a multi-fact request, every selected dimension is conformed by exact stable identity:
+For a multi-fact request, a selected dimension normally uses exact stable identity:
 `catalog_id + entity_id + member_id + requested granularity`. It must be reachable through a safe
 path from every fact root. `relationship_path` remains the common path hint. When roots need
 different paths, `branch_relationship_paths` supplies an array of
 `{"root":{"catalog_id":...,"entity_id":...},"relationship_path":[...]}` entries on that
 dimension. A branch-specific entry overrides the common path only for its named root.
+
+Different physical members require explicit conformance. Each participating identifier, dimension,
+or time dimension declares the same stable `conformance_id`; the request uses `branch_members` to
+name the substitute member for a particular fact root. The compiler never infers conformance from
+names. It checks exact logical type, dimension/time kind, requested time granularity, timezone,
+week start, and resolved unit. A `branch_members` entry may also carry that root's
+`relationship_path`. Missing or mismatched declarations fail with typed diagnostics.
 
 The compiler aggregates all branches before combining them. With a non-empty result grain it builds
 the distinct union of branch keys, then left-joins every aggregate using null-safe
@@ -236,14 +250,21 @@ has no missing branch semantics there.
 `filters` are population filters and are compiled independently into every branch before
 aggregation. They must identify non-measure semantic members and be safely reachable from every
 root; branch-local population filters are intentionally unsupported. `measure_filters` may
-reference selected measures only and are applied after stitching. Order and limit are also applied
-once to the stitched result. Cross-fact derived expressions are not part of this release: existing
-measures are placed side by side without defining new arithmetic between them.
+reference selected measures or query-level derived measures and are applied after stitching. Order
+and limit are also applied once to the stitched result.
+
+`derived_measures` defines bounded post-stitch arithmetic. Each entry has a unique `name`, a typed
+expression over selected measure output names, a required `output_type`, and an optional explicit
+`unit`. It must reference at least two fact roots. Every referenced measure must explicitly state
+`missing_fact_value`, including `"null"`, so null/zero behavior cannot be inherited accidentally.
+Derived measures cannot reference one another, call arbitrary functions, or contain raw SQL. Their
+literals are parameters. Units are never inferred across arithmetic.
 
 The plan IR contains one `fact_branches` entry per independently compiled root. Multi-fact plans
 also contain `stitch`, whose `strategy` is `conformed_dimension_spine`, plus `result_grain`, ordered
 `branch_roots`, an output-name-to-root `measure_branches` map, and explicit
-`missing_fact_values`. Single-fact SQL, parameters, and plan shape remain unchanged and omit
+`missing_fact_values`. When present, `derived_measures` records each post-stitch output name and
+type. Single-fact SQL, parameters, and plan shape remain unchanged and omit
 `stitch`.
 
 ### Correlated inputs and invocation pipelines
@@ -327,7 +348,8 @@ more than one fact root.
 
 `vgi-lint-check` includes a Python reference implementation of this compiler. Cupola retains its
 TypeScript implementation for browser execution; both consume the same packaged schemas and use
-the same deterministic plan shape. The committed `examples/semantic/ecommerce-workers.json`
+the same deterministic plan shape. Both test the shared golden vectors in
+`examples/semantic/compiler-conformance.json`. The committed `examples/semantic/ecommerce-workers.json`
 fixture drives metadata loading, linting, federation, compilation and DuckDB result assertions.
 
 The supported compile-only CLI attaches workers through the same discovery path and always forces

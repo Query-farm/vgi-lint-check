@@ -174,6 +174,45 @@ def test_member_schema_accepts_source_arguments_and_rejects_competing_sources():
     assert validate_instance("member", {**member, "column": "latitude"})
 
 
+def test_member_schema_accepts_conformance_and_safe_measure_filters():
+    assert (
+        validate_instance(
+            "member",
+            {
+                "member_id": "country_code",
+                "kind": "dimension",
+                "column": "country",
+                "conformance_id": "country",
+            },
+        )
+        == []
+    )
+    assert (
+        validate_instance(
+            "member",
+            {
+                "member_id": "completed_revenue",
+                "kind": "measure",
+                "aggregation": "sum",
+                "member": "amount",
+                "filter": {"member": "status", "operator": "eq", "value": "completed"},
+                "additivity": "additive",
+            },
+        )
+        == []
+    )
+    assert validate_instance(
+        "member",
+        {
+            "member_id": "unsafe",
+            "kind": "measure",
+            "aggregation": "count_rows",
+            "filter": {"sql": "status = 'completed'"},
+            "additivity": "additive",
+        },
+    )
+
+
 def test_packed_member_templates_expand_to_ordinary_members():
     events = table(
         "sales",

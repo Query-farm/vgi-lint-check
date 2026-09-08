@@ -6,6 +6,7 @@ import json
 from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal
+from pathlib import Path
 
 import haybarn
 import pytest
@@ -66,6 +67,25 @@ def test_every_committed_request_compiles_executes_and_matches_expected_rows(com
         assert executed["ok"] is True, (case["name"], executed)
         assert executed["result"]["columns"] == case["expected_columns"]
         assert _cells(executed["result"]["rows"]) == case["expected_rows"]
+
+
+def test_shared_compiler_conformance_vectors(commerce):
+    _fixture, catalogs, _connection = commerce
+    path = Path(__file__).parents[2] / "examples" / "semantic" / "compiler-conformance.json"
+    vectors = json.loads(path.read_text())
+    for case in vectors["cases"]:
+        result = compile_semantic_query(catalogs, case["request"])
+        expected = case["expected"]
+        assert result["ok"] is expected["ok"], case["name"]
+        if result["ok"]:
+            plan = result["plan"]
+            assert plan["sql"] == expected["sql"], case["name"]
+            assert plan["parameters"] == expected["parameters"], case["name"]
+            assert plan["fact_branches"][0]["result_grain"] == expected["result_grain"]
+            assert plan.get("output_units", {}) == expected["output_units"]
+            assert plan.get("stitch") == expected["stitch"]
+        else:
+            assert [item["code"] for item in result["diagnostics"]] == expected["diagnostic_codes"]
 
 
 def test_cross_catalog_plan_is_deterministic_and_parameterized(commerce):
@@ -1648,6 +1668,25 @@ def _with_customer_count(catalogs):
     return augmented
 
 
+def _set_member_fields(catalog, member_id, **fields):
+    host = next(catalog.iter_tables())
+    members = json.loads(host.tags.raw["vgi.semantic_members"])
+    for member in members:
+        if member.get("member_id") == member_id:
+            member.update(fields)
+            break
+    else:
+        raise AssertionError(f"missing fixture member {member_id!r}")
+    host.tags.raw["vgi.semantic_members"] = json.dumps(members)
+
+
+def _set_member_fields(catalog, member_id, **fields):
+    relation = next(catalog.iter_tables())
+    members = json.loads(relation.tags.raw["vgi.semantic_members"])
+    next(item for item in members if item.get("member_id") == member_id).update(fields)
+    relation.tags.raw["vgi.semantic_members"] = json.dumps(members)
+
+
 def test_compiler_rejects_fanout_but_stitches_multiple_fact_roots(commerce):
     _fixture, catalogs, _connection = commerce
     fanout = compile_semantic_query(
@@ -2043,6 +2082,7 @@ def test_agent_discovers_and_uses_semantic_tool_with_execution_grading(commerce,
     sidecar.write_text(yaml.safe_dump(fixture["agent_graders"]), encoding="utf-8")
     public_tasks = [task for catalog in catalogs.values() for task in catalog.agent_test_tasks]
     tasks = merge_agent_task_sidecar(public_tasks, sidecar)
+    tasks = [task for task in tasks if task.name == "revenue by customer country"]
     request = fixture["queries"][0]["request"]
     backend = _Backend(
         [
@@ -2096,6 +2136,7 @@ def test_semantic_tool_requirement_is_a_real_grading_gate(commerce, tmp_path):
     sidecar.write_text(yaml.safe_dump(fixture["agent_graders"]), encoding="utf-8")
     public_tasks = [task for catalog in catalogs.values() for task in catalog.agent_test_tasks]
     tasks = merge_agent_task_sidecar(public_tasks, sidecar)
+    tasks = [task for task in tasks if task.name == "revenue by customer country"]
     backend = _Backend(
         [
             json.dumps(
@@ -2128,3 +2169,203 @@ def test_semantic_tool_requirement_is_a_real_grading_gate(commerce, tmp_path):
     assert report.pass_rate == 0
     assert report.verdicts[0].grader == "required_tools"
     assert "query_semantic_model" in report.verdicts[0].reason
+
+
+def test_agent_acceptance_covers_a_real_multi_fact_request(commerce, tmp_path):
+    fixture, catalogs, connection = commerce
+    sidecar = tmp_path / "semantic-agent-tests.yaml"
+    sidecar.write_text(yaml.safe_dump(fixture["agent_graders"]), encoding="utf-8")
+    public_tasks = [task for catalog in catalogs.values() for task in catalog.agent_test_tasks]
+    tasks = [
+        task
+        for task in merge_agent_task_sidecar(public_tasks, sidecar)
+        if task.name == "revenue and customers by country"
+    ]
+    request = next(
+        case["request"]
+        for case in fixture["queries"]
+        if case["name"] == "multi_fact_revenue_and_customers_by_country"
+    )
+    backend = _Backend(
+        [
+            json.dumps({"thought": "discover the model", "action": "list_catalogs"}),
+            json.dumps(
+                {"thought": "compile both facts", "action": "query_semantic_model", **request}
+            ),
+            json.dumps(
+                {
+                    "thought": "the stitched result answers the task",
+                    "action": "final",
+                    "answer_summary": "CA has 200 revenue and 1 customer; US has 175 and 2.",
+                }
+            ),
+        ]
+    )
+    report = simulate.simulate_tasks(
+        list(catalogs.values()),
+        connection,
+        backend,
+        limits=simulate.SimLimits(concurrency=1),
+        tasks=tasks,
+    )
+    assert report.pass_rate == 1.0
+    assert report.verdicts[0].queries == 1
+    assert '"stitch"' in "\n".join(backend.prompts)
+
+
+def test_model_owned_measure_filter_is_parameterized(commerce):
+    _fixture, catalogs, _connection = commerce
+    augmented = deepcopy(catalogs)
+    _set_member_fields(
+        augmented["sales_runtime"],
+        "revenue",
+        filter={"member": "customer_id", "operator": "neq", "value": "c2"},
+    )
+    result = compile_semantic_query(
+        augmented,
+        {
+            "measures": [
+                {
+                    "catalog_id": "com.example.sales",
+                    "entity_id": "orders",
+                    "member_id": "revenue",
+                }
+            ]
+        },
+    )
+    assert result["ok"] is True, result
+    assert 'SUM(_e0."amount") FILTER (WHERE _e0."customer_id" <> ?)' in result["plan"]["sql"]
+    assert result["plan"]["parameters"] == ["c2"]
+
+
+def test_multi_fact_explicit_conformed_member_substitution(commerce):
+    _fixture, catalogs, _connection = commerce
+    augmented = _with_customer_count(catalogs)
+    _set_member_fields(augmented["sales_runtime"], "customer_id", conformance_id="customer")
+    _set_member_fields(augmented["crm_runtime"], "customer_id", conformance_id="customer")
+    request = {
+        "measures": [
+            {
+                "catalog_id": "com.example.sales",
+                "entity_id": "orders",
+                "member_id": "revenue",
+            },
+            {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+                "member_id": "customer_count",
+            },
+        ],
+        "dimensions": [
+            {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+                "member_id": "customer_id",
+                "alias": "customer",
+                "branch_members": [
+                    {
+                        "root": {
+                            "catalog_id": "com.example.sales",
+                            "entity_id": "orders",
+                        },
+                        "member": {
+                            "catalog_id": "com.example.sales",
+                            "entity_id": "orders",
+                            "member_id": "customer_id",
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    result = compile_semantic_query(augmented, request)
+    assert result["ok"] is True, result
+    assert 'SELECT _e0."customer_id" AS "customer"' in result["plan"]["sql"]
+
+    mismatched = deepcopy(augmented)
+    _set_member_fields(mismatched["sales_runtime"], "customer_id", conformance_id="account")
+    rejected = compile_semantic_query(mismatched, request)
+    assert rejected["ok"] is False
+    assert rejected["diagnostics"][0]["code"] == "conformance_id_mismatch"
+
+
+def test_cross_fact_derived_measure_is_typed_and_projected(commerce):
+    _fixture, catalogs, connection = commerce
+    augmented = _with_customer_count(catalogs)
+    request = {
+        "measures": [
+            {
+                "catalog_id": "com.example.sales",
+                "entity_id": "orders",
+                "member_id": "revenue",
+                "missing_fact_value": "null",
+            },
+            {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+                "member_id": "customer_count",
+                "missing_fact_value": "null",
+            },
+        ],
+        "derived_measures": [
+            {
+                "name": "revenue_per_customer",
+                "expression": {
+                    "op": "safe_divide",
+                    "left": {"op": "member", "member": "revenue"},
+                    "right": {"op": "member", "member": "customer_count"},
+                },
+                "output_type": "DECIMAL(18,2)",
+                "unit": "USD/customer",
+            }
+        ],
+        "order": [{"member": "revenue_per_customer", "direction": "desc"}],
+    }
+    result = compile_semantic_query(augmented, request)
+    assert result["ok"] is True, result
+    assert '"_stitched" AS (' in result["plan"]["sql"]
+    assert '"_projected" AS (' in result["plan"]["sql"]
+    assert 'AS "revenue_per_customer"' in result["plan"]["sql"]
+    assert result["plan"]["output_units"]["revenue_per_customer"] == "USD/customer"
+    assert result["plan"]["stitch"]["derived_measures"] == [
+        {"name": "revenue_per_customer", "output_type": "DECIMAL(18,2)"}
+    ]
+
+    executed = execute_semantic_query(augmented, connection.cursor(), request)
+    assert executed["ok"] is True, executed
+    assert executed["result"]["columns"] == [
+        "revenue",
+        "customer_count",
+        "revenue_per_customer",
+    ]
+    assert _cells(executed["result"]["rows"]) == [["375.00", "3", "125.00"]]
+
+    missing_policy = {
+        "measures": [
+            {
+                "catalog_id": "com.example.sales",
+                "entity_id": "orders",
+                "member_id": "revenue",
+            },
+            {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+                "member_id": "customer_count",
+                "missing_fact_value": "null",
+            },
+        ],
+        "derived_measures": [
+            {
+                "name": "ratio",
+                "expression": {
+                    "op": "divide",
+                    "left": {"op": "member", "member": "revenue"},
+                    "right": {"op": "member", "member": "customer_count"},
+                },
+                "output_type": "DOUBLE",
+            }
+        ],
+    }
+    rejected = compile_semantic_query(augmented, missing_policy)
+    assert rejected["ok"] is False
+    assert rejected["diagnostics"][0]["code"] == ("derived_measure_missing_value_policy_required")
