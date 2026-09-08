@@ -1,9 +1,10 @@
-"""Compile and execute the VGI single-fact semantic-query contract.
+"""Compile and execute the VGI semantic-query contract.
 
 This is the Python reference implementation used by ``vgi-lint simulate`` and
 the committed end-to-end fixtures.  It deliberately implements the same
-conservative boundary as Cupola: one measure-owning root, to-one enrichment,
-typed expressions, positional parameters, and no silent SQL fallback.
+conservative boundary as Cupola: independently aggregated fact roots, conformed
+to-one enrichment, typed expressions, positional parameters, and no silent SQL
+fallback.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import math
 import re
 from collections import deque
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, NoReturn, cast
 
@@ -53,8 +55,13 @@ _MAX_INLINE_BYTES = 1_000_000
 _DEFAULT_MAX_INVOCATIONS = 100
 _HARD_MAX_INVOCATIONS = 1_000
 _DEFAULT_MAX_STAGE_ROWS = 10_000
+_MAX_FACT_BRANCHES = 10
 
 _SAFE_TYPE = re.compile(r"^[A-Za-z][A-Za-z0-9_ ]*(?:\([0-9]+(?:,[0-9]+)?\))?(?:\[\])?$")
+_SAFE_NUMERIC_TYPE = re.compile(
+    r"^(?:U?(?:TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT)|REAL|FLOAT|DOUBLE|"
+    r"DECIMAL(?:\([0-9]+(?:,[0-9]+)?\))?|NUMERIC(?:\([0-9]+(?:,[0-9]+)?\))?)$"
+)
 _BINARY_OPERATORS = {"add": "+", "subtract": "-", "multiply": "*", "divide": "/"}
 _FILTER_OPERATORS = {"eq": "=", "neq": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 _MISSING = object()
@@ -1621,12 +1628,494 @@ def _required_filters(catalogs: dict[str, Catalog], entity: SemanticEntity) -> l
     return [list(map(str, group)) for group in decoded if isinstance(group, list)]
 
 
-def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) -> dict[str, Any]:
+def _ordered_measure_roots(measures: list[dict[str, Any]]) -> list[dict[str, str]]:
+    roots: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for measure in measures:
+        key = _ref_key(measure)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append({"catalog_id": key[0], "entity_id": key[1]})
+    return roots
+
+
+def _validate_multi_fact_output_names(query: dict[str, Any]) -> None:
+    names: set[str] = set()
+    for selection in [*query.get("dimensions", []), *query.get("measures", [])]:
+        name = str(selection.get("alias") or selection.get("member_id"))
+        if name in names:
+            _fail("request_validation", "duplicate_output", f"Duplicate output name {name!r}")
+        names.add(name)
+
+
+def _validate_branch_relationship_paths(
+    dimensions: list[dict[str, Any]], roots: list[dict[str, str]]
+) -> None:
+    root_keys = {_ref_key(root) for root in roots}
+    for dimension in dimensions:
+        seen: set[tuple[str, str]] = set()
+        for item in dimension.get("branch_relationship_paths", []):
+            key = _ref_key(item.get("root", {}))
+            if key not in root_keys:
+                _fail(
+                    "request_validation",
+                    "invalid_branch_relationship_root",
+                    f"Dimension {dimension.get('member_id')!r} specifies a path for "
+                    f"non-fact root {key[0]!r}.{key[1]!r}",
+                )
+            if key in seen:
+                _fail(
+                    "request_validation",
+                    "duplicate_branch_relationship_path",
+                    f"Dimension {dimension.get('member_id')!r} specifies multiple paths "
+                    f"for root {key[0]!r}.{key[1]!r}",
+                )
+            seen.add(key)
+
+
+def _validate_multi_fact_population_filters(
+    graph: FederatedSemanticModel,
+    identities: dict[str, dict[str, Any]],
+    bindings: dict[str, str],
+    value: Any,
+) -> None:
+    for ref in _filter_members(value):
+        if isinstance(ref, dict):
+            entity = _resolve_entity(graph, identities, ref, bindings)
+            member = entity.members.get(str(ref.get("member_id", "")))
+        else:
+            logical_matches = {
+                (entity.catalog_id, entity.entity_id)
+                for candidates in graph.entities.values()
+                for entity in candidates
+                if ref in entity.members
+            }
+            if len(logical_matches) != 1:
+                _fail(
+                    "request_validation",
+                    "multi_fact_filter_ambiguous",
+                    f"Population filter member {ref!r} must identify one semantic member; "
+                    "use a qualified member reference",
+                )
+            key = next(iter(logical_matches))
+            entity = _resolve_entity(
+                graph,
+                identities,
+                {"catalog_id": key[0], "entity_id": key[1]},
+                bindings,
+            )
+            member = entity.members.get(str(ref))
+        if member is None:
+            _fail(
+                "model_resolution",
+                "unknown_filter_member",
+                f"Unknown population filter member {ref!r}",
+            )
+        if member.get("kind") == "measure":
+            _fail(
+                "request_validation",
+                "multi_fact_population_filter_measure",
+                "Pre-stitch population filters may not reference measures; "
+                "use measure_filters for selected measures",
+            )
+
+
+def _dimension_for_branch(selection: dict[str, Any], root: dict[str, str]) -> dict[str, Any]:
+    result = deepcopy(selection)
+    overrides = result.pop("branch_relationship_paths", [])
+    selected = [item for item in overrides if _ref_key(item.get("root", {})) == _ref_key(root)]
+    if selected:
+        result["relationship_path"] = list(selected[0].get("relationship_path", []))
+    return result
+
+
+def _partition_multi_fact_sources(
+    query: dict[str, Any], roots: list[dict[str, str]]
+) -> list[tuple[list[dict[str, Any]], list[dict[str, Any]]]]:
+    inputs = _validate_inputs(query)
+    definitions = list(query.get("source_bindings", []))
+    by_target: dict[tuple[str, str], int] = {}
+    for index, definition in enumerate(definitions):
+        key = _ref_key(definition.get("entity", {}))
+        if key in by_target:
+            _fail(
+                "source_binding",
+                "duplicate_source_binding",
+                f"Entity {key[1]!r} has multiple source bindings",
+            )
+        by_target[key] = index
+
+    partitions: list[tuple[list[dict[str, Any]], list[dict[str, Any]]]] = []
+    used_definitions: set[int] = set()
+    used_inputs: set[str] = set()
+    for root in roots:
+        indexes: list[int] = []
+        input_ids: set[str] = set()
+        current = _ref_key(root)
+        visited: set[tuple[str, str]] = set()
+        while current in by_target:
+            index = by_target[current]
+            if current in visited:
+                # Retain the complete cycle so the existing branch compiler
+                # emits its stable correlation_cycle diagnostic.
+                break
+            visited.add(current)
+            indexes.append(index)
+            definition = definitions[index]
+            driver = definition.get("driver", {})
+            if "input_id" in driver:
+                input_ids.add(str(driver["input_id"]))
+                break
+            current = _ref_key(driver.get("entity", {}))
+        used_definitions.update(indexes)
+        used_inputs.update(input_ids)
+        partitions.append(
+            (
+                [definitions[index] for index in sorted(indexes)],
+                [item for item in query.get("inputs", []) if item.get("input_id") in input_ids],
+            )
+        )
+
+    unused_definitions = sorted(set(range(len(definitions))) - used_definitions)
+    if unused_definitions:
+        unused = [_ref_key(definitions[index].get("entity", {})) for index in unused_definitions]
+        _fail(
+            "source_binding",
+            "unused_source_binding",
+            f"Source bindings are not on any fact invocation path: {unused!r}",
+        )
+    unused_inputs = sorted(set(inputs) - used_inputs)
+    if unused_inputs:
+        _fail(
+            "source_binding",
+            "unused_input",
+            f"Inputs are not used by any fact invocation path: {unused_inputs!r}",
+        )
+    return partitions
+
+
+def _measure_zero_type(
+    graph: FederatedSemanticModel,
+    identities: dict[str, dict[str, Any]],
+    selection: dict[str, Any],
+    bindings: dict[str, str],
+) -> str:
+    entity = _resolve_entity(graph, identities, selection, bindings)
+    member = entity.members.get(str(selection.get("member_id", "")))
+    if member is None or member.get("kind") != "measure":
+        _fail(
+            "type_check",
+            "zero_fill_not_safe",
+            f"Output {selection.get('member_id')!r} is not a measure eligible for zero filling",
+        )
+    if member.get("additivity") != "additive":
+        _fail(
+            "type_check",
+            "zero_fill_not_safe",
+            f"Measure {member.get('member_id')!r} must be additive to use a zero missing value",
+        )
+    aggregation = str(member.get("aggregation", ""))
+    result_type = str(member.get("output_type") or "")
+    if not result_type and aggregation in {"count_rows", "count"}:
+        result_type = "BIGINT"
+    if not result_type and aggregation == "sum":
+        source = entity.members.get(str(member.get("member", "")))
+        result_type = str(_member_type(entity, source) if source is not None else "")
+    normalized = _normalized_type(result_type)
+    if _SAFE_NUMERIC_TYPE.fullmatch(normalized) is None:
+        _fail(
+            "type_check",
+            "zero_fill_not_safe",
+            f"Measure {member.get('member_id')!r} has no provable numeric result type",
+        )
+    return _safe_type(result_type)
+
+
+def _selected_measure_expression(
+    member_ref: Any,
+    measures: list[dict[str, Any]],
+    expressions: dict[str, str],
+) -> str:
+    matches: list[dict[str, Any]]
+    if isinstance(member_ref, str):
+        matches = [
+            item
+            for item in measures
+            if member_ref in {str(item.get("member_id", "")), str(item.get("alias", ""))}
+        ]
+    else:
+        matches = [
+            item
+            for item in measures
+            if _ref_key(item) == _ref_key(member_ref)
+            and str(item.get("member_id", "")) == str(member_ref.get("member_id", ""))
+        ]
+    if not matches:
+        _fail(
+            "request_validation",
+            "multi_fact_measure_filter_not_selected",
+            "Multi-fact measure filters must reference a selected measure",
+        )
+    if len(matches) != 1:
+        _fail(
+            "request_validation",
+            "multi_fact_measure_filter_ambiguous",
+            "Multi-fact measure filter reference is ambiguous; use a unique selected alias",
+        )
+    output_name = str(matches[0].get("alias") or matches[0].get("member_id"))
+    return expressions[output_name]
+
+
+def _compile_stitched_measure_filter(
+    value: Any,
+    measures: list[dict[str, Any]],
+    expressions: dict[str, str],
+    parameters: list[Any],
+    depth: int = 0,
+) -> str:
+    if value is None:
+        return ""
+    if depth >= 8:
+        _fail("request_validation", "filter_depth", "Filter nesting may not exceed 8 levels")
+    if "and" in value or "or" in value:
+        key = "and" if "and" in value else "or"
+        parts = [
+            _compile_stitched_measure_filter(item, measures, expressions, parameters, depth + 1)
+            for item in value[key]
+        ]
+        return "(" + f" {key.upper()} ".join(parts) + ")"
+    lhs = _selected_measure_expression(value.get("member"), measures, expressions)
+    operator = str(value.get("operator", ""))
+    if operator == "is_null":
+        return f"{lhs} IS NULL"
+    if operator == "is_not_null":
+        return f"{lhs} IS NOT NULL"
+    values = list(value.get("values", [])) if "values" in value else [value.get("value")]
+    parameters.extend(values)
+    if operator in {"in", "not_in"}:
+        placeholders = ", ".join("?" for _ in values)
+        return f"{lhs} {'IN' if operator == 'in' else 'NOT IN'} ({placeholders})"
+    if operator == "between":
+        return f"{lhs} BETWEEN ? AND ?"
+    sql_operator = _FILTER_OPERATORS.get(operator)
+    if sql_operator is None:
+        _fail(
+            "request_validation", "invalid_filter_operator", f"Unknown filter operator {operator!r}"
+        )
+    return f"{lhs} {sql_operator} ?"
+
+
+def _compile_multi_fact_query(
+    catalogs: dict[str, Catalog],
+    query: dict[str, Any],
+    graph: FederatedSemanticModel,
+    identities: dict[str, dict[str, Any]],
+    roots: list[dict[str, str]],
+    bindings: dict[str, str],
+) -> dict[str, Any]:
+    if len(roots) > _MAX_FACT_BRANCHES:
+        _fail(
+            "request_validation",
+            "fact_branch_limit",
+            f"At most {_MAX_FACT_BRANCHES} fact roots may be selected",
+        )
+    measures = list(query.get("measures", []))
+    dimensions = list(query.get("dimensions", []))
+    _validate_multi_fact_output_names(query)
+    _validate_branch_relationship_paths(dimensions, roots)
+    _validate_multi_fact_population_filters(graph, identities, bindings, query.get("filters"))
+    partitions = _partition_multi_fact_sources(query, roots)
+
+    branch_plans: list[dict[str, Any]] = []
+    branch_measure_names: list[list[str]] = []
+    for root, (source_bindings, inputs) in zip(roots, partitions, strict=True):
+        branch_query = deepcopy(query)
+        branch_measures = [deepcopy(item) for item in measures if _ref_key(item) == _ref_key(root)]
+        for item in branch_measures:
+            item.pop("missing_fact_value", None)
+        branch_query["measures"] = branch_measures
+        branch_query["dimensions"] = [_dimension_for_branch(item, root) for item in dimensions]
+        branch_query["source_bindings"] = source_bindings
+        branch_query["inputs"] = inputs
+        branch_query.pop("measure_filters", None)
+        branch_query.pop("order", None)
+        branch_query.pop("limit", None)
+        compiled = _compile_semantic_query(catalogs, branch_query, branch_mode=True)
+        if not compiled.get("ok"):
+            return compiled
+        plan = cast(dict[str, Any], compiled["plan"])
+        branch_plans.append(plan)
+        branch_measure_names.append(
+            [str(item.get("alias") or item.get("member_id")) for item in branch_measures]
+        )
+
+    common_grain = list(branch_plans[0]["fact_branches"][0]["result_grain"])
+    explicit_grain = [str(item.get("alias") or item.get("member_id")) for item in dimensions]
+    implicit_grain = [item for item in common_grain if item not in explicit_grain]
+    first_implicit_sources = {
+        str(item["output_name"]): (str(item["source"]), str(item["member"]))
+        for item in branch_plans[0]["fact_branches"][0]["effective_source_grain"]
+        if item["output_name"] in implicit_grain
+    }
+    for index, plan in enumerate(branch_plans[1:], start=1):
+        branch = plan["fact_branches"][0]
+        if list(branch["result_grain"]) != common_grain:
+            _fail(
+                "type_check",
+                "incompatible_branch_grain",
+                f"Fact branch {index + 1} has result grain {branch['result_grain']!r}; "
+                f"expected {common_grain!r}",
+            )
+        implicit_sources = {
+            str(item["output_name"]): (str(item["source"]), str(item["member"]))
+            for item in branch["effective_source_grain"]
+            if item["output_name"] in implicit_grain
+        }
+        if implicit_sources != first_implicit_sources:
+            _fail(
+                "type_check",
+                "incompatible_branch_grain",
+                "Correlated fact branches must expose the same driving grain members",
+            )
+
+    total_invocations = sum(
+        int(branch.get("estimated_invocations", 0))
+        for plan in branch_plans
+        for branch in plan["fact_branches"]
+    )
+    requested_limit = int(
+        (query.get("execution_limits") or {}).get("max_invocations", _DEFAULT_MAX_INVOCATIONS)
+    )
+    max_invocations = min(_HARD_MAX_INVOCATIONS, requested_limit)
+    if total_invocations > max_invocations:
+        _fail(
+            "execution_limit",
+            "invocation_limit",
+            f"Fact branches may execute {total_invocations} function rows, "
+            f"above limit {max_invocations}",
+        )
+
+    dimension_names = common_grain
+    measure_branches: dict[str, dict[str, str]] = {}
+    missing_values: dict[str, str] = {}
+    measure_expressions: dict[str, str] = {}
+    select_items = [f'"_keys".{_quote_ident(name)}' for name in dimension_names]
+    for branch_index, (root, names) in enumerate(zip(roots, branch_measure_names, strict=True)):
+        selected = [item for item in measures if _ref_key(item) == _ref_key(root)]
+        for selection, name in zip(selected, names, strict=True):
+            policy = str(selection.get("missing_fact_value", "null"))
+            expression = f'"_f{branch_index}".{_quote_ident(name)}'
+            if policy == "zero":
+                result_type = _measure_zero_type(graph, identities, selection, bindings)
+                expression = f"COALESCE({expression}, CAST(0 AS {result_type}))"
+            select_items.append(f"{expression} AS {_quote_ident(name)}")
+            measure_expressions[name] = expression
+            measure_branches[name] = root
+            missing_values[name] = policy
+
+    ctes = [f'"_f{index}" AS (\n{plan["sql"]}\n)' for index, plan in enumerate(branch_plans)]
+    from_lines: list[str]
+    if dimension_names:
+        key_selects = [
+            "SELECT "
+            + ", ".join(f"{_quote_ident(name)}" for name in dimension_names)
+            + f' FROM "_f{index}"'
+            for index in range(len(branch_plans))
+        ]
+        ctes.append('"_keys" AS (\n' + "\nUNION\n".join(key_selects) + "\n)")
+        from_lines = ['FROM "_keys"']
+        for index in range(len(branch_plans)):
+            predicates = " AND ".join(
+                f'"_keys".{_quote_ident(name)} IS NOT DISTINCT FROM '
+                f'"_f{index}".{_quote_ident(name)}'
+                for name in dimension_names
+            )
+            from_lines.append(f'LEFT JOIN "_f{index}" ON {predicates}')
+    else:
+        # Each independently aggregated no-grain branch produces exactly one row.
+        select_items = select_items[len(dimension_names) :]
+        from_lines = ['FROM "_f0"'] + [
+            f'CROSS JOIN "_f{index}"' for index in range(1, len(branch_plans))
+        ]
+
+    parameters = [value for plan in branch_plans for value in plan["parameters"]]
+    outer_filter = _compile_stitched_measure_filter(
+        query.get("measure_filters"), measures, measure_expressions, parameters
+    )
+    output_names = {*dimension_names, *measure_expressions}
+    order_lines: list[str] = []
+    for item in query.get("order", []):
+        order_member = str(item.get("member", ""))
+        if order_member not in output_names:
+            _fail(
+                "request_validation",
+                "invalid_order_member",
+                f"ORDER BY {order_member!r} is not a selected output",
+            )
+        order_lines.append(f"{_quote_ident(order_member)} {str(item['direction']).upper()}")
+    limit = min(10_000, max(1, int(query.get("limit", 1000))))
+    sql = "\n".join(
+        [
+            "WITH " + ",\n".join(ctes),
+            "SELECT " + ", ".join(select_items),
+            *from_lines,
+            *([f"WHERE {outer_filter}"] if outer_filter else []),
+            *([f"ORDER BY {', '.join(order_lines)}"] if order_lines else []),
+            f"LIMIT {limit}",
+        ]
+    )
+
+    output_units: dict[str, str | None] = {}
+    unit_diagnostics: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for plan in branch_plans:
+        for name, unit in plan.get("output_units", {}).items():
+            if name in output_units and output_units[name] != unit:
+                _fail(
+                    "unit_resolution",
+                    "incompatible_branch_unit",
+                    f"Conformed output {name!r} resolves to different units across fact branches",
+                )
+            output_units[name] = unit
+        for diagnostic in plan.get("unit_diagnostics", []):
+            if diagnostic not in unit_diagnostics:
+                unit_diagnostics.append(diagnostic)
+        for warning in plan.get("warnings", []):
+            if warning not in warnings:
+                warnings.append(warning)
+
+    plan = {
+        "fact_branches": [branch for item in branch_plans for branch in item["fact_branches"]],
+        "stitch": {
+            "strategy": "conformed_dimension_spine",
+            "result_grain": common_grain,
+            "branch_roots": roots,
+            "measure_branches": measure_branches,
+            "missing_fact_values": missing_values,
+        },
+        "sql": sql,
+        "parameters": parameters,
+        "validation_scope": "semantic",
+        "warnings": warnings,
+        **({"output_units": output_units} if output_units else {}),
+        **({"unit_diagnostics": unit_diagnostics} if unit_diagnostics else {}),
+    }
+    plan_errors = validate_instance("plan", plan)
+    if plan_errors:
+        _fail("sql_generation", "invalid_plan", "; ".join(plan_errors))
+    return {"ok": True, "plan": plan}
+
+
+def _compile_semantic_query(
+    catalogs: dict[str, Catalog], query: dict[str, Any], *, branch_mode: bool = False
+) -> dict[str, Any]:
     """Compile one semantic request into deterministic, parameterized DuckDB SQL.
 
     Args:
         catalogs: Runtime attachment alias to normalized VGI catalog.
         query: A value conforming to the packaged ``query.json`` schema.
+        branch_mode: Compile an internal aggregate branch without final ordering or limiting.
 
     Returns:
         A ``result.json``-shaped success or structured diagnostic object.
@@ -1695,12 +2184,27 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
                 "filter_node_limit",
                 "At most 100 filter predicates are allowed",
             )
-        roots = {_ref_key(item) for item in measures}
+        roots = _ordered_measure_roots(measures)
+        bindings = cast(dict[str, str], query.get("bindings") or {})
         if len(roots) > 1:
+            if branch_mode:
+                _fail(
+                    "sql_generation",
+                    "nested_multi_fact",
+                    "A fact branch must contain measures from exactly one root",
+                )
+            return _compile_multi_fact_query(catalogs, query, graph, identities, roots, bindings)
+        if measures and any("missing_fact_value" in item for item in measures):
             _fail(
-                "multi_fact_not_supported",
-                "multi_fact_not_supported",
-                "Measures from multiple root entities are not supported yet",
+                "request_validation",
+                "missing_fact_value_requires_multi_fact",
+                "missing_fact_value is only meaningful when stitching multiple fact roots",
+            )
+        if any(item.get("branch_relationship_paths") for item in dimensions):
+            _fail(
+                "request_validation",
+                "branch_relationship_paths_require_multi_fact",
+                "branch_relationship_paths is only meaningful with multiple fact roots",
             )
         root_ref = measures[0] if measures else query.get("root_entity")
         if not isinstance(root_ref, dict):
@@ -1709,7 +2213,6 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
                 "root_entity_required",
                 "Dimension-only queries require root_entity",
             )
-        bindings = cast(dict[str, str], query.get("bindings") or {})
         root = _resolve_entity(graph, identities, root_ref, bindings)
         parameters: list[Any] = []
         invocation = _compile_invocation_source(
@@ -2129,8 +2632,8 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
                 f"WHERE {where}" if where else "",
                 f"GROUP BY {', '.join(groups)}" if groups else "",
                 f"HAVING {having}" if having else "",
-                f"ORDER BY {', '.join(order_lines)}" if order_lines else "",
-                f"LIMIT {limit}",
+                f"ORDER BY {', '.join(order_lines)}" if order_lines and not branch_mode else "",
+                f"LIMIT {limit}" if not branch_mode else "",
             )
             if item
         )
@@ -2226,6 +2729,11 @@ def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) 
                 }
             ],
         }
+
+
+def compile_semantic_query(catalogs: dict[str, Catalog], query: dict[str, Any]) -> dict[str, Any]:
+    """Compile one semantic request into deterministic, parameterized DuckDB SQL."""
+    return _compile_semantic_query(catalogs, query)
 
 
 def execute_semantic_query(

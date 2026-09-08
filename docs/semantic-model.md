@@ -207,15 +207,44 @@ models use a bridge entity and two relationships.
 executes by default. `compile_only: true` returns the plan and SQL and performs no DuckDB prepare,
 bind, `EXPLAIN`, execution or cache operation. Its validation scope is `semantic`.
 
-The initial compiler is single-root-grain: every selected measure must belong to one root entity.
-Cross-catalog to-one dimension enrichment is supported. A traversal into a `many` endpoint is
-rejected for every aggregation, including `count_distinct`; the compiler never hides fanout with
-`DISTINCT` or implicit pre-aggregation. Multi-root requests return `multi_fact_not_supported`.
+One request may select measures from one to ten fact roots. Each root is compiled and aggregated
+independently with the same cardinality, fanout, type, required-filter, and invocation checks used
+for a single-root request. Cross-catalog to-one dimension enrichment is supported within each
+branch. A traversal into a `many` endpoint is rejected for every aggregation, including
+`count_distinct`; the compiler never hides fanout with `DISTINCT` or implicit pre-aggregation.
 
-The plan IR always contains a `fact_branches` array with exactly one branch today. A future
-multi-fact compiler can independently aggregate branches, require conformed dimensions/time
-semantics, full-outer-join at a common grain, apply an explicit missing-value policy, and then
-calculate cross-fact measures without changing the request shape.
+For a multi-fact request, every selected dimension is conformed by exact stable identity:
+`catalog_id + entity_id + member_id + requested granularity`. It must be reachable through a safe
+path from every fact root. `relationship_path` remains the common path hint. When roots need
+different paths, `branch_relationship_paths` supplies an array of
+`{"root":{"catalog_id":...,"entity_id":...},"relationship_path":[...]}` entries on that
+dimension. A branch-specific entry overrides the common path only for its named root.
+
+The compiler aggregates all branches before combining them. With a non-empty result grain it builds
+the distinct union of branch keys, then left-joins every aggregate using null-safe
+`IS NOT DISTINCT FROM`; this has full-outer key coverage without joining raw fact rows. With no
+dimensions, it cross-joins the one aggregate row from each branch. Branches must expose the same
+final grain. Automatically preserved correlated driving-grain members must also have the same
+stable source identity in every branch.
+
+Missing branch values default to SQL `NULL`. A selected measure may set
+`"missing_fact_value":"zero"` only when the model proves that it is additive and numeric; the
+compiler emits a typed `COALESCE`. Non-additive, semi-additive, unknown-type, and non-numeric
+measures fail with `zero_fill_not_safe`. This option is rejected on single-fact requests because it
+has no missing branch semantics there.
+
+`filters` are population filters and are compiled independently into every branch before
+aggregation. They must identify non-measure semantic members and be safely reachable from every
+root; branch-local population filters are intentionally unsupported. `measure_filters` may
+reference selected measures only and are applied after stitching. Order and limit are also applied
+once to the stitched result. Cross-fact derived expressions are not part of this release: existing
+measures are placed side by side without defining new arithmetic between them.
+
+The plan IR contains one `fact_branches` entry per independently compiled root. Multi-fact plans
+also contain `stitch`, whose `strategy` is `conformed_dimension_spine`, plus `result_grain`, ordered
+`branch_roots`, an output-name-to-root `measure_branches` map, and explicit
+`missing_fact_values`. Single-fact SQL, parameters, and plan shape remain unchanged and omit
+`stitch`.
 
 ### Correlated inputs and invocation pipelines
 
@@ -233,8 +262,8 @@ Argument bindings are exactly one
 of `{parameter}`, `{input_column}`, or `{member}`. Member references must belong to the declared
 driver and initially must be physical column-backed members with a known compatible type.
 
-Each table function has at most one driver. Every binding must lie on the selected fact root's
-invocation path. The current single-fact compiler supports one linear path of up to ten functions;
+Each table function has at most one driver. Every binding must lie on a selected fact root's
+invocation path. Each fact branch supports one linear path of up to ten functions;
 that is sufficient for input → forecast, sites → forecast, and input → geocoding → forecast. Cycles,
 unbound function drivers, multiple inline roots, unrelated bindings, named/constant correlated
 arguments, and incompatible types fail closed.
@@ -244,9 +273,9 @@ keeps member provenance unambiguous across catalogs and lets a later function co
 function's output without inventing a business relationship. Dimensions on any entity along the
 selected invocation path may be selected directly; no semantic relationship is required between a
 driver and the function it invokes. `max_output_rows` bounds each lateral stage and defaults to
-10,000. `execution_limits.max_invocations` defaults to 100; an explicit request
-may raise or lower it but never above the hard ceiling of 1,000. It counts correlated input rows,
-not provider HTTP requests.
+10,000. `execution_limits.max_invocations` defaults to 100; an explicit request may raise or lower
+it but never above the hard ceiling of 1,000. It counts correlated input rows, not provider HTTP
+requests, and a multi-fact plan applies the limit to the sum across every branch.
 
 For a correlated function:
 
@@ -291,6 +320,10 @@ Failures are structured by stage: `request_validation`, `model_resolution`,
 `unit_resolution`, `execution_limit`, `type_check`, `fanout`,
 `required_filter`, `sql_generation`, and `duckdb_execution`. The tool never silently falls back to
 `run_sql`.
+
+`multi_fact_not_supported` remains an accepted diagnostic stage for backward compatibility with
+older compiler responses; the current bounded compiler does not use it merely because a request has
+more than one fact root.
 
 `vgi-lint-check` includes a Python reference implementation of this compiler. Cupola retains its
 TypeScript implementation for browser execution; both consume the same packaged schemas and use

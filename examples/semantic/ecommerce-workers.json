@@ -85,7 +85,8 @@
             "vgi.semantic_members": [
               {"member_id": "customer_id", "kind": "identifier", "column": "customer_id", "description": "Stable customer identifier."},
               {"member_id": "country", "kind": "dimension", "column": "country", "description": "Customer billing country code."},
-              {"member_id": "segment", "kind": "dimension", "column": "segment", "description": "Current commercial customer segment."}
+              {"member_id": "segment", "kind": "dimension", "column": "segment", "description": "Current commercial customer segment."},
+              {"member_id": "customer_count", "kind": "measure", "aggregation": "count_rows", "additivity": "additive", "description": "Number of current customers."}
             ],
             "vgi.semantic_relationships": [
               {
@@ -141,6 +142,29 @@
       },
       "expected_columns": ["revenue"],
       "expected_rows": [["150.00"]]
+    },
+    {
+      "name": "multi_fact_revenue_and_customers_by_country",
+      "request": {
+        "measures": [
+          {"catalog_id": "com.example.sales", "entity_id": "orders", "member_id": "revenue"},
+          {"catalog_id": "com.example.crm", "entity_id": "customers", "member_id": "customer_count"}
+        ],
+        "dimensions": [
+          {
+            "catalog_id": "com.example.crm",
+            "entity_id": "customers",
+            "member_id": "country",
+            "branch_relationship_paths": [
+              {"root": {"catalog_id": "com.example.sales", "entity_id": "orders"}, "relationship_path": ["com.example.sales.order_customer"]},
+              {"root": {"catalog_id": "com.example.crm", "entity_id": "customers"}, "relationship_path": []}
+            ]
+          }
+        ],
+        "order": [{"member": "country", "direction": "asc"}]
+      },
+      "expected_columns": ["country", "revenue", "customer_count"],
+      "expected_rows": [["CA", "200.00", "1"], ["US", "175.00", "2"]]
     }
   ],
   "agent_graders": {

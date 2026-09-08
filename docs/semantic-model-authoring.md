@@ -696,10 +696,60 @@ Filters use parameters rather than interpolated values. Dimension filters compil
 measure filters to `HAVING`. Ordering can reference selected output names only. Dimension-only
 queries must specify `root_entity` so the compiler knows which grain anchors the query.
 
-The compiler currently supports one measure-owning fact root plus safe to-one enrichment. It rejects
-multiple fact roots and traversal into a many side rather than generating SQL that may double-count.
-That restriction does not make the model wasted work: the same entities, members, and relationships
-remain useful for discovery, direct-SQL agents, and a future multi-fact compiler.
+The compiler can combine measures from up to ten fact roots when every selected dimension has the
+same stable semantic identity and is safely reachable from every root. It aggregates each fact
+branch first, constructs the union of dimension keys, and then joins the aggregates at that exact
+grain. It never joins raw facts together or traverses into a `many` side.
+
+For example, revenue from `orders` and customer count from `customers` can share the conformed
+`customers.country` dimension:
+
+```json
+{
+  "measures": [
+    {
+      "catalog_id": "com.example.sales",
+      "entity_id": "orders",
+      "member_id": "revenue"
+    },
+    {
+      "catalog_id": "com.example.crm",
+      "entity_id": "customers",
+      "member_id": "customer_count",
+      "missing_fact_value": "zero"
+    }
+  ],
+  "dimensions": [
+    {
+      "catalog_id": "com.example.crm",
+      "entity_id": "customers",
+      "member_id": "country",
+      "branch_relationship_paths": [
+        {
+          "root": {"catalog_id": "com.example.sales", "entity_id": "orders"},
+          "relationship_path": ["com.example.sales.order_customer"]
+        },
+        {
+          "root": {"catalog_id": "com.example.crm", "entity_id": "customers"},
+          "relationship_path": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+Use `branch_relationship_paths` only when roots need different paths to the same dimension. Each
+entry names one selected fact root; an omitted root uses the dimension's ordinary
+`relationship_path` or normal unique-path discovery. The paths do not declare equivalence between
+different members—the dimension reference itself must be identical in every branch.
+
+Missing branch values stay `NULL` by default. `missing_fact_value: "zero"` is allowed only for a
+measure that is both additive and provably numeric; it is not a general display default. Population
+`filters` are applied to every branch and therefore must be safe and meaningful from every root.
+Selected-measure `measure_filters`, ordering, and limit apply after stitching. Branch-specific
+population filters and new arithmetic across fact roots are not supported; publish or select
+existing measures side by side.
 
 In Cupola, the `query_semantic_model` tool accepts this request directly. In this repository, the
 reference compiler and executable examples are exercised by the tests in
@@ -735,6 +785,9 @@ hidden reference answer.
 | `unresolved_local_entity` | A relationship points to a missing entity in the same catalog | Fix the endpoint ID |
 | `ambiguous_catalog_binding` | The same logical catalog is attached more than once | Supply a `binding_key -> alias` binding |
 | `fanout_unsafe` | The requested path enters a many endpoint | Change the model/query or introduce a safe bridge/pre-aggregated entity |
+| `incompatible_branch_grain` | Multi-fact branches do not produce the same conformed or correlated grain | Select dimensions reachable from every root and use the same driving grain |
+| `zero_fill_not_safe` | `missing_fact_value: "zero"` was requested for a measure not proven additive and numeric | Keep the default `null` policy or correct the measure's type/additivity if the business semantics justify it |
+| `multi_fact_filter_ambiguous` | A bare population-filter member identifies different entities | Use a fully qualified member reference |
 | `missing_function_argument_metadata` | The compiler cannot see `vgi_function_arguments()` details | Upgrade/fix the worker or extension metadata |
 | `ambiguous_function_overload` | One semantic source name has several physical overloads | Publish a uniquely named wrapper function/view |
 | `optional_positional_hole` | A later positional value was supplied while an earlier one was omitted | Supply the prefix, use a named physical argument, or publish a wrapper |

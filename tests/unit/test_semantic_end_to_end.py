@@ -859,6 +859,98 @@ def test_correlated_source_argument_dimension_uses_the_driver_column():
     ]
 
 
+def test_multi_fact_correlated_branches_share_input_grain_and_global_invocation_limit():
+    weather = _rehome(_forecast_catalog(), "weather")
+    climate = _rehome(deepcopy(_forecast_catalog()), "climate")
+    climate.tags.raw["vgi.semantic_catalog"] = json.dumps({"catalog_id": "farm.query.climate"})
+    climate_function = next(climate.iter_all_functions())
+    climate_entity = json.loads(climate_function.tags.raw["vgi.semantic_entity"])
+    climate_entity["entity_id"] = "climate_hourly"
+    climate_function.tags.raw["vgi.semantic_entity"] = json.dumps(climate_entity)
+    request = {
+        "measures": [
+            {
+                "catalog_id": "farm.query.open_meteo",
+                "entity_id": "forecast_hourly",
+                "member_id": "average_temperature",
+                "alias": "weather_temperature",
+            },
+            {
+                "catalog_id": "farm.query.climate",
+                "entity_id": "climate_hourly",
+                "member_id": "average_temperature",
+                "alias": "climate_temperature",
+            },
+        ],
+        "inputs": [
+            {
+                "input_id": "locations",
+                "grain": ["location_id"],
+                "columns": [
+                    {"name": "location_id", "type": "VARCHAR"},
+                    {"name": "latitude", "type": "DOUBLE"},
+                    {"name": "longitude", "type": "DOUBLE"},
+                ],
+                "rows": [["berlin", 52.52, 13.41], ["tokyo", 35.69, 139.69]],
+            }
+        ],
+        "source_bindings": [
+            {
+                "entity": {
+                    "catalog_id": catalog_id,
+                    "entity_id": entity_id,
+                },
+                "driver": {"input_id": "locations"},
+                "arguments": {
+                    "latitude": {"input_column": "latitude"},
+                    "longitude": {"input_column": "longitude"},
+                },
+            }
+            for catalog_id, entity_id in [
+                ("farm.query.open_meteo", "forecast_hourly"),
+                ("farm.query.climate", "climate_hourly"),
+            ]
+        ],
+        "execution_limits": {"max_invocations": 4},
+        "order": [{"member": "location_id", "direction": "asc"}],
+    }
+    result = compile_semantic_query({"weather": weather, "climate": climate}, request)
+    assert result["ok"] is True, result
+    assert result["plan"]["stitch"]["result_grain"] == ["location_id"]
+    assert result["plan"]["sql"].count("CROSS JOIN LATERAL") == 2
+    assert sum(branch["estimated_invocations"] for branch in result["plan"]["fact_branches"]) == 4
+
+    connection = haybarn.connect()
+    try:
+        for alias, expression in [
+            ("weather", "latitude + longitude + i"),
+            ("climate", "latitude - longitude + i"),
+        ]:
+            connection.execute(f"ATTACH ':memory:' AS \"{alias}\"")
+            connection.execute(
+                f"CREATE MACRO {alias}.main.forecast_hourly"
+                "(latitude, longitude, forecast_days := 3) AS TABLE "
+                "SELECT TIMESTAMP '2026-01-01' + i * INTERVAL 1 HOUR AS time, "
+                f"{expression} AS temperature FROM range(forecast_days) r(i)"
+            )
+        executed = execute_semantic_query(
+            {"weather": weather, "climate": climate}, connection, request
+        )
+        assert executed["ok"] is True, executed
+        assert [row[0] for row in executed["result"]["rows"]] == ["berlin", "tokyo"]
+        assert all(len(row) == 3 for row in executed["result"]["rows"])
+    finally:
+        connection.close()
+
+    rejected = compile_semantic_query(
+        {"weather": weather, "climate": climate},
+        {**request, "execution_limits": {"max_invocations": 3}},
+    )
+    assert rejected["ok"] is False
+    assert rejected["diagnostics"][0]["code"] == "invocation_limit"
+    assert "Fact branches may execute 4" in rejected["diagnostics"][0]["message"]
+
+
 def test_inline_input_compiles_and_executes_correlated_lateral_function():
     worker = _rehome(_forecast_catalog(), "weather")
     function = next(worker.iter_all_functions())
@@ -1537,7 +1629,26 @@ def test_compile_only_never_consults_the_connection(commerce):
     assert "result" not in result
 
 
-def test_compiler_rejects_fanout_and_multiple_fact_roots(commerce):
+def _with_customer_count(catalogs):
+    augmented = deepcopy(catalogs)
+    crm = augmented["crm_runtime"]
+    customers = next(crm.iter_tables())
+    members = json.loads(customers.tags.raw["vgi.semantic_members"])
+    if not any(item.get("member_id") == "customer_count" for item in members):
+        members.append(
+            {
+                "member_id": "customer_count",
+                "kind": "measure",
+                "aggregation": "count_rows",
+                "additivity": "additive",
+                "description": "Number of customers.",
+            }
+        )
+    customers.tags.raw["vgi.semantic_members"] = json.dumps(members)
+    return augmented
+
+
+def test_compiler_rejects_fanout_but_stitches_multiple_fact_roots(commerce):
     _fixture, catalogs, _connection = commerce
     fanout = compile_semantic_query(
         catalogs,
@@ -1560,20 +1671,7 @@ def test_compiler_rejects_fanout_and_multiple_fact_roots(commerce):
     assert fanout["ok"] is False
     assert fanout["diagnostics"][0]["stage"] == "fanout"
 
-    augmented = deepcopy(catalogs)
-    crm = augmented["crm_runtime"]
-    customers = next(crm.iter_tables())
-    members = json.loads(customers.tags.raw["vgi.semantic_members"])
-    members.append(
-        {
-            "member_id": "customer_count",
-            "kind": "measure",
-            "aggregation": "count_rows",
-            "additivity": "additive",
-            "description": "Number of customers.",
-        }
-    )
-    customers.tags.raw["vgi.semantic_members"] = json.dumps(members)
+    augmented = _with_customer_count(catalogs)
     multi_fact = compile_semantic_query(
         augmented,
         {
@@ -1591,8 +1689,287 @@ def test_compiler_rejects_fanout_and_multiple_fact_roots(commerce):
             ]
         },
     )
-    assert multi_fact["ok"] is False
-    assert multi_fact["diagnostics"][0]["stage"] == "multi_fact_not_supported"
+    assert multi_fact["ok"] is True
+    assert len(multi_fact["plan"]["fact_branches"]) == 2
+    assert multi_fact["plan"]["stitch"] == {
+        "strategy": "conformed_dimension_spine",
+        "result_grain": [],
+        "branch_roots": [
+            {"catalog_id": "com.example.sales", "entity_id": "orders"},
+            {"catalog_id": "com.example.crm", "entity_id": "customers"},
+        ],
+        "measure_branches": {
+            "revenue": {"catalog_id": "com.example.sales", "entity_id": "orders"},
+            "customer_count": {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+            },
+        },
+        "missing_fact_values": {"revenue": "null", "customer_count": "null"},
+    }
+    assert 'FROM "_f0"\nCROSS JOIN "_f1"' in multi_fact["plan"]["sql"]
+
+
+def test_multi_fact_executes_over_conformed_dimension_spine_with_zero_fill(commerce):
+    _fixture, catalogs, connection = commerce
+    augmented = _with_customer_count(catalogs)
+    connection.execute(
+        'INSERT INTO "crm_runtime"."main"."customers" VALUES (?, ?, ?)',
+        ["c4", "UK", "growth"],
+    )
+    request = {
+        "measures": [
+            {
+                "catalog_id": "com.example.sales",
+                "entity_id": "orders",
+                "member_id": "revenue",
+                "missing_fact_value": "zero",
+            },
+            {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+                "member_id": "customer_count",
+            },
+        ],
+        "dimensions": [
+            {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+                "member_id": "country",
+                "branch_relationship_paths": [
+                    {
+                        "root": {
+                            "catalog_id": "com.example.sales",
+                            "entity_id": "orders",
+                        },
+                        "relationship_path": ["com.example.sales.order_customer"],
+                    },
+                    {
+                        "root": {
+                            "catalog_id": "com.example.crm",
+                            "entity_id": "customers",
+                        },
+                        "relationship_path": [],
+                    },
+                ],
+            }
+        ],
+        "order": [{"member": "country", "direction": "asc"}],
+    }
+    compiled = compile_semantic_query(augmented, request)
+    assert compiled["ok"] is True, compiled
+    assert 'UNION\nSELECT "country" FROM "_f1"' in compiled["plan"]["sql"]
+    assert "IS NOT DISTINCT FROM" in compiled["plan"]["sql"]
+    assert 'COALESCE("_f0"."revenue", CAST(0 AS DECIMAL(18,2)))' in compiled["plan"]["sql"]
+    executed = execute_semantic_query(augmented, connection.cursor(), request)
+    assert executed["ok"] is True, executed
+    assert _cells(executed["result"]["rows"]) == [
+        ["CA", "200.00", "1"],
+        ["UK", "0.00", "1"],
+        ["US", "175.00", "2"],
+    ]
+    null_request = deepcopy(request)
+    null_request["measures"][0].pop("missing_fact_value")
+    null_result = execute_semantic_query(augmented, connection.cursor(), null_request)
+    assert null_result["ok"] is True, null_result
+    assert null_result["result"]["rows"][1] == ("UK", None, 1)
+
+
+def test_multi_fact_filters_each_population_then_filters_stitched_measures(commerce):
+    _fixture, catalogs, connection = commerce
+    augmented = _with_customer_count(catalogs)
+    request = {
+        "measures": [
+            {
+                "catalog_id": "com.example.sales",
+                "entity_id": "orders",
+                "member_id": "revenue",
+            },
+            {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+                "member_id": "customer_count",
+            },
+        ],
+        "dimensions": [
+            {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+                "member_id": "country",
+            }
+        ],
+        "filters": {"member": "country", "operator": "neq", "value": "CA"},
+        "measure_filters": {"member": "revenue", "operator": "gt", "value": 100},
+        "order": [{"member": "country", "direction": "asc"}],
+    }
+    compiled = compile_semantic_query(augmented, request)
+    assert compiled["ok"] is True, compiled
+    assert compiled["plan"]["parameters"] == ["CA", "CA", 100]
+    assert compiled["plan"]["sql"].count("<> ?") == 2
+    executed = execute_semantic_query(augmented, connection.cursor(), request)
+    assert executed["ok"] is True, executed
+    assert _cells(executed["result"]["rows"]) == [["US", "175.00", "2"]]
+
+
+def test_multi_fact_rejects_unsafe_zero_fill_and_invalid_branch_path(commerce):
+    _fixture, catalogs, _connection = commerce
+    augmented = _with_customer_count(catalogs)
+    unsafe = compile_semantic_query(
+        augmented,
+        {
+            "measures": [
+                {
+                    "catalog_id": "com.example.sales",
+                    "entity_id": "orders",
+                    "member_id": "average_order_value",
+                    "missing_fact_value": "zero",
+                },
+                {
+                    "catalog_id": "com.example.crm",
+                    "entity_id": "customers",
+                    "member_id": "customer_count",
+                },
+            ]
+        },
+    )
+    assert unsafe["ok"] is False
+    assert unsafe["diagnostics"][0]["code"] == "zero_fill_not_safe"
+
+    invalid_path = compile_semantic_query(
+        augmented,
+        {
+            "measures": [
+                {
+                    "catalog_id": "com.example.sales",
+                    "entity_id": "orders",
+                    "member_id": "revenue",
+                },
+                {
+                    "catalog_id": "com.example.crm",
+                    "entity_id": "customers",
+                    "member_id": "customer_count",
+                },
+            ],
+            "dimensions": [
+                {
+                    "catalog_id": "com.example.crm",
+                    "entity_id": "customers",
+                    "member_id": "country",
+                    "branch_relationship_paths": [
+                        {
+                            "root": {
+                                "catalog_id": "com.example.unknown",
+                                "entity_id": "missing",
+                            },
+                            "relationship_path": [],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    assert invalid_path["ok"] is False
+    assert invalid_path["diagnostics"][0]["code"] == "invalid_branch_relationship_root"
+
+    missing_path = compile_semantic_query(
+        augmented,
+        {
+            "measures": [
+                {
+                    "catalog_id": "com.example.sales",
+                    "entity_id": "orders",
+                    "member_id": "revenue",
+                },
+                {
+                    "catalog_id": "com.example.crm",
+                    "entity_id": "customers",
+                    "member_id": "customer_count",
+                },
+            ],
+            "dimensions": [
+                {
+                    "catalog_id": "com.example.crm",
+                    "entity_id": "customers",
+                    "member_id": "country",
+                    "branch_relationship_paths": [
+                        {
+                            "root": {
+                                "catalog_id": "com.example.sales",
+                                "entity_id": "orders",
+                            },
+                            "relationship_path": ["com.example.missing"],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    assert missing_path["ok"] is False
+    assert missing_path["diagnostics"][0]["code"] == "relationship_path_not_found"
+
+
+def test_multi_fact_rejects_nonconformed_population_and_single_fact_stitch_options(commerce):
+    _fixture, catalogs, _connection = commerce
+    augmented = _with_customer_count(catalogs)
+    base_measures = [
+        {
+            "catalog_id": "com.example.sales",
+            "entity_id": "orders",
+            "member_id": "revenue",
+        },
+        {
+            "catalog_id": "com.example.crm",
+            "entity_id": "customers",
+            "member_id": "customer_count",
+        },
+    ]
+    branch_local_dimension = compile_semantic_query(
+        augmented,
+        {
+            "measures": base_measures,
+            "dimensions": [
+                {
+                    "catalog_id": "com.example.sales",
+                    "entity_id": "orders",
+                    "member_id": "order_id",
+                }
+            ],
+        },
+    )
+    assert branch_local_dimension["ok"] is False
+    assert branch_local_dimension["diagnostics"][0]["code"] == "fanout_unsafe"
+
+    branch_local_filter = compile_semantic_query(
+        augmented,
+        {
+            "measures": base_measures,
+            "filters": {
+                "member": {
+                    "catalog_id": "com.example.sales",
+                    "entity_id": "orders",
+                    "member_id": "order_id",
+                },
+                "operator": "gt",
+                "value": 1,
+            },
+        },
+    )
+    assert branch_local_filter["ok"] is False
+    assert branch_local_filter["diagnostics"][0]["code"] == "fanout_unsafe"
+
+    single_policy = compile_semantic_query(
+        augmented,
+        {
+            "measures": [
+                {
+                    **base_measures[0],
+                    "missing_fact_value": "null",
+                }
+            ]
+        },
+    )
+    assert single_policy["ok"] is False
+    assert single_policy["diagnostics"][0]["code"] == ("missing_fact_value_requires_multi_fact")
 
 
 def _rehome(catalog, alias):

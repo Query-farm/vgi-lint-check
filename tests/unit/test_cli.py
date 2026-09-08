@@ -140,6 +140,42 @@ def test_semantic_compile_file_stdin_and_direct_compiler_parity(monkeypatch, tmp
     assert json.loads(stdin.output) == direct
 
 
+def test_semantic_compile_multi_fact_plan_matches_direct_compiler(monkeypatch, tmp_path):
+    from tests.semantic_example import load_example
+
+    _fixture, catalogs, connection = load_example()
+    connection.close()
+    _patch_attached_catalogs(monkeypatch, catalogs)
+    request = {
+        "measures": [
+            {
+                "catalog_id": "com.example.sales",
+                "entity_id": "orders",
+                "member_id": "revenue",
+            },
+            {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+                "member_id": "customer_count",
+            },
+        ],
+        "dimensions": [
+            {
+                "catalog_id": "com.example.crm",
+                "entity_id": "customers",
+                "member_id": "country",
+            }
+        ],
+    }
+    request_file = tmp_path / "multi-fact.json"
+    request_file.write_text(json.dumps(request))
+    result = run("semantic-compile", "sales", "crm", "--request", str(request_file))
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == compile_semantic_query(catalogs, {**request, "compile_only": True})
+    assert payload["plan"]["stitch"]["result_grain"] == ["country"]
+
+
 def test_semantic_compile_correlated_and_capability_diagnostics(monkeypatch, tmp_path):
     from tests.unit.test_semantic_end_to_end import _forecast_catalog, _rehome
 

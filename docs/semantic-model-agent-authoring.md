@@ -46,7 +46,9 @@ from a version string.
    never opportunistically in an unrelated worker.
 9. Run a local lint, then lint a composed attachment set for cross-catalog resolution.
 10. Compile representative requests with `vgi-lint semantic-compile ... --request request.json`.
-    Execute only against authorized test data.
+    Include a multi-fact request when the composed model has measures on several roots. Verify exact
+    conformed dimension identity, per-root paths, missing-value policy, and the stitch plan. Execute
+    only against authorized test data.
 11. Give the human a final report listing edits, confirmed assumptions, unresolved questions,
     validation commands, representative plans, and intentionally deferred relationships.
 
@@ -112,6 +114,20 @@ never both. Prefer UCUM strings where available, but do not invent conversions o
 the dynamic argument resolves exactly once, is exposed through `source.arguments`, and that its map
 covers all discovered choices. Aggregations `sum`, `min`, `max`, and `avg` inherit the referenced
 member's unit; do not infer units across derived arithmetic expressions.
+
+## Multi-fact acceptance
+
+When users need measures from several roots, do not invent a relationship between the fact tables.
+Select one stable dimension member that each root can reach through existing safe to-one paths. Add
+`branch_relationship_paths` to the request only when roots require different unambiguous paths.
+Confirm that every branch reports the same `result_grain` and that the plan contains
+`stitch.strategy = conformed_dimension_spine`.
+
+Leave `missing_fact_value` unset unless the human confirms that absence of a fact means zero for an
+additive numeric measure. Never use zero to hide missing dimension coverage, unavailable data, or a
+non-additive calculation. Put shared population restrictions in `filters`; use `measure_filters`
+only for already selected measures after stitching. If different branches need different
+populations, report that limitation instead of weakening or rewriting the request.
 
 ## Reusable task prompt
 
