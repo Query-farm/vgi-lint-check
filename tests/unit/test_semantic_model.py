@@ -230,7 +230,11 @@ def test_packed_member_templates_expand_to_ordinary_members():
                             "unit": "percent",
                         },
                         "members": [
-                            {"member_id": "quality", "column": "quality_score"},
+                            {
+                                "member_id": "quality",
+                                "column": "quality_score",
+                                "conformance_id": "quality_score",
+                            },
                             {"member_id": "confidence", "column": "confidence_score"},
                         ],
                     },
@@ -252,8 +256,36 @@ def test_packed_member_templates_expand_to_ordinary_members():
         "kind": "dimension",
         "column": "quality_score",
         "data_type": "DOUBLE",
+        "conformance_id": "quality_score",
         "unit": "percent",
     }
+
+    assert (
+        validate_instance(
+            "members",
+            [
+                {
+                    "template_id": "filtered_counts",
+                    "template": {
+                        "kind": "measure",
+                        "aggregation": "count_rows",
+                        "additivity": "additive",
+                    },
+                    "members": [
+                        {
+                            "member_id": "completed_count",
+                            "filter": {
+                                "member": "status",
+                                "operator": "eq",
+                                "value": "completed",
+                            },
+                        }
+                    ],
+                }
+            ],
+        )
+        == []
+    )
 
 
 def test_member_template_reports_invalid_expansion_and_duplicate_template_id():

@@ -34,6 +34,7 @@
         "description": {"type": "string", "minLength": 1, "maxLength": 4000},
         "data_type": {"type": "string", "minLength": 1, "maxLength": 100},
         "output_type": {"type": "string", "minLength": 1, "maxLength": 100},
+        "conformance_id": {"$ref": "definitions.json#/$defs/semantic_id"},
         "hidden": {"type": "boolean"},
         "column": {"type": "string", "minLength": 1},
         "column_path": {"$ref": "member.json#/$defs/column_path"},
@@ -51,6 +52,7 @@
         "week_start": {"const": "monday"},
         "aggregation": {"enum": ["count_rows", "count", "count_distinct", "sum", "min", "max", "avg"]},
         "member": {"$ref": "definitions.json#/$defs/semantic_id"},
+        "filter": {"$ref": "member.json#/$defs/local_filter"},
         "additivity": {"$ref": "definitions.json#/$defs/additivity"}
       }
     }
