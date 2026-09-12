@@ -2518,6 +2518,62 @@ def _compile_multi_fact_query(
         if "unit" in derived:
             output_units[str(derived["name"])] = str(derived["unit"])
 
+    output_by_name: dict[str, dict[str, Any]] = {}
+    dependency_entities: dict[tuple[str, str], dict[str, str]] = {}
+    dependency_relationships: set[str] = set()
+    for branch_plan in branch_plans:
+        for output in branch_plan.get("outputs", []):
+            output_by_name.setdefault(str(output["name"]), output)
+        dependencies = branch_plan.get("model_dependencies", {})
+        for entity in dependencies.get("entities", []):
+            key = (str(entity["catalog_id"]), str(entity["entity_id"]))
+            dependency_entities[key] = {"catalog_id": key[0], "entity_id": key[1]}
+        dependency_relationships.update(str(item) for item in dependencies.get("relationships", []))
+    for selection in dimensions:
+        entity = _resolve_entity(graph, identities, selection, bindings)
+        member = entity.members.get(str(selection.get("member_id", "")))
+        if member is None:
+            _fail(
+                "model_resolution",
+                "unknown_member",
+                f"Unknown member {selection.get('member_id')!r} on {entity.entity_id!r}",
+            )
+        name = str(selection.get("alias") or selection.get("member_id"))
+        descriptor: dict[str, Any] = {
+            "name": name,
+            "kind": "dimension",
+            "member": {
+                "catalog_id": entity.catalog_id,
+                "entity_id": entity.entity_id,
+                "member_id": str(member.get("member_id")),
+            },
+        }
+        for source_key in ("title", "description"):
+            value = member.get(source_key)
+            if isinstance(value, str):
+                descriptor[source_key] = value
+        data_type = member.get("output_type") or member.get("data_type")
+        if selection.get("granularity"):
+            data_type = "TIMESTAMP"
+        if isinstance(data_type, str):
+            descriptor["data_type"] = data_type
+        if name in output_units:
+            descriptor["unit"] = output_units[name]
+        output_by_name[name] = descriptor
+    for derived in derived_definitions:
+        name = str(derived["name"])
+        output_by_name[name] = {
+            "name": name,
+            "kind": "derived_measure",
+            "data_type": str(derived["output_type"]),
+            **({"unit": output_units[name]} if name in output_units else {}),
+        }
+    ordered_output_names = [
+        *common_grain,
+        *(str(item.get("alias") or item.get("member_id")) for item in measures),
+        *(str(item["name"]) for item in derived_definitions),
+    ]
+
     plan = {
         "fact_branches": [branch for item in branch_plans for branch in item["fact_branches"]],
         "stitch": {
@@ -2536,6 +2592,13 @@ def _compile_multi_fact_query(
                 if derived_definitions
                 else {}
             ),
+        },
+        "outputs": [
+            output_by_name[name] for name in ordered_output_names if name in output_by_name
+        ],
+        "model_dependencies": {
+            "entities": [dependency_entities[key] for key in sorted(dependency_entities)],
+            "relationships": sorted(dependency_relationships),
         },
         "sql": sql,
         "parameters": parameters,
@@ -3098,6 +3161,57 @@ def _compile_semantic_query(
             for item in graph.diagnostics
             if item.code == "duplicate_relationship_candidate"
         ]
+        outputs: list[dict[str, Any]] = []
+        for grain in driving_plan_grain:
+            source = str(grain["source"])
+            parts = source.split("::", 1)
+            descriptor: dict[str, Any] = {
+                "name": str(grain["output_name"]),
+                "kind": "dimension",
+            }
+            if len(parts) == 2:
+                descriptor["member"] = {
+                    "catalog_id": parts[0],
+                    "entity_id": parts[1],
+                    "member_id": str(grain["member"]),
+                }
+            outputs.append(descriptor)
+        for item, kind in [
+            *((item, "dimension") for item in dimension_items),
+            *((item, "measure") for item in measure_items),
+        ]:
+            name = str(item.selection.get("alias") or item.member.get("member_id"))
+            descriptor = {
+                "name": name,
+                "kind": kind,
+                "member": {
+                    "catalog_id": item.entity.catalog_id,
+                    "entity_id": item.entity.entity_id,
+                    "member_id": str(item.member.get("member_id")),
+                },
+            }
+            for source_key in ("title", "description"):
+                value = item.member.get(source_key)
+                if isinstance(value, str):
+                    descriptor[source_key] = value
+            data_type = item.member.get("output_type") or item.member.get("data_type")
+            if item.selection.get("granularity"):
+                data_type = "TIMESTAMP"
+            if isinstance(data_type, str):
+                descriptor["data_type"] = data_type
+            if name in output_units:
+                descriptor["unit"] = output_units[name]
+            outputs.append(descriptor)
+        dependency_entities = [
+            {"catalog_id": entity.catalog_id, "entity_id": entity.entity_id}
+            for entity in sorted(
+                required_entities,
+                key=lambda entity: (entity.catalog_id, entity.entity_id),
+            )
+        ]
+        dependency_relationships = sorted(
+            {edge.relationship.relationship_id for edge, _alias in joins}
+        )
         plan = {
             "fact_branches": [
                 {
@@ -3161,6 +3275,11 @@ def _compile_semantic_query(
                     ),
                 }
             ],
+            "outputs": outputs,
+            "model_dependencies": {
+                "entities": dependency_entities,
+                "relationships": dependency_relationships,
+            },
             "sql": sql,
             "parameters": parameters,
             "validation_scope": "semantic",

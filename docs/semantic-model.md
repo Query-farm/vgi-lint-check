@@ -264,8 +264,17 @@ The plan IR contains one `fact_branches` entry per independently compiled root. 
 also contain `stitch`, whose `strategy` is `conformed_dimension_spine`, plus `result_grain`, ordered
 `branch_roots`, an output-name-to-root `measure_branches` map, and explicit
 `missing_fact_values`. When present, `derived_measures` records each post-stitch output name and
-type. Single-fact SQL, parameters, and plan shape remain unchanged and omit
-`stitch`.
+type. Single-fact SQL and parameters remain unchanged and single-fact plans omit `stitch`.
+
+Every new plan also exposes optional, additive presentation/provenance metadata. `outputs` is in
+result-column order and describes each dimension, measure, or query-level derived measure with its
+stable member reference when one exists, author-supplied title/description, known DuckDB type, and
+resolved unit (including explicit `null` for a declared but row-dependent unit).
+`model_dependencies.entities` contains the stable catalog/entity references actually used by the
+plan, while `model_dependencies.relationships` contains the exact business relationship IDs used
+for joins. Attachment aliases are deliberately absent. Consumers can use this metadata to explain
+a result or fingerprint the relevant model contract without parsing SQL. Both fields are optional
+in the schema so stored plans and older compiler responses continue to load.
 
 ### Correlated inputs and invocation pipelines
 

@@ -145,6 +145,22 @@ def test_cross_catalog_plan_is_deterministic_and_parameterized(commerce):
             "driving_grain_reduced": False,
         }
     ]
+    assert [output["name"] for output in first["plan"]["outputs"]] == [
+        "country",
+        "revenue",
+    ]
+    assert first["plan"]["outputs"][0]["member"] == {
+        "catalog_id": "com.example.crm",
+        "entity_id": "customers",
+        "member_id": "country",
+    }
+    assert first["plan"]["model_dependencies"] == {
+        "entities": [
+            {"catalog_id": "com.example.crm", "entity_id": "customers"},
+            {"catalog_id": "com.example.sales", "entity_id": "orders"},
+        ],
+        "relationships": ["com.example.sales.order_customer"],
+    }
 
 
 def test_nested_struct_field_members_compile_and_satisfy_required_filters():
@@ -1730,6 +1746,14 @@ def test_compiler_rejects_fanout_but_stitches_multiple_fact_roots(commerce):
     )
     assert multi_fact["ok"] is True
     assert len(multi_fact["plan"]["fact_branches"]) == 2
+    assert [output["name"] for output in multi_fact["plan"]["outputs"]] == [
+        "revenue",
+        "customer_count",
+    ]
+    assert multi_fact["plan"]["model_dependencies"]["entities"] == [
+        {"catalog_id": "com.example.crm", "entity_id": "customers"},
+        {"catalog_id": "com.example.sales", "entity_id": "orders"},
+    ]
     assert multi_fact["plan"]["stitch"] == {
         "strategy": "conformed_dimension_spine",
         "result_grain": [],
