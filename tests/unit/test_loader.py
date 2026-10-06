@@ -293,6 +293,37 @@ def test_function_arguments_are_scoped_by_function_type():
     assert [argument.name for argument in by_type["table"].arguments] == ["path"]
 
 
+def test_buffering_function_arguments_join_to_table_functions():
+    # VGI reports a buffering table function as "table_buffering"; DuckDB lists it
+    # as "table". Its arguments must still attach to it.
+    snap = Snapshot(
+        schemas=[{"database_name": "v", "schema_name": "main", "tags": {}}],
+        functions=[
+            {
+                "database_name": "v",
+                "schema_name": "main",
+                "function_name": "profile",
+                "function_type": "table",
+                "tags": {},
+            }
+        ],
+    )
+    rows = [
+        {
+            "schema_name": "main",
+            "function_name": "profile",
+            "function_type": "table_buffering",
+            "arg_position": position,
+            "field_index": position,
+            "arg_name": name,
+        }
+        for position, name in enumerate(("data", "k"))
+    ]
+    loaded = build_catalog(snap, "v", "loc", argument_rows=rows)
+    fn = next(f for f in loaded.iter_all_functions() if f.name == "profile")
+    assert [a.name for a in fn.arguments] == ["data", "k"]
+
+
 class _RaisingCon:
     def execute(self, sql, params=None):
         raise RuntimeError(

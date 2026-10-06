@@ -122,9 +122,16 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
+# vgi_function_arguments() reports VGI's own function kinds; duckdb_functions()
+# reports DuckDB's. Where they differ, translate so the two join: a scalar macro
+# is a DuckDB "macro", and a buffering table function (sink -> combine ->
+# finalize) is registered with DuckDB as an ordinary "table" function.
+_ARGUMENT_FUNCTION_TYPES = {"scalar_macro": "macro", "table_buffering": "table"}
+
+
 def _argument_function_type(value: Any) -> Any:
-    """Match vgi_function_arguments() macro names to duckdb_functions()."""
-    return "macro" if value == "scalar_macro" else value
+    """Match vgi_function_arguments() function kinds to duckdb_functions()."""
+    return _ARGUMENT_FUNCTION_TYPES.get(value, value)
 
 
 def _input_from_args_capability(values: list[bool | None]) -> bool | None:

@@ -684,6 +684,24 @@ def tool_describe_function(
                     if (member := _semantic_tag(c.tags, TAG_SEMANTIC_MEMBER)) is not None
                 },
             }
+            # Declared result shape (vgi.result_columns_schema / vgi.result_dynamic_columns_md):
+            # without it an analyst must guess a table function's output columns.
+            if f.result_columns:
+                out["result_columns"] = [
+                    {"name": c.name, "type": c.type, "description": c.description}
+                    for c in f.result_columns
+                ]
+            if f.result_dynamic_tables:
+                out["result_column_variants"] = [
+                    {
+                        "variant": t.caption,
+                        "columns": [
+                            {"name": c.name, "type": c.type, "description": c.description}
+                            for c in t.columns
+                        ],
+                    }
+                    for t in f.result_dynamic_tables
+                ]
             usage = _usage_hint(catalog, schema, name, f.arguments)
             if usage:
                 out["usage"] = usage

@@ -300,6 +300,57 @@ def test_tool_list_tables_and_describe():
     assert "error" in sim.tool_describe_function(cat, "main", "nope")
 
 
+def test_tool_describe_function_includes_declared_result_columns():
+    schema_tag = json.dumps(
+        [
+            {"name": "metric", "type": "VARCHAR", "description": "metric name"},
+            {"name": "value", "type": "DOUBLE", "description": "metric value"},
+        ]
+    )
+    dynamic_tag = (
+        "Columns follow the input.\n\n### Default\n\n| Name | Type | Description |\n|---|---|---|\n"
+        "| id | VARCHAR | surrogate key |\n"
+    )
+    cat = F.catalog(
+        F.schema(
+            "main",
+            comment="c",
+            tags=_TAGS,
+            functions=[
+                F.func(
+                    "main",
+                    "profile",
+                    "table",
+                    description="p",
+                    tags={"vgi.result_columns_schema": schema_tag},
+                ),
+                F.func(
+                    "main",
+                    "harden",
+                    "table",
+                    description="h",
+                    tags={"vgi.result_dynamic_columns_md": dynamic_tag},
+                ),
+                F.func("main", "plain", "table", description="no declared result"),
+            ],
+        )
+    )
+    profile = sim.tool_describe_function(cat, "main", "profile")
+    assert profile["result_columns"] == [
+        {"name": "metric", "type": "VARCHAR", "description": "metric name"},
+        {"name": "value", "type": "DOUBLE", "description": "metric value"},
+    ]
+    harden = sim.tool_describe_function(cat, "main", "harden")
+    assert harden["result_column_variants"] == [
+        {
+            "variant": "Default",
+            "columns": [{"name": "id", "type": "VARCHAR", "description": "surrogate key"}],
+        }
+    ]
+    plain = sim.tool_describe_function(cat, "main", "plain")
+    assert "result_columns" not in plain and "result_column_variants" not in plain
+
+
 def test_tool_run_sql_guard_and_result():
     blocked = sim.tool_run_sql(_Con(), "INSERT INTO t VALUES (1)", sim.SimLimits())
     assert not blocked["ok"] and blocked["error"].startswith("blocked")
