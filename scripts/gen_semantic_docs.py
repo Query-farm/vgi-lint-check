@@ -29,6 +29,10 @@ def main() -> int:
                     for column in table.get("columns", []):
                         tagged_values.extend(column.get("tags", {}).items())
             queries = [case.get("request") for case in values.get("queries", [])]
+        elif isinstance(values, dict) and isinstance(values.get("cases"), list):
+            # Compiler conformance vectors wrap requests and expected compiler
+            # results; their envelope fields are not semantic tag names.
+            queries = [case.get("request") for case in values["cases"]]
         else:
             tagged_values = list(values.items())
         for key, value in tagged_values:
