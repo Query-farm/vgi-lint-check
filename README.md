@@ -29,6 +29,11 @@ uv sync                      # haybarn is RC-only; prerelease = "allow" is set
 uv run vgi-lint --help
 ```
 
+Haybarn 1.5.6rc1 with the current VGI extension requires workers using wire
+contract `vgi.v2` **2.2.x** (tested with `vgi-python` 0.46.1). Upgrade workers
+using wire contract 2.1.x before running this version of the linter; mismatched
+wire minor versions are rejected during catalog discovery.
+
 ## Quick start
 
 ```bash

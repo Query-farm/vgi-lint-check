@@ -83,7 +83,7 @@ inputs:
   uv-version:
     description: "uv version to install via astral-sh/setup-uv."
     required: false
-    default: "0.11.7"
+    default: "0.13.5"
   summary:
     description: "Append the lint output to the GitHub Actions job summary."
     required: false
@@ -98,7 +98,7 @@ runs:
   using: composite
   steps:
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v10.3.2
       with:
         version: ${{ inputs.uv-version }}
         enable-cache: true

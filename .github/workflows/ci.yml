@@ -20,12 +20,12 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.3.2
         with:
-          version: "0.11.7"
+          version: "0.13.5"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
@@ -57,9 +57,9 @@ jobs:
     # Smoke-build the distribution so packaging breaks are caught on PRs too.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
-          version: "0.11.7"
+          version: "0.13.5"
       - run: uv build
       - run: uv run --with twine twine check dist/*

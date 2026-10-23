@@ -19,11 +19,11 @@ jobs:
       VGI_LINT_AI_BACKEND: api
       VGI_LINT_AI_MODEL: ${{ inputs.model }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
-          version: "0.11.7"
+          version: "0.13.5"
           python-version: "3.13"
           enable-cache: true
 
