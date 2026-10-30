@@ -177,11 +177,17 @@ def _collect_cte_names(node: Any, out: set[str]) -> None:
 
 
 def _arg_const_only(children: Any) -> bool:
-    """True if ``children`` is a non-empty arg list of only literal constants."""
+    """True if ``children`` is a non-empty arg list of only literal constants.
+
+    DuckDB 2.0 serializes call arguments as ``arguments: [{name, expression}]``;
+    older engines used a bare ``children`` expression list. Both are accepted.
+    """
     if not isinstance(children, list) or not children:
         return False
     seen = False
     for child in children:
+        if isinstance(child, dict) and "expression" in child and "class" not in child:
+            child = child["expression"]
         if not isinstance(child, dict):
             return False
         seen = True
@@ -200,7 +206,9 @@ def _walk(node: Any, cte_names: set[str], funcs: list[Ref], tables: list[Ref]) -
                     schema=str(node.get("schema") or ""),
                     name=name,
                     is_function=True,
-                    const_only_args=_arg_const_only(node.get("children")),
+                    const_only_args=_arg_const_only(
+                        node["arguments"] if "arguments" in node else node.get("children")
+                    ),
                 )
             )
         if node.get("type") == "BASE_TABLE":

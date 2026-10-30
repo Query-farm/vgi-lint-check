@@ -1,6 +1,6 @@
 [project]
 name = "vgi-lint-check"
-version = "0.84.2"
+version = "2.0.0"
 description = "A pydoclint-style metadata-quality linter for VGI workers."
 readme = "README.md"
 keywords = [
@@ -39,7 +39,7 @@ dependencies = [
     # haybarn ships only release candidates; the >=...rc1 specifier lets PEP 440
     # installers (pip/uv) select the prerelease. Cap the minor so a future
     # breaking RC can't silently be pulled into installs of this version.
-    "haybarn>=1.5.6rc1,<1.6",
+    "haybarn>=2.0.0rc9,<2.1",
     "click>=8.1",
     "rich>=13",
     "markdown-it-py>=3",  # parse vgi.description_md (validity + link extraction)

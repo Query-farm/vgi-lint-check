@@ -16,7 +16,7 @@ from vgi_lint_check.config import Config
 
 pytestmark = pytest.mark.live
 
-VGI_PYTHON = os.path.expanduser("~/Development/vgi-python")
+VGI_PYTHON = os.environ.get("VGI_PYTHON") or os.path.expanduser("~/Development/vgi-python")
 
 VERSIONED_LOC = (
     f"uv run --project {VGI_PYTHON} --with pytz python -m vgi._test_fixtures.versioned_tables"
@@ -44,12 +44,16 @@ def test_lint_volcanos_end_to_end(volcanos_url):
 
 def test_function_arguments_per_arg_metadata():
     """vgi_function_arguments() populates Function.arguments (or degrades silently)."""
-    _need(VGI_PYTHON)
-    loc = "/Users/rusty/Development/vgi-units/target/release/units-worker"
     import os
+    import shutil
 
-    if not os.path.exists(loc):
-        pytest.skip("requires the vgi-units release binary")
+    # Any vgi.v3 worker with function arguments; open-meteo by default.
+    worker = os.environ.get("VGI_ARGS_WORKER") or os.path.expanduser(
+        "~/Development/vgi-open-meteo/src/bin/worker.ts"
+    )
+    if not os.path.exists(worker) or shutil.which("bun") is None:
+        pytest.skip(f"requires {worker} and bun")
+    loc = f"bun run {worker}" if worker.endswith(".ts") else worker
     report = lint_worker(loc, config=Config(check_links=False, execute=False), install=False)
     fns = list(report.results[0].catalog.iter_functions())
     # On a vgi extension exposing vgi_function_arguments(), args are populated with

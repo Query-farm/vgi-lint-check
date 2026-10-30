@@ -25,11 +25,11 @@ inputs:
       vgi-lint-check version to run. A bare version pins exactly ("0.26.0"); a
       requirement operator is honored verbatim (">=0.26.0,<0.27"). The default
       floors at 0.26.0, which FORCE-installs the signed vgi community extension
-      itself (so a cached/stale copy on the runner is refreshed). The @v1 action
-      is capped below 1.0: vgi-lint-check 2.x runs haybarn 2.0, which attaches
-      only vgi.v3 workers — use Query-farm/vgi-lint-check@v2 for those.
+      itself (so a cached/stale copy on the runner is refreshed). The @v2 action
+      runs vgi-lint-check 2.x on haybarn 2.0, which attaches only vgi.v3
+      workers; workers still on vgi.v2 SDKs use Query-farm/vgi-lint-check@v1.
     required: false
-    default: ">=0.26.0,<1"
+    default: ">=2.0.0,<3"
   working-directory:
     description: "Directory to run in — used for config ([tool.vgi-lint-check] / vgi-lint.toml) and baseline discovery."
     required: false

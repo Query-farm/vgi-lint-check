@@ -29,10 +29,11 @@ uv sync                      # haybarn is RC-only; prerelease = "allow" is set
 uv run vgi-lint --help
 ```
 
-Haybarn 1.5.6rc1 with the current VGI extension requires workers using wire
-contract `vgi.v2` **2.2.x** (tested with `vgi-python` 0.46.1). Upgrade workers
-using wire contract 2.1.x before running this version of the linter; mismatched
-wire minor versions are rejected during catalog discovery.
+vgi-lint-check 2.x runs on Haybarn 2.0, whose VGI extension attaches only workers
+speaking wire contract **`vgi.v3`** (vgi-python 0.48+, `@query-farm/vgi` 0.47+,
+vgi-go 0.38+, vgi Rust 0.48+, Java 0.45+, C# 0.22+, C++ 0.13+). For workers still
+on `vgi.v2` SDKs, use vgi-lint-check **0.84.x** (Haybarn 1.5) — the `@v1` action
+is capped to it.
 
 ## Quick start
 
@@ -676,7 +677,7 @@ to the job summary. **Build the worker first**, then point the action at it:
 ```yaml
 # .github/workflows/ci.yml — inside a job that has already built the worker
       - name: VGI metadata quality
-        uses: Query-farm/vgi-lint-check@v1
+        uses: Query-farm/vgi-lint-check@v2
         with:
           location: "$PWD/target/release/units-worker"   # binary, command, or HTTP URL
           fail-on: warning                                 # info | warning | error | never
@@ -687,7 +688,7 @@ the worker's quality is being raised, and `fail-on: error` (plus `execute: true`
 in the publish workflow:
 
 ```yaml
-      - uses: Query-farm/vgi-lint-check@v1
+      - uses: Query-farm/vgi-lint-check@v2
         with:
           location: "$PWD/target/release/units-worker"
           fail-on: error
@@ -697,8 +698,9 @@ in the publish workflow:
 Key inputs: `location` (required), `fail-on` (default `error`), `version` (pin the
 linter, e.g. `0.2.0`), `working-directory`, `data-version` / `all-data-versions`,
 `baseline`, `execute`, `spatial`, `format` (`terminal|json|agent|jsonl`),
-`config`, `args`, `summary`. The action's `exit-code` is exposed as an output. The action ref `@v1`
-tracks the latest v1.x of the action; pin to a tag or SHA for full reproducibility.
+`config`, `args`, `summary`. The action's `exit-code` is exposed as an output. The action ref `@v2`
+runs vgi-lint-check 2.x (Haybarn 2.0, `vgi.v3` workers); `@v1` stays on 0.84.x
+(Haybarn 1.5, `vgi.v2` workers). Pin to a tag or SHA for full reproducibility.
 
 ## Development
 
