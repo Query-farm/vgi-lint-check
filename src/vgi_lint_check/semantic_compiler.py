@@ -246,11 +246,11 @@ def _resolved_source_arguments(
                 f"Source argument {name!r} resolves to more than one overload",
             )
         argument = matches[0]
-        if argument.is_named == argument.is_positional:
+        if not (argument.is_named or argument.is_positional):
             _fail(
                 "model_resolution",
                 "invalid_source_argument_kind",
-                f"Source argument {name!r} is not unambiguously named or positional",
+                f"Source argument {name!r} is neither named nor positional",
             )
         if argument.is_positional and argument.position is None:
             _fail(
@@ -277,11 +277,11 @@ def _source_sql(entity: SemanticEntity, query: dict[str, Any], parameters: list[
     )
     bindings = _resolved_source_arguments(entity)
     positional = sorted(
-        (item for item in bindings if item[1].is_positional),
+        (item for item in bindings if item[1].calls_positionally),
         key=lambda item: cast(int, item[1].position),
     )
     named = sorted(
-        (item for item in bindings if item[1].is_named),
+        (item for item in bindings if item[1].calls_by_name),
         key=lambda item: (
             item[1].field_index is None,
             item[1].field_index if item[1].field_index is not None else 0,
@@ -331,7 +331,7 @@ def _source_sql(entity: SemanticEntity, query: dict[str, Any], parameters: list[
                 f"Parameter {parameter!r} is incompatible with argument {argument.name!r}",
             )
         parameters.append(supplied[parameter])
-        args.append(f"{_quote_ident(argument.name)} := ?" if argument.is_named else "?")
+        args.append(f"{_quote_ident(argument.name)} := ?" if argument.calls_by_name else "?")
     return f"{qualified}({', '.join(args)})"
 
 
@@ -879,7 +879,9 @@ def _correlated_call_sql(
             f"Source binding for {entity.entity_id!r} has no column-driven argument",
         )
     positions = {
-        cast(int, arguments[name].position) for name in rendered if arguments[name].is_positional
+        cast(int, arguments[name].position)
+        for name in rendered
+        if arguments[name].calls_positionally
     }
     if positions:
         highest = max(positions)
@@ -903,7 +905,7 @@ def _correlated_call_sql(
         ((arguments[name], sql, detail, value) for name, (sql, detail, value) in rendered.items()),
         key=lambda item: (
             (0, cast(int, item[0].position))
-            if item[0].is_positional
+            if item[0].calls_positionally
             else (1, item[0].field_index or 0)
         ),
     )
@@ -911,7 +913,7 @@ def _correlated_call_sql(
     details: list[dict[str, Any]] = []
     for argument, sql, detail, value in ordered:
         sql_args.append(
-            sql if argument.is_positional else f"{_quote_ident(argument.name)} := {sql}"
+            sql if argument.calls_positionally else f"{_quote_ident(argument.name)} := {sql}"
         )
         details.append(detail)
         if detail["kind"] == "parameter":
@@ -1738,7 +1740,12 @@ def _required_filters(catalogs: dict[str, Catalog], entity: SemanticEntity) -> l
         decoded = json.loads(raw)
     except (TypeError, ValueError):
         return []
-    return [list(map(str, group)) for group in decoded if isinstance(group, list)]
+    # vgi.v3 renders each path as an array of field names; compare as dotted paths.
+    return [
+        [".".join(map(str, path)) if isinstance(path, list) else str(path) for path in group]
+        for group in decoded
+        if isinstance(group, list)
+    ]
 
 
 def _ordered_measure_roots(measures: list[dict[str, Any]]) -> list[dict[str, str]]:

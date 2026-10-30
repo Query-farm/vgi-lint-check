@@ -336,8 +336,9 @@ class ClassificationTagsValid(Rule):
 def _validate_required_filters(value: str | None) -> str | None:
     """Return an error string if ``value`` is not valid CNF JSON, else None.
 
-    Valid = a list of non-empty lists of non-empty strings (an AND of OR-groups
-    of dotted column paths).
+    Valid = a list of non-empty lists of column paths (an AND of OR-groups). The
+    vgi.v3 extension renders each path as a non-empty array of non-empty field
+    names (``["bbox", "xmin"]``); a dotted string is still accepted.
     """
     if value is None or not str(value).strip():
         return None
@@ -355,10 +356,16 @@ def _validate_required_filters(value: str | None) -> str | None:
         if not group:
             return "must not contain empty groups"
         for path in group:
-            if not isinstance(path, str):
-                return "every path must be a string"
-            if not path.strip():
-                return "must not contain empty strings"
+            if isinstance(path, str):
+                if not path.strip():
+                    return "must not contain empty strings"
+            elif isinstance(path, list):
+                if not path:
+                    return "must not contain empty paths"
+                if not all(isinstance(part, str) and part.strip() for part in path):
+                    return "every path component must be a non-empty string"
+            else:
+                return "every path must be an array of field names"
     return None
 
 
@@ -371,7 +378,7 @@ class RequiredFiltersTagValid(Rule):
     targets = (ObjectKind.TABLE, ObjectKind.VIEW)
     summary = (
         "The extension-injected vgi_required_filters tag must be a JSON array of "
-        "non-empty arrays of non-empty strings (an AND of OR-groups)."
+        "non-empty arrays of column paths (an AND of OR-groups)."
     )
 
     # Common near-miss spellings of the canonical key — a worker that hand-sets

@@ -695,7 +695,7 @@ def _validate_entity(entity: SemanticEntity, diagnostics: list[SemanticDiagnosti
             argument.name
             for argument in entity.function_arguments
             if argument.name in mapped_names
-            and argument.is_named == argument.is_positional
+            and not (argument.is_named or argument.is_positional)
             and not argument.is_varargs
         )
         if invalid_call_kinds:
@@ -703,7 +703,7 @@ def _validate_entity(entity: SemanticEntity, diagnostics: list[SemanticDiagnosti
                 SemanticDiagnostic(
                     entity.host,
                     "invalid_source_argument_kind",
-                    "source arguments must resolve to exactly one of named or positional: "
+                    "source arguments must be callable by name or by position: "
                     f"{invalid_call_kinds!r}",
                 )
             )

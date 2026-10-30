@@ -408,6 +408,20 @@ class Argument:
     position: int | None = None
     field_index: int | None = None
 
+    @property
+    def calls_positionally(self) -> bool:
+        """Whether a generated call should pass this argument by position.
+
+        DuckDB 2.0 macro parameters are both named and positional; they are
+        passed by position (their 1.5 calling convention) whenever they have one.
+        """
+        return self.is_positional and (not self.is_named or self.position is not None)
+
+    @property
+    def calls_by_name(self) -> bool:
+        """Whether a generated call should pass this argument as ``name := value``."""
+        return self.is_named and not self.calls_positionally
+
 
 @dataclass
 class Function:

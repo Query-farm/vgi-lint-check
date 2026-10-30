@@ -373,6 +373,13 @@ def test_vgi415_required_filters_tag():
 
     # valid CNF JSON (AND of OR-groups) -> clean
     assert "VGI415" not in codes_for({"vgi_required_filters": '[["accession"],["ticker","cik"]]'})
+    # vgi.v3 component paths (["bbox","xmin"] = bbox.xmin) -> clean
+    v3 = '[[["bbox","xmin"]],[["bbox","xmax"],["id"]]]'
+    assert "VGI415" not in codes_for({"vgi_required_filters": v3})
+    # empty component path / empty component / non-string component -> flagged
+    assert "VGI415" in codes_for({"vgi_required_filters": "[[[]]]"})
+    assert "VGI415" in codes_for({"vgi_required_filters": '[[["bbox",""]]]'})
+    assert "VGI415" in codes_for({"vgi_required_filters": '[[["bbox",1]]]'})
     # no tag at all -> clean
     assert "VGI415" not in codes_for({})
     # non-JSON string -> flagged

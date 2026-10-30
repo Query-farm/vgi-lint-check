@@ -163,7 +163,16 @@ def test_cross_catalog_plan_is_deterministic_and_parameterized(commerce):
     }
 
 
-def test_nested_struct_field_members_compile_and_satisfy_required_filters():
+@pytest.mark.parametrize(
+    "required",
+    [
+        [["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]],
+        # vgi.v3 renders each path as an array of field names.
+        [[["bbox", axis]] for axis in ("xmin", "xmax", "ymin", "ymax")],
+    ],
+    ids=["dotted", "components"],
+)
+def test_nested_struct_field_members_compile_and_satisfy_required_filters(required):
     places = table(
         "places",
         "place",
@@ -196,9 +205,7 @@ def test_nested_struct_field_members_compile_and_satisfy_required_filters():
                     },
                 ]
             ),
-            TAG_REQUIRED_FILTERS: json.dumps(
-                [["bbox.xmin"], ["bbox.xmax"], ["bbox.ymin"], ["bbox.ymax"]]
-            ),
+            TAG_REQUIRED_FILTERS: json.dumps(required),
         },
         columns=[
             col("places", "place", "id"),
@@ -433,13 +440,17 @@ def test_typed_relationship_predicates_compile_without_raw_sql(
     assert result["plan"]["parameters"] == ["district"]
 
 
-def test_fixed_schema_table_macro_compiles_as_a_scalar_single_fact_source():
+# DuckDB 2.0 reports macro parameters as both named and positional.
+@pytest.mark.parametrize("is_named", [False, True], ids=["positional", "named_and_positional"])
+def test_fixed_schema_table_macro_compiles_as_a_scalar_single_fact_source(is_named):
     historical = func(
         "gers",
         "changelog_at",
         ftype="table_macro",
         parameters=["release"],
-        arguments=[arg("release", position=0, field_index=0, is_positional=True)],
+        arguments=[
+            arg("release", position=0, field_index=0, is_positional=True, is_named=is_named)
+        ],
         tags={
             "vgi.result_columns_schema": json.dumps(
                 [
