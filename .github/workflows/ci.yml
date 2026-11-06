@@ -53,6 +53,54 @@ jobs:
       - name: Check semantic documentation fixtures
         run: uv run python scripts/gen_semantic_docs.py --check
 
+  live:
+    # Lint real workers built on the current VGI protocol: vgi-python's fixture
+    # workers (versioned tables, attach options) and a scalar example worker for
+    # per-argument metadata, attached through haybarn's community `vgi` extension.
+    # Bump VGI_PYTHON_REF with each protocol release so a wire bump the linter
+    # can't attach fails here, not in every worker repo's metadata gate.
+    runs-on: ubuntu-latest
+    env:
+      VGI_PYTHON_REF: v0.49.0  # vgi.v3 / protocol 3.1
+      UV_PYTHON: "3.13"
+      VGI_LINT_LIVE_STRICT: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/checkout@v7
+        with:
+          repository: Query-farm/vgi-python
+          ref: ${{ env.VGI_PYTHON_REF }}
+          path: vgi-python
+
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: "0.13.5"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: |
+          uv sync --dev
+          uv sync --project vgi-python --all-packages --all-extras
+
+      - name: Per-argument metadata worker
+        run: |
+          cat > "$RUNNER_TEMP/args-worker" <<EOF
+          #!/bin/sh
+          exec uv run -q --project "$GITHUB_WORKSPACE/vgi-python" python "$GITHUB_WORKSPACE/vgi-python/examples/calc_scalar_worker.py" "\$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/args-worker"
+          echo "VGI_ARGS_WORKER=$RUNNER_TEMP/args-worker" >> "$GITHUB_ENV"
+
+      - name: Live worker tests
+        run: >-
+          uv run pytest -q -rs --run-live
+          tests/integration/test_live_worker.py::test_versioned_worker_all_versions
+          tests/integration/test_live_worker.py::test_attach_options_discovered_and_accepted
+          tests/integration/test_live_worker.py::test_function_arguments_per_arg_metadata
+        env:
+          VGI_PYTHON: ${{ github.workspace }}/vgi-python
+
   build:
     # Smoke-build the distribution so packaging breaks are caught on PRs too.
     runs-on: ubuntu-latest

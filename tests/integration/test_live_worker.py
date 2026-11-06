@@ -27,7 +27,11 @@ ATTACH_OPTIONS_LOC = f"uv run --project {VGI_PYTHON} vgi-fixture-attach-options-
 
 def _need(path):
     if not os.path.isdir(path) or shutil.which("uv") is None:
-        pytest.skip(f"requires {path} and uv")
+        msg = f"requires {path} and uv"
+        # CI sets this so a missing SDK checkout fails loudly instead of skipping.
+        if os.environ.get("VGI_LINT_LIVE_STRICT"):
+            pytest.fail(msg)
+        pytest.skip(msg)
 
 
 def test_lint_volcanos_end_to_end(volcanos_url):
@@ -51,7 +55,7 @@ def test_function_arguments_per_arg_metadata():
     worker = os.environ.get("VGI_ARGS_WORKER") or os.path.expanduser(
         "~/Development/vgi-open-meteo/src/bin/worker.ts"
     )
-    if not os.path.exists(worker) or shutil.which("bun") is None:
+    if not os.path.exists(worker) or (worker.endswith(".ts") and shutil.which("bun") is None):
         pytest.skip(f"requires {worker} and bun")
     loc = f"bun run {worker}" if worker.endswith(".ts") else worker
     report = lint_worker(loc, config=Config(check_links=False, execute=False), install=False)

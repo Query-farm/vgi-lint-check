@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-VOLCANOS = os.path.expanduser("~/Development/vgi-volcanos")
+VOLCANOS = os.environ.get("VGI_VOLCANOS") or os.path.expanduser("~/Development/vgi-volcanos")
 
 
 @pytest.fixture(scope="session", autouse=True)
