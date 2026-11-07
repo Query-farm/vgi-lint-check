@@ -528,8 +528,9 @@ class Pragma:
 class AttachOption:
     """A declarative attach-time option a worker advertises via ``vgi_catalogs``.
 
-    Discoverable *before* attach. ``required`` is not signalled on the wire —
-    it is inferred from the absence of a default (``default is None``).
+    Discoverable *before* attach. Newer vgi extensions signal ``required`` and
+    ``secret`` explicitly; on an older extension ``required`` is inferred from
+    the absence of a default (``default is None``) and ``secret`` is unknown.
     """
 
     id: ObjectId
@@ -537,10 +538,14 @@ class AttachOption:
     description: str | None = None
     type: str | None = None
     default: str | None = None
+    declared_required: bool | None = None
+    secret: bool | None = None
 
     @property
     def required(self) -> bool:
-        """True when the option has no default, so a value must be supplied."""
+        """True when a value must be supplied (declared, else "has no default")."""
+        if self.declared_required is not None:
+            return self.declared_required
         return self.default is None
 
 

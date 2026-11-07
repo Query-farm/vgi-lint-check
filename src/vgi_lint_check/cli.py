@@ -733,6 +733,196 @@ def versions_cmd(location: str, install: bool) -> None:
 
 
 # --------------------------------------------------------------------------
+# dump (verified catalog inventory)
+# --------------------------------------------------------------------------
+@app.command(name="dump")
+@click.argument("location_arg", metavar="[LOCATION]", required=False)
+@click.option("--location", "location_opt", default=None, help="Worker LOCATION (or positional).")
+@click.option("--as", "alias", default=None, help="Local catalog alias handle.")
+@click.option("--catalog", "--catalog-name", "catalog_name", default=None, help="Catalog to dump.")
+@click.option("--data-version", default=None, help="data_version_spec to attach.")
+@click.option("--spatial/--no-spatial", default=True, help="Also load the spatial extension.")
+@click.option("--install/--no-install", default=True, help="FORCE INSTALL vgi from community.")
+@click.option(
+    "--verify/--no-verify",
+    default=True,
+    help="Execute every vgi.executable_examples example (default on).",
+)
+@click.option(
+    "--allow-unverified",
+    is_flag=True,
+    help="Exit 0 even when verification fails (the JSON still says verified: false).",
+)
+@click.option(
+    "--require-credentials",
+    is_flag=True,
+    help="Count examples that fail only for a missing credential as verification failures.",
+)
+@click.option(
+    "--resolve-types/--no-resolve-types",
+    default=True,
+    help="Resolve ANY scalar return types by binding a sample call (default on).",
+)
+@click.option(
+    "--execute/--no-execute",
+    default=None,
+    help="Run the lint's execution rules (VGI9xx) for the embedded score (default on).",
+)
+@click.option(
+    "--execute-concurrency",
+    type=int,
+    default=None,
+    help="Parallel queries for execution rules and verification (default: CPU count).",
+)
+@click.option("--select", default=None, help="Comma list/globs of lint rule codes to enable.")
+@click.option("--ignore", default=None, help="Comma list/globs of lint rule codes to disable.")
+@click.option("--extend-ignore", default=None, help="Comma list/globs to also disable.")
+@click.option("--fail-on", type=click.Choice(["info", "warning", "error", "never"]), default=None)
+@click.option("--attach-option", "attach_options", multiple=True, metavar="KEY=VALUE")
+@click.option("--setup-sql", "setup_sql", multiple=True, metavar="SQL")
+@click.option("--worker-idle-timeout", type=int, default=None)
+@click.option("--config", "config_path", type=click.Path(exists=True, dir_okay=False), default=None)
+@click.option(
+    "--output", "-o", type=click.Path(dir_okay=False), default=None, help="Write JSON to FILE."
+)
+@click.option("--indent", type=int, default=2, show_default=True, help="JSON indent (0 = compact).")
+@click.option("--traceback", is_flag=True, help="Show a full traceback on an unexpected error.")
+@click.option("--quiet", "-q", is_flag=True, help="No summary line on stderr.")
+@click.pass_context
+def dump_cmd(
+    ctx: click.Context,
+    location_arg: str | None,
+    location_opt: str | None,
+    alias: str | None,
+    catalog_name: str | None,
+    data_version: str | None,
+    spatial: bool,
+    install: bool,
+    verify: bool,
+    allow_unverified: bool,
+    require_credentials: bool,
+    resolve_types: bool,
+    execute: bool | None,
+    execute_concurrency: int | None,
+    select: str | None,
+    ignore: str | None,
+    extend_ignore: str | None,
+    fail_on: str | None,
+    attach_options: tuple[str, ...],
+    setup_sql: tuple[str, ...],
+    worker_idle_timeout: int | None,
+    config_path: str | None,
+    output: str | None,
+    indent: int,
+    traceback: bool,
+    quiet: bool,
+) -> None:
+    """Attach a worker, lint and verify it, and emit one JSON catalog inventory.
+
+    The document (schema_version 1) carries the catalog identity, schemas,
+    tables, functions (ANY return types resolved by binding), attach options,
+    secret types, examples, a fresh lint score, and per-example verification.
+    Exit 0 when verified (or --no-verify), 2 when verification fails (unless
+    --allow-unverified), 3 when the worker cannot be attached.
+    """
+    from .dump import dump_worker, failure_document
+
+    if location_arg and location_opt and location_arg != location_opt:
+        raise click.UsageError("give LOCATION positionally or via --location, not both")
+    cfg = load_config(config_path)
+    _apply_cli_overrides(
+        cfg,
+        worker_idle_timeout=worker_idle_timeout,
+        select=select,
+        extend_select=None,
+        ignore=ignore,
+        extend_ignore=extend_ignore,
+        categories=None,
+        severities=(),
+        execute=execute,
+        execute_mode=None,
+        execute_limit=None,
+        execute_concurrency=execute_concurrency,
+        check_links=None,
+        fail_on=fail_on,
+        attach_options=attach_options,
+        setup_sql=setup_sql,
+    )
+    location = location_arg or location_opt or cfg.location
+    if not location:
+        raise click.UsageError("no worker LOCATION given (positional, --location, or config)")
+
+    code = 0
+    try:
+        doc = dump_worker(
+            location,
+            config=cfg,
+            alias=alias,
+            catalog_name=catalog_name,
+            install=install,
+            spatial=spatial,
+            data_version=data_version,
+            verify=verify,
+            resolve_types=resolve_types,
+            require_credentials=require_credentials,
+        )
+    except WorkerConnectionError as e:
+        doc = failure_document(location, "attach_failed", str(e))
+        code = EXIT_CONNECTION
+    except click.ClickException:
+        raise
+    except Exception as e:  # noqa: BLE001 - top-level guard
+        if traceback:
+            raise
+        doc = failure_document(location, "error", f"{type(e).__name__}: {e}")
+        code = EXIT_TOOL_ERROR
+
+    text = json.dumps(doc, indent=indent or None, ensure_ascii=False, default=str) + "\n"
+    if output:
+        try:
+            Path(output).write_text(text, encoding="utf-8")
+        except OSError as e:
+            raise click.ClickException(f"could not write {output}: {e}") from e
+    else:
+        click.echo(text, nl=False)
+
+    if code == 0 and verify and not doc.get("verified") and not allow_unverified:
+        code = EXIT_FINDINGS
+    if not quiet:
+        _echo_dump_summary(doc, output)
+    ctx.exit(code)
+
+
+def _echo_dump_summary(doc: dict[str, Any], output: str | None) -> None:
+    """One stderr line summarizing a dump document."""
+    if doc.get("status") != "ok":
+        click.secho(f"dump {doc.get('status')}: {doc.get('error')}", fg="red", err=True)
+        return
+    cat = doc.get("catalog") or {}
+    lint = doc.get("lint") or {}
+    ver = doc.get("verify") or {}
+    counts = cat.get("counts") or {}
+    if ver.get("enabled"):
+        vtext = (
+            f"verify {ver.get('status')} ({ver.get('passed')}/{ver.get('total')} passed, "
+            f"{ver.get('failed')} failed, {ver.get('needs_credentials')} need credentials)"
+        )
+    else:
+        vtext = "verify skipped"
+    where = f" -> {output}" if output else ""
+    click.secho(
+        f"{cat.get('catalog')}: lint {lint.get('score')} {lint.get('level')} · "
+        f"{counts.get('tables', 0)} tables, {counts.get('scalar_functions', 0)} scalar, "
+        f"{counts.get('table_functions', 0)} table fns · ANY bound "
+        f"{counts.get('return_types_bound', 0)}/"
+        f"{counts.get('return_types_bound', 0) + counts.get('return_types_unknown', 0)} · "
+        f"{vtext}{where}",
+        fg="green" if doc.get("verified") else "yellow",
+        err=True,
+    )
+
+
+# --------------------------------------------------------------------------
 # review (LLM-as-judge, opt-in)
 # --------------------------------------------------------------------------
 @app.command(name="review")
@@ -1144,6 +1334,88 @@ def fleet_run(
         bad += [r.name for r in results if r.status == "ok" and r.level < require_level]
     if bad:
         click.secho(f"below threshold: {', '.join(sorted(set(bad)))}", fg="red", err=True)
+        ctx.exit(EXIT_FINDINGS)
+
+
+@fleet.command(name="dump")
+@click.argument("manifest", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--out",
+    "outdir",
+    type=click.Path(file_okay=False),
+    default="fleet-dump",
+    show_default=True,
+    help="Directory for one <worker>.json per worker plus index.json.",
+)
+@click.option("--jobs", "-j", default=None, type=int, help="Workers dumped in parallel.")
+@click.option(
+    "--timeout",
+    type=float,
+    default=None,
+    help="Per-worker seconds before its process group is killed (default: manifest timeout).",
+)
+@click.option("--only", default=None, help="Comma list of worker names to dump.")
+@click.option("--install/--no-install", default=True, help="FORCE INSTALL vgi once up front.")
+@click.option(
+    "--allow-unverified",
+    is_flag=True,
+    help="Exit 0 even when a (non-skipped) worker fails to attach or verify.",
+)
+@click.pass_context
+def fleet_dump(
+    ctx: click.Context,
+    manifest: str,
+    outdir: str,
+    jobs: int | None,
+    timeout: float | None,
+    only: str | None,
+    install: bool,
+    allow_unverified: bool,
+) -> None:
+    """Run ``vgi-lint dump`` for every worker in MANIFEST (one process each).
+
+    Exits 2 when any non-skipped worker is unverified (failed attach, timeout or
+    failing examples) unless --allow-unverified.
+    """
+    from . import fleet as _fleet
+
+    specs = _fleet.load_manifest(manifest)
+    if only:
+        wanted = {n.strip() for n in only.split(",") if n.strip()}
+        specs = [s for s in specs if s.name in wanted]
+    if not specs:
+        raise click.UsageError("manifest selected no workers")
+    if install:
+        # Once, here: concurrent FORCE INSTALLs in the children race on the file.
+        try:
+            con, _ = connect_loaded(install=True, spatial=False)
+            close_quietly(con)
+        except WorkerConnectionError as e:
+            click.secho(f"error: {e}", fg="red", err=True)
+            ctx.exit(EXIT_CONNECTION)
+    total, done = len(specs), 0
+
+    def progress(res: dict[str, Any]) -> None:
+        nonlocal done
+        done += 1
+        mark = "✓" if res.get("verified") else ("·" if res.get("status") == "skipped" else "✗")
+        score = res.get("score")
+        click.echo(
+            f"  [{done:>3}/{total}] {mark} {res['name']:<26} "
+            f"{score if score is not None else '—':>3}  {res.get('detail') or ''}"[:120],
+            err=True,
+        )
+
+    out = Path(outdir)
+    results = _fleet.dump_sweep(
+        specs, out, jobs=jobs or _fleet.DEFAULT_JOBS, timeout=timeout, on_done=progress
+    )
+    (out / "index.json").write_text(json.dumps({"workers": results}, indent=2) + "\n")
+    ok = sum(1 for r in results if r.get("verified"))
+    click.echo(f"wrote {out}/: {ok}/{len(results)} verified", err=True)
+    bad = [r["name"] for r in results if r.get("status") != "skipped" and not r.get("verified")]
+    if bad and not allow_unverified:
+        click.secho(f"unverified: {', '.join(bad)}", fg="red", err=True)
         ctx.exit(EXIT_FINDINGS)
 
 

@@ -366,7 +366,14 @@ def _lint_one_version(
     update_baseline: bool,
     tracer: Tracer | None = None,
     meter: _RelaunchMeter | None = None,
+    while_attached: Any = None,
 ) -> VersionResult:
+    """Attach one data version, lint it, and score it.
+
+    ``while_attached(catalog, con)``, when given, runs after the rules while the
+    worker is still attached (``vgi-lint dump`` uses it to serialize, resolve
+    bind-time types and verify examples on the same attachment).
+    """
     releases = [
         Release(r.version, r.released_at, r.summary, r.notes_url) for r in discovery.releases
     ]
@@ -438,6 +445,9 @@ def _lint_one_version(
         if config.audit_waivers and config.waivers:
             with _span(tracer, "phase", "audit waivers"):
                 waiver_audit = audit_waivers(rules, ctx)
+        if while_attached is not None:
+            with _span(tracer, "phase", "while attached (dump)"):
+                while_attached(catalog, con)
 
     if config.baseline:
         if update_baseline:

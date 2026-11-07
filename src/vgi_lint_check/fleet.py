@@ -494,6 +494,152 @@ def sweep(
 
 
 # --------------------------------------------------------------------------
+# fleet dump: one verified catalog JSON per worker
+# --------------------------------------------------------------------------
+def _dump_command(spec: WorkerSpec, dest: Path, *, linter: list[str]) -> list[str]:
+    cmd = [*linter, "dump", spec.location, "--output", str(dest), "--allow-unverified"]
+    cmd += ["--no-install", "--quiet"]
+    cmd += ["--execute"] if spec.execute else ["--no-execute"]
+    for k, v in spec.attach_options.items():
+        cmd += ["--attach-option", f"{k}={v}"]
+    for sql in spec.setup_sql:
+        cmd += ["--setup-sql", sql]
+    return cmd
+
+
+def _kill_group(proc: subprocess.Popen[str]) -> None:
+    """SIGKILL a child's whole process group (the worker it spawned included)."""
+    import contextlib
+    import signal
+
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    with contextlib.suppress(Exception):
+        proc.wait(timeout=10)
+
+
+def dump_one(
+    spec: WorkerSpec,
+    outdir: Path,
+    *,
+    timeout: float | None = None,
+    linter: list[str] | None = None,
+) -> dict[str, Any]:
+    """Run ``vgi-lint dump`` for one worker in its own process group.
+
+    The child is started in a new session so a timeout kills the linter *and*
+    every worker process it spawned (``os.killpg``) — a wedged worker must not
+    outlive the sweep. Always leaves ``<outdir>/<name>.json`` behind: the
+    child's document, or a failure document when it produced none.
+
+    Args:
+        spec: The worker.
+        outdir: Directory for the per-worker JSON.
+        timeout: Seconds before the child's process group is killed
+            (default: the spec's ``timeout``).
+        linter: Command prefix for the linter (default: this interpreter).
+
+    Returns:
+        A one-line summary ``{name, status, verified, score, detail, path}``.
+    """
+    import time
+
+    from .dump import failure_document
+
+    dest = outdir / f"{spec.name}.json"
+    summary: dict[str, Any] = {"name": spec.name, "path": str(dest)}
+    if spec.skip or not spec.location:
+        doc = failure_document(spec.location, "skipped", spec.skip_reason or "no location")
+        dest.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        return {**summary, "status": "skipped", "verified": False, "detail": doc["error"]}
+    dest.unlink(missing_ok=True)
+    cmd = _dump_command(spec, dest, linter=linter or [sys.executable, "-m", "vgi_lint_check"])
+    limit = timeout if timeout is not None else spec.timeout
+    started = time.monotonic()
+    try:
+        proc = subprocess.Popen(  # noqa: S603 - argv list, never a shell string
+            cmd,
+            cwd=spec.directory or None,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+    except OSError as e:
+        doc = failure_document(spec.location, "error", str(e))
+        dest.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        return {**summary, "status": "error", "verified": False, "detail": str(e)}
+    status, detail = "", ""
+    try:
+        _, stderr = proc.communicate(timeout=limit)
+        if not dest.exists():
+            status, detail = "error", _tail(stderr, 400) or f"exited {proc.returncode}"
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        status, detail = "timeout", f"no result within {limit:.0f}s — process group killed"
+    finally:
+        # Reap any straggler the worker left in the group even on success.
+        _kill_group(proc)
+    if status:
+        doc = failure_document(spec.location, status, detail)
+        dest.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    else:
+        doc = json.loads(dest.read_text(encoding="utf-8"))
+    lint = doc.get("lint") or {}
+    return {
+        **summary,
+        "status": doc.get("status"),
+        "verified": bool(doc.get("verified")),
+        "score": lint.get("score"),
+        "level": lint.get("level"),
+        "detail": doc.get("error") or (doc.get("verify") or {}).get("status") or "",
+        "duration_s": round(time.monotonic() - started, 1),
+    }
+
+
+def dump_sweep(
+    specs: list[WorkerSpec],
+    outdir: Path,
+    *,
+    jobs: int = DEFAULT_JOBS,
+    timeout: float | None = None,
+    linter: list[str] | None = None,
+    on_done: Any = None,
+) -> list[dict[str, Any]]:
+    """Dump every worker, up to ``jobs`` at a time, preserving manifest order.
+
+    Args:
+        specs: Workers to dump.
+        outdir: Directory for ``<name>.json`` files (created if missing).
+        jobs: Parallel children.
+        timeout: Per-worker cap in seconds (default: each spec's ``timeout``).
+        linter: Command prefix for the linter.
+        on_done: Optional callback receiving each summary as it completes.
+
+    Returns:
+        One summary per worker (see :func:`dump_one`).
+    """
+    # Absolute: each child runs with its own worker directory as cwd.
+    outdir = outdir.expanduser().resolve()
+    outdir.mkdir(parents=True, exist_ok=True)
+    results: dict[str, dict[str, Any]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        futures = {
+            pool.submit(dump_one, s, outdir, timeout=timeout, linter=linter): s for s in specs
+        }
+        for fut in concurrent.futures.as_completed(futures):
+            spec = futures[fut]
+            try:
+                res = fut.result()
+            except Exception as e:  # noqa: BLE001 - one bad worker must not kill the sweep
+                res = {"name": spec.name, "status": "error", "verified": False, "detail": str(e)}
+            results[spec.name] = res
+            if on_done is not None:
+                on_done(res)
+    return [results[s.name] for s in specs if s.name in results]
+
+
+# --------------------------------------------------------------------------
 # Aggregation
 # --------------------------------------------------------------------------
 def summarize(results: list[WorkerResult]) -> dict[str, Any]:

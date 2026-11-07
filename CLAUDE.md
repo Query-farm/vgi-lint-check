@@ -124,8 +124,14 @@ Pipeline: **connect → load → model → rules/engine → reporting.**
   `${{ github.workspace }}`) → a built binary → an interpreted entry point — and only ever
   returns something that exists, since a manifest full of aspirational paths just buries
   the real signal under connection errors.
-- `cli.py` — `click` app; subcommands `lint` (default), `review`, `simulate`, `rules`,
-  `explain`, `init`, `versions`, the `fleet` group (`init` / `run`), and the `tutorials`
+- `dump.py` + `vgi-lint dump` — one-ATTACH verified catalog inventory (JSON
+  `schema_version` 1): serializes the catalog (a superset of the website harvest record),
+  resolves `ANY` scalar return types by `DESCRIBE`-binding a sample call
+  (`sql_parse.project_call_sqls`), runs the normal lint via `core._lint_one_version`'s
+  `while_attached` hook, and executes every executable example (`verified` gates
+  listing; exit 2 on failure). `fleet dump` runs it per worker in its own process group.
+- `cli.py` — `click` app; subcommands `lint` (default), `dump`, `review`, `simulate`, `rules`,
+  `explain`, `init`, `versions`, the `fleet` group (`init` / `run` / `dump`), and the `tutorials`
   group (`lint` / `verify` / `build` / `suggest` / `init`).
 - `scripts/unpin_fleet_linter.py`, `scripts/migrate_fleet_waivers.py` — fleet-wide repo
   migrations, dry-run by default.

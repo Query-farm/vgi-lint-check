@@ -36,7 +36,14 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-__all__ = ["Ref", "ParsedRefs", "parse_refs", "canonical_type", "select_star_call_sql"]
+__all__ = [
+    "Ref",
+    "ParsedRefs",
+    "parse_refs",
+    "canonical_type",
+    "select_star_call_sql",
+    "project_call_sqls",
+]
 
 
 @dataclass(frozen=True)
@@ -319,3 +326,83 @@ def select_star_call_sql(sql: str, function_name: str | None = None) -> str | No
     node["select_list"] = star
     node["modifiers"] = []
     return _deserialize(doc)
+
+
+def _call_arity(node: dict[str, Any]) -> int:
+    """Number of arguments in a serialized FUNCTION node (2.0 or legacy shape)."""
+    args = node["arguments"] if "arguments" in node else node.get("children")
+    return len(args) if isinstance(args, list) else 0
+
+
+def _matching_calls(
+    node: Any, function_name: str, arity: int | None, out: list[dict[str, Any]]
+) -> None:
+    """Collect FUNCTION nodes calling ``function_name`` in this SELECT's own scope.
+
+    Does not descend into ``from_table`` or ``cte_map`` — a call inside a subquery
+    or CTE references *that* scope's columns, which the rewritten outer query
+    cannot bind.
+    """
+    if isinstance(node, dict):
+        name = node.get("function_name")
+        if (
+            node.get("class") == "FUNCTION"
+            and isinstance(name, str)
+            and name.lower() == function_name.lower()
+            and (arity is None or _call_arity(node) == arity)
+        ):
+            out.append(node)
+        for key, value in node.items():
+            if key in ("from_table", "cte_map"):
+                continue
+            _matching_calls(value, function_name, arity, out)
+    elif isinstance(node, list):
+        for value in node:
+            _matching_calls(value, function_name, arity, out)
+
+
+def project_call_sqls(sql: str, function_name: str, arity: int | None = None) -> list[str]:
+    """Rewrite ``sql`` so its only projection is a call to ``function_name``.
+
+    For every call to ``function_name`` (with ``arity`` arguments, when given) in
+    the statement's own SELECT scope, returns a copy of the statement whose
+    select list is just that call — FROM / WHERE / CTEs are kept so column
+    arguments still bind, ORDER/LIMIT and GROUP BY/HAVING are dropped. A
+    ``DESCRIBE`` of the result then reports the type the call *binds* to, which is
+    how a function declaring ``ANY`` (resolved at bind time) gets a concrete
+    return type. Never raises; returns ``[]`` when nothing usable is found.
+    """
+    if not sql or function_name.lower() not in sql.lower():
+        return []
+    doc = _serialize(sql)
+    if doc is None:
+        return []
+    stmts = doc.get("statements")
+    if not isinstance(stmts, list) or len(stmts) != 1 or not isinstance(stmts[0], dict):
+        return []
+    node = stmts[0].get("node")
+    if not isinstance(node, dict) or node.get("type") != "SELECT_NODE":
+        return []
+    calls: list[dict[str, Any]] = []
+    _matching_calls(
+        {k: v for k, v in node.items() if k != "from_table"}, function_name, arity, calls
+    )
+    out: list[str] = []
+    for call in calls:
+        rewritten = copy.deepcopy(doc)
+        target = rewritten["statements"][0]["node"]
+        call_copy = copy.deepcopy(call)
+        call_copy["alias"] = ""
+        target["select_list"] = [call_copy]
+        target["modifiers"] = []
+        if "group_expressions" in target:
+            target["group_expressions"] = []
+            target["group_sets"] = []
+        for key in ("having", "qualify"):
+            if key in target:
+                target[key] = None
+        target["aggregate_handling"] = "STANDARD_HANDLING"
+        text = _deserialize(rewritten)
+        if text and text not in out:
+            out.append(text)
+    return out

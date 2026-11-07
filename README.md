@@ -592,6 +592,59 @@ waivers fail the run.
         ↳ expired on 2025-01-01
 ```
 
+## Catalog inventory (`vgi-lint dump`)
+
+`vgi-lint dump` attaches a worker **once** and emits one versioned JSON document
+(`"schema_version": 1`) that a directory or website can list from: the catalog's
+identity and documentation, every schema, table/view (columns with type, comment,
+nullability; constraints) and function (kind, arguments with the full
+`vgi_function_arguments()` detail, examples), attach options with `required` and
+`secret`, the secret types the worker registers, settings, example queries,
+executable examples and agent-task prompts — plus a **fresh lint score** and a
+**verification** of every `vgi.executable_examples` example, all from the same
+attachment.
+
+```bash
+uv run vgi-lint dump 'uv run conform_worker.py' -o conform.json
+uv run vgi-lint dump --location 'github-auto://Query-farm/vgi-color@v0.2.0' -o color.json
+uv run vgi-lint dump 'docker://ghcr.io/query-farm/vgi-x509:0.2.0' --no-verify
+```
+
+Any LOCATION the `vgi` extension accepts works (subprocess command,
+`github-auto://`, `docker://`, `http(s)://`, `unix://`, `launch:`), and the
+attach/lint options `lint` takes apply (`--attach-option`, `--setup-sql`,
+`--config`, `--catalog`, `--data-version`, `--select`/`--ignore`, `--no-execute`).
+
+- **Bind-time return types.** A scalar/aggregate that declares `ANY` (the worker
+  decides the type at bind time — e.g. vgi-rust's `vgi:any` placeholder) gets a
+  concrete `return_type` by binding a sample call with `DESCRIBE` (nothing
+  executes): first each call found in the catalog's own example SQL, rewritten so
+  the call is the only projection, then a typed-`NULL` call targeting the exact
+  overload. `return_type_source` is `declared`, `bound` (with
+  `return_type_bound_from`) or `unknown`; `declared_return_type` keeps the original.
+  `--no-resolve-types` skips this.
+- **Verification** (on by default; `--no-verify` skips). Every executable example
+  runs on its own cursor; `expected_result` is checked with the same comparison
+  as VGI907. Each example reports `status` — `passed`, `failed`, `mismatch`,
+  `timeout`, `invalid` (malformed tag) or `needs_credentials` (the worker said a
+  secret is missing) — with its error text and duration. `verified` is true when
+  nothing failed; credential-gated examples do not fail it unless
+  `--require-credentials`. A worker should not be listed unless `verified` is true,
+  so the command **exits 2** when verification fails (`--allow-unverified` still
+  exits 0; the JSON says `verified: false` either way) and **exits 3** (writing a
+  `status: "attach_failed"` document) when the worker cannot be attached.
+- The document also records the `location`, `transport`, the vgi extension,
+  haybarn and engine versions, the tool version and the run duration.
+
+The `catalog` object uses the same field names as the Query.Farm website's
+worker record, so a dump can replace a harvest. Per-function *required secrets*
+are not exposed by the extension to SQL, so they are not in the document.
+
+`vgi-lint fleet dump MANIFEST --out DIR --jobs N --timeout S` runs one `dump`
+subprocess per manifest worker (own process group, killed on timeout), writes
+`DIR/<worker>.json` (a failure document when a worker produced none) plus
+`DIR/index.json`, and exits 2 if any non-skipped worker is unverified.
+
 ## Fleet sweeps (`vgi-lint fleet`)
 
 One worker's result lives in one repo's CI log, where nobody reads it. At fleet
@@ -659,6 +712,7 @@ Two helper scripts operate on a whole fleet of repos (dry-run by default):
 
 `0` clean (or below `--fail-on`) · `1` config/tool error · `2` findings ≥
 `--fail-on` (regressions only when a baseline is set) · `3` connection error.
+For `dump`, `2` means verification failed.
 
 ## Security / trust boundary
 

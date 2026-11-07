@@ -34,6 +34,11 @@ class AttachOptionInfo:
     description: str | None = None
     type: str | None = None
     default: str | None = None
+    # ``required``/``secret`` come straight from the extension's struct (newer
+    # vgi extensions); None when the column predates them, in which case
+    # ``required`` falls back to "no default" in the model.
+    required: bool | None = None
+    secret: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -91,9 +96,25 @@ def _parse_attach_options(raw: Any) -> list[AttachOptionInfo]:
                 description=_blank_to_none(item.get("description")),
                 type=_blank_to_none(item.get("type")),
                 default=_stringify(item.get("default_value")),
+                required=_optional_bool(item.get("required")),
+                secret=_optional_bool(item.get("secret")),
             )
         )
     return out
+
+
+def _optional_bool(v: Any) -> bool | None:
+    """Coerce a BOOLEAN struct field (or its JSON/text rendering) to bool/None."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    if s in ("true", "1", "t", "yes"):
+        return True
+    if s in ("false", "0", "f", "no"):
+        return False
+    return None
 
 
 def _blank_to_none(v: Any) -> str | None:

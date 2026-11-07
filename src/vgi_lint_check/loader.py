@@ -90,7 +90,8 @@ def _merge_examples(tagged: list[ExampleQuery], native: list[ExampleQuery]) -> l
 def _build_attach_options(alias: str, infos: list[Any] | None) -> list[AttachOption]:
     """Normalize ``vgi_catalogs()`` attach-option structs into the model type.
 
-    Duck-typed on ``name``/``description``/``type``/``default`` so the discovery
+    Duck-typed on ``name``/``description``/``type``/``default`` (plus the
+    optional ``required``/``secret`` flags) so the discovery
     dataclass and any equivalent row shape both work; entries without a name are
     unusable at ATTACH time and are dropped.
     """
@@ -107,6 +108,8 @@ def _build_attach_options(alias: str, infos: list[Any] | None) -> list[AttachOpt
                 description=getattr(info, "description", None),
                 type=getattr(info, "type", None),
                 default=getattr(info, "default", None),
+                declared_required=getattr(info, "required", None),
+                secret=getattr(info, "secret", None),
             )
         )
     return out
