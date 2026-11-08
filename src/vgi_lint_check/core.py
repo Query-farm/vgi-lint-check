@@ -36,7 +36,12 @@ from .result import Report, VersionResult
 from .rules import run, select_rules
 from .rules.base import RuleContext
 from .rules.engine import audit_waivers
-from .snapshot import fetch_copy_handlers, fetch_function_arguments, take_snapshot
+from .snapshot import (
+    fetch_copy_handlers,
+    fetch_function_arguments,
+    fetch_secret_types,
+    take_snapshot,
+)
 from .trace import Tracer
 from .versions import CatalogDiscovery, discover_catalogs, resolve_versions
 
@@ -235,6 +240,7 @@ def with_attached_catalogs(
                     advertised_attach_options=advertised_opts,
                     argument_rows=fetch_function_arguments(con, local_alias),
                     copy_handler_rows=fetch_copy_handlers(con, local_alias),
+                    secret_type_rows=fetch_secret_types(con, local_alias),
                 )
             return runner(catalogs, con)
     finally:
@@ -327,6 +333,7 @@ def _load_catalog(
                 advertised_attach_options=advertised_opts,
                 argument_rows=fetch_function_arguments(con, local_alias),
                 copy_handler_rows=fetch_copy_handlers(con, local_alias),
+                secret_type_rows=fetch_secret_types(con, local_alias),
             )
             # When a runner is given (simulate), execute it while the connection
             # is still attached so it can run SQL against the worker.
@@ -416,6 +423,7 @@ def _lint_one_version(
                 advertised_attach_options=advertised_opts,
                 argument_rows=fetch_function_arguments(con, alias),
                 copy_handler_rows=fetch_copy_handlers(con, alias),
+                secret_type_rows=fetch_secret_types(con, alias),
             )
         if config.agent_tasks_file:
             from .tags import merge_agent_task_sidecar

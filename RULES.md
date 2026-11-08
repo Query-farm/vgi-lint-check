@@ -243,6 +243,11 @@ skipped unless `--execute` is passed.
 | --- | --- | --- | --- | --- |
 | `VGI1001` | warning | attach-option-description | Every advertised attach option should have a description. |  |
 | `VGI1002` | info | attach-option-description-quality | An attach-option description should add information, not restate the name. |  |
+| `VGI1003` | info | constant-argument-attach-option | An endpoint/config-like argument every example passes with the same value should probably be an attach option. |  |
+| `VGI1010` | warning | secret-type-description | A declared secret type should say what credentials it holds and for which service. |  |
+| `VGI1011` | warning | secret-parameter-description | Every secret-type parameter should carry a 'description' field-metadata entry. |  |
+| `VGI1012` | info | secret-type-doc-url | A secret type should link to how to obtain its credentials ('doc_url'). |  |
+| `VGI1013` | warning | secret-parameter-redact | A secret-type parameter that holds a credential must be marked redact. |  |
 
 ## Execution (VGI9xx)
 
@@ -296,4 +301,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_206 rules._
+_211 rules._

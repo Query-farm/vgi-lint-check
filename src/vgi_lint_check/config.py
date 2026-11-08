@@ -114,6 +114,9 @@ class Options:
     icon_max_aspect_ratio: float = 1.25
     # VGI147: vgi.title is a display *name* (cards, headings, breadcrumbs), not a
     # headline. Longer copy belongs in vgi.subtitle / the comment. 0 = disabled.
+    # VGI1003: a string argument passed with the same literal in every example
+    # call looks like per-connection config. Needs at least this many calls.
+    constant_argument_min_calls: int = 3
     title_max_chars: int = 32
     title_max_words: int = 4
     # VGI149: vgi.subtitle is the one-sentence line under the name in listings.

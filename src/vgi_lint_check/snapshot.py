@@ -105,3 +105,30 @@ def fetch_copy_handlers(con: Any, alias: str) -> list[dict[str, Any]]:
         return []
     names = [d[0] for d in cur.description]
     return [dict(zip(names, row, strict=False)) for row in cur.fetchall()]
+
+
+_SECRET_TYPES_SQL = """
+SELECT * FROM vgi_secret_types()
+WHERE catalog_name = ?
+"""
+
+
+def fetch_secret_types(con: Any, alias: str) -> list[dict[str, Any]] | None:
+    """Worker-declared secret types from ``vgi_secret_types()``, scoped to ``alias``.
+
+    Returns ``None`` (not ``[]``) when the table function is unavailable, so the
+    caller can tell "declares no secret types" from "this extension can't say".
+
+    Args:
+        con: An open DuckDB connection with the worker attached.
+        alias: The attached catalog's alias.
+
+    Returns:
+        One dict per secret type, or ``None`` on an extension without the function.
+    """
+    try:
+        cur = con.execute(_SECRET_TYPES_SQL, [alias])
+    except Exception:  # noqa: BLE001 - version skew: table function not present
+        return None
+    names = [d[0] for d in cur.description]
+    return [dict(zip(names, row, strict=False)) for row in cur.fetchall()]

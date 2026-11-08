@@ -26,6 +26,8 @@ from .model import (
     Pragma,
     Release,
     Schema,
+    SecretType,
+    SecretTypeParam,
     Setting,
     Table,
     View,
@@ -115,6 +117,39 @@ def _build_attach_options(alias: str, infos: list[Any] | None) -> list[AttachOpt
     return out
 
 
+def _build_secret_types(alias: str, rows: list[dict[str, Any]] | None) -> list[SecretType] | None:
+    """Normalize ``vgi_secret_types()`` rows; ``None`` passes through (unknown)."""
+    if rows is None:
+        return None
+    out: list[SecretType] = []
+    for r in rows:
+        name = str(r.get("secret_type") or r.get("name") or "")
+        if not name:
+            continue
+        params = [
+            SecretTypeParam(
+                name=str(p.get("name") or ""),
+                type=p.get("type"),
+                redact=bool(p.get("redact") or False),
+                required=bool(p.get("required") or False),
+                description=p.get("description"),
+            )
+            for p in (r.get("parameters") or [])
+            if isinstance(p, dict) and p.get("name")
+        ]
+        out.append(
+            SecretType(
+                id=ObjectId(alias, ObjectKind.SECRET_TYPE, name=name),
+                name=name,
+                description=r.get("description"),
+                doc_url=r.get("doc_url"),
+                parameters=params,
+                required_by=[str(f) for f in (r.get("required_by") or []) if f],
+            )
+        )
+    return out
+
+
 def _optional_int(value: Any) -> int | None:
     """Normalize an optional integer-valued diagnostic column."""
     if value is None:
@@ -165,6 +200,7 @@ def build_catalog(
     advertised_attach_options: dict[str, list[Any]] | None = None,
     argument_rows: list[dict[str, Any]] | None = None,
     copy_handler_rows: list[dict[str, Any]] | None = None,
+    secret_type_rows: list[dict[str, Any]] | None = None,
 ) -> Catalog:
     """Build a normalized :class:`Catalog` from a post-attach snapshot."""
     # COPY-format handler function names (from vgi_copy_formats()). These table
@@ -454,6 +490,7 @@ def build_catalog(
         attach_options=opts,
         advertised_catalogs=list(advertised_catalogs or []),
         advertised_attach_options=advertised_opts,
+        secret_types=_build_secret_types(alias, secret_type_rows),
         executable_examples=catalog_exec_ex,
         executable_examples_parse_error=catalog_exec_err,
         agent_test_tasks=catalog_tasks,

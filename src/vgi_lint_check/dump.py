@@ -689,6 +689,30 @@ def serialize_catalog(
             }
             for o in cat.attach_options
         ],
+        # Full secret-type declarations (vgi_secret_types()); None on an extension
+        # that can't report them — the top-level ``secret_types`` diff of
+        # duckdb_secret_types() still carries the names.
+        "secret_type_details": None
+        if cat.secret_types is None
+        else [
+            {
+                "name": st.name,
+                "description": _blank(st.description),
+                "doc_url": _blank(st.doc_url),
+                "parameters": [
+                    {
+                        "name": p.name,
+                        "type": p.type,
+                        "required": p.required,
+                        "redact": p.redact,
+                        "description": _blank(p.description),
+                    }
+                    for p in st.parameters
+                ],
+                "required_by": list(st.required_by),
+            }
+            for st in cat.secret_types
+        ],
         "settings": [
             {
                 "name": st.name,

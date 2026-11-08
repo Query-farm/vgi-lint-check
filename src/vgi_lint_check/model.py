@@ -128,6 +128,7 @@ class ObjectKind(StrEnum):
     PRAGMA = "pragma"
     SETTING = "setting"
     ATTACH_OPTION = "attach_option"
+    SECRET_TYPE = "secret_type"
     # File-sourced tutorials (not catalog objects); used to anchor VGI13xx findings.
     TUTORIAL = "tutorial"
     TUTORIAL_STEP = "tutorial_step"
@@ -552,6 +553,36 @@ class AttachOption:
 
 
 @dataclass(frozen=True)
+class SecretTypeParam:
+    """One key of a worker-declared secret type (a ``CREATE SECRET`` parameter)."""
+
+    name: str
+    type: str | None = None
+    redact: bool = False
+    # From the parameter schema: a non-nullable Arrow field is required.
+    required: bool = False
+    # Per-field Arrow metadata ``description``.
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class SecretType:
+    """A secret type the worker registers at ATTACH (from ``vgi_secret_types()``).
+
+    ``required_by`` lists the worker functions that declare a requirement on this
+    type, so a listing can say which parts of the catalog need credentials.
+    """
+
+    id: ObjectId
+    name: str
+    description: str | None = None
+    # Schema-level Arrow metadata ``doc_url``: where to obtain these credentials.
+    doc_url: str | None = None
+    parameters: list[SecretTypeParam] = field(default_factory=list)
+    required_by: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Constraint:
     """A table constraint from duckdb_constraints().
 
@@ -667,6 +698,10 @@ class Catalog:
     # not this catalog's. Lets VGI905 satisfy (or honestly skip) a sibling whose
     # attach is gated on a required option. Empty when discovery didn't run.
     advertised_attach_options: dict[str, list[AttachOption]] = field(default_factory=dict)
+    # Worker-declared secret types from vgi_secret_types(). None means the
+    # extension cannot report them (older vgi) — rules must stay silent, since
+    # "no secret types" and "can't tell" are different facts.
+    secret_types: list[SecretType] | None = None
     # Catalog-level vgi.executable_examples (walkthroughs spanning the catalog).
     executable_examples: list[ExecutableExample] = field(default_factory=list)
     executable_examples_parse_error: str | None = None

@@ -406,3 +406,76 @@ def project_call_sqls(sql: str, function_name: str, arity: int | None = None) ->
         if text and text not in out:
             out.append(text)
     return out
+
+
+@dataclass(frozen=True)
+class CallArgs:
+    """One function call in a statement with its literal-constant arguments.
+
+    ``constants`` maps an argument key to the literal's text: the argument name
+    for a named argument (``index := 'x'``), else ``"#<n>"`` for the n-th
+    positional argument. Non-constant arguments are omitted; ``kinds`` gives each
+    constant's literal kind (``STRING``, ``INTEGER``, ...).
+    """
+
+    catalog: str
+    schema: str
+    name: str
+    constants: dict[str, str]
+    kinds: dict[str, str]
+
+
+def _collect_calls(node: Any, out: list[CallArgs]) -> None:
+    if isinstance(node, dict):
+        name = node.get("function_name")
+        args = node.get("arguments")
+        if isinstance(name, str) and name and isinstance(args, list):
+            constants: dict[str, str] = {}
+            kinds: dict[str, str] = {}
+            pos = 0
+            for a in args:
+                if not isinstance(a, dict):
+                    continue
+                arg_name = a.get("name") or ""
+                key = str(arg_name) if arg_name else f"#{pos}"
+                if not arg_name:
+                    pos += 1
+                expr = a.get("expression")
+                if isinstance(expr, dict) and expr.get("type") == "VALUE_CONSTANT":
+                    lit = expr.get("literal")
+                    if isinstance(lit, dict) and isinstance(lit.get("text"), str):
+                        constants[key] = lit["text"]
+                        kinds[key] = str(lit.get("kind") or "")
+            out.append(
+                CallArgs(
+                    catalog=str(node.get("catalog") or ""),
+                    schema=str(node.get("schema") or ""),
+                    name=name,
+                    constants=constants,
+                    kinds=kinds,
+                )
+            )
+        for value in node.values():
+            _collect_calls(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _collect_calls(value, out)
+
+
+def call_constant_args(sql: str) -> list[CallArgs] | None:
+    """Every function call in ``sql`` with its literal arguments.
+
+    Args:
+        sql: One SQL statement.
+
+    Returns:
+        The calls in document order, or ``None`` when the statement can't be parsed.
+    """
+    if not sql or not sql.strip():
+        return None
+    doc = _serialize(sql)
+    if doc is None:
+        return None
+    out: list[CallArgs] = []
+    _collect_calls(doc, out)
+    return out
