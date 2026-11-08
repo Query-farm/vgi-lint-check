@@ -68,7 +68,7 @@ class SecretParameterDescription(Rule):
     category = AO
     default_severity = Severity.WARNING
     targets = (ObjectKind.SECRET_TYPE,)
-    summary = "Every secret-type parameter should carry a 'description' field-metadata entry."
+    summary = "Every secret-type parameter should carry a 'vgi_doc' field-metadata description."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for st in _secret_types(ctx):
@@ -78,7 +78,7 @@ class SecretParameterDescription(Rule):
                     ctx,
                     st.id,
                     f"secret type {st.name!r} has undocumented parameter(s): {', '.join(missing)}",
-                    "add a 'description' entry to each parameter field's Arrow metadata saying "
+                    "add a 'vgi_doc' entry to each parameter field's Arrow metadata saying "
                     "what the value is and where to find it (e.g. 'Directory (tenant) ID from "
                     "the app registration's Overview page')",
                 )
@@ -91,7 +91,7 @@ class SecretTypeDocUrl(Rule):
     category = AO
     default_severity = Severity.INFO
     targets = (ObjectKind.SECRET_TYPE,)
-    summary = "A secret type should link to how to obtain its credentials ('doc_url')."
+    summary = "A secret type should link to how to obtain its credentials ('vgi_doc_url')."
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         for st in _secret_types(ctx):
@@ -100,8 +100,8 @@ class SecretTypeDocUrl(Rule):
                 yield self.finding(
                     ctx,
                     st.id,
-                    f"secret type {st.name!r} has no 'doc_url'",
-                    "set 'doc_url' in the parameter schema's Arrow metadata to the page that "
+                    f"secret type {st.name!r} has no 'vgi_doc_url'",
+                    "set 'vgi_doc_url' in the parameter schema's Arrow metadata to the page that "
                     "explains how to get these credentials (sign-up, app registration, "
                     "required roles/scopes)",
                 )
@@ -109,7 +109,7 @@ class SecretTypeDocUrl(Rule):
                 yield self.finding(
                     ctx,
                     st.id,
-                    f"secret type {st.name!r} 'doc_url' is not an http(s) URL: {url!r}",
+                    f"secret type {st.name!r} 'vgi_doc_url' is not an http(s) URL: {url!r}",
                     "use an absolute http(s) URL",
                 )
 

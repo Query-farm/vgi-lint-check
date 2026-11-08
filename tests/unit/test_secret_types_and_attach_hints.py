@@ -143,7 +143,7 @@ def test_secret_rules_pass_on_well_documented_type():
     [
         ({"description": ""}, "VGI1010", "no meaningful description"),
         ({"description": "azure_graph"}, "VGI1010", "no meaningful description"),
-        ({"doc_url": None}, "VGI1012", "no 'doc_url'"),
+        ({"doc_url": None}, "VGI1012", "no 'vgi_doc_url'"),
         ({"doc_url": "learn.microsoft.com"}, "VGI1012", "not an http(s) URL"),
     ],
 )

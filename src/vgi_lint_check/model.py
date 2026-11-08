@@ -559,9 +559,9 @@ class SecretTypeParam:
     name: str
     type: str | None = None
     redact: bool = False
-    # From the parameter schema: a non-nullable Arrow field is required.
+    # Field metadata ``vgi_required = "true"``: CREATE SECRET must supply it.
     required: bool = False
-    # Per-field Arrow metadata ``description``.
+    # Field metadata ``vgi_doc``.
     description: str | None = None
 
 
@@ -576,7 +576,7 @@ class SecretType:
     id: ObjectId
     name: str
     description: str | None = None
-    # Schema-level Arrow metadata ``doc_url``: where to obtain these credentials.
+    # Schema-level Arrow metadata ``vgi_doc_url``: where to obtain these credentials.
     doc_url: str | None = None
     parameters: list[SecretTypeParam] = field(default_factory=list)
     required_by: list[str] = field(default_factory=list)

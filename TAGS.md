@@ -312,16 +312,19 @@ A worker that needs credentials declares a **secret type** (name, description, a
 an Arrow parameter schema); its functions declare which secret types they require.
 These are not `vgi.*` tags — they ride in the secret type's own declaration and
 surface through the extension's `vgi_secret_types()` (rules stay silent on an
-extension without it). Conventions on the parameter schema:
+extension without it). Conventions on the parameter schema (same `vgi_*` field-metadata
+style as function arguments):
 
-- **Field metadata `description`** on every parameter — what the value is and where
+- **Field metadata `vgi_doc`** on every parameter — what the value is and where
   to find it (VGI1011).
 - **Field metadata `redact = "true"`** on anything that is a credential (VGI1013
   flags `*secret*`/`*token*`/`*password*`/`*api_key*`… names that aren't redacted;
   `*_id` names are identifiers and exempt).
-- **Field nullability:** a non-nullable field is a **required** `CREATE SECRET` key.
-- **Schema metadata `doc_url`** — the page explaining how to obtain the credentials
-  (sign-up, app registration, roles/scopes) (VGI1012).
+- **Field metadata `vgi_required = "true"`** on keys `CREATE SECRET` must supply.
+  (Arrow nullability is deliberately *not* used — builders default it differently
+  across SDKs.)
+- **Schema metadata `vgi_doc_url`** — the page explaining how to obtain the
+  credentials (sign-up, app registration, roles/scopes) (VGI1012).
 - The secret type's **description** names the service and credential kind (VGI1010).
 
 A listing renders these as a ready-to-fill `CREATE SECRET` template, a parameter
