@@ -29,6 +29,7 @@ def test_bundled_contract_is_valid():
 # normative "Applies to" prose in TAGS.md — pinned here so they cannot drift.
 _DOCUMENTED_SCOPES = {
     "vgi.title": ["catalog", "schema", "table", "view"],
+    "vgi.subtitle": ["catalog"],
     "vgi.keywords": ["catalog", "schema", "table", "view"],
     "vgi.category": ["table", "view", "function"],
     "vgi.categories": ["schema"],

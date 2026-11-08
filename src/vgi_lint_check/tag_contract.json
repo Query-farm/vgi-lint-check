@@ -9,6 +9,7 @@
     {"symbol":"TAG_EXECUTABLE_EXAMPLES","key":"vgi.executable_examples","format":"json","scopes":["catalog","schema","table","view","function"]},
     {"symbol":"TAG_AGENT_TEST_TASKS","key":"vgi.agent_test_tasks","format":"json","scopes":["catalog"],"public_fields":["name","prompt"]},
     {"symbol":"TAG_TITLE","key":"vgi.title","format":"text","scopes":["catalog","schema","table","view"]},
+    {"symbol":"TAG_SUBTITLE","key":"vgi.subtitle","format":"text","scopes":["catalog"]},
     {"symbol":"TAG_KEYWORDS","key":"vgi.keywords","format":"json","scopes":["catalog","schema","table","view"]},
     {"symbol":"TAG_CATEGORY","key":"vgi.category","format":"text","scopes":["table","view","function"]},
     {"symbol":"TAG_CATEGORIES","key":"vgi.categories","format":"json","scopes":["schema"]},

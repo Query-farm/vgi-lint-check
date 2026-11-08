@@ -59,6 +59,7 @@ columns/returns, caveats, and examples.
 | `vgi.result_columns_schema` | | | | ● table_function |
 | `vgi.result_dynamic_columns_md` | | | | ● table_function |
 | `vgi.title` | ● req | ● req | ◦ | |
+| `vgi.subtitle` | ● req | | | |
 | `vgi.keywords` | ◦ | ◦ | ◦ | |
 | `vgi.category` | | | ● req | ● req |
 | `vgi.categories` | | ● req (registry) | | |
@@ -155,7 +156,33 @@ columns/returns, caveats, and examples.
 - **Value:** a human/marketing display name string (distinct from the machine name).
 - **Required:** catalog and every schema (VGI124); optional on tables/views.
 - **Used for:** listings/UIs that want a friendly name.
-- **Validated by:** VGI125 (when set, must differ from the machine name).
+- **Validated by:** VGI125 (when set, must differ from the machine name), VGI147
+  (must read as a *name*: ≤ 32 chars and ≤ 4 words by default — no `/`-lists,
+  trailing `(…)`, `— description` / `: description` tails, or "for DuckDB" /
+  "VGI worker" boilerplate). Good: `Trading calendar`, `ASN.1`, `Invesco ETFs`.
+  Bad: `ASN.1 BER/DER Decoder & Security-Payload Shredder`.
+
+### `vgi.subtitle`
+- **Applies to:** catalog.
+- **Value:** one plain sentence of listing copy shown under the title in
+  directories and search results — what the worker does, for whom.
+  Example: `Exchange sessions, holidays and market hours for 50+ stock exchanges.`
+- **Required:** yes (VGI148).
+- **Used for:** directory cards, the worker page subtitle, search-result snippets.
+- **Not the comment:** the catalog `COMMENT` stays the plain technical description
+  DuckDB tools show natively; the subtitle is the human pitch. They should differ.
+- **Validated by:** VGI149 — 40–140 chars by default, one sentence, no dangling
+  trailing punctuation, no engine boilerplate, no implementation details
+  (`(Python, librosa)` — the listing shows the language), and not an echo of the
+  title or the catalog comment.
+
+### `vgi.icon_url`
+- **Applies to:** catalog.
+- **Value:** absolute http(s) URL of a square PNG/SVG/WebP (64–2048 px, ≤ 1 MiB).
+- **Required:** no — listings fall back to a category icon. Directories should
+  mirror the image at harvest time rather than hot-link it.
+- **Validated by:** VGI014 (valid URL), and under `--check-links` VGI015
+  (displayable image, size budget) and VGI016 (aspect ratio ≤ 1.25:1).
 
 ### `vgi.keywords`
 - **Applies to:** catalog, schema, table, view.
@@ -376,7 +403,7 @@ authors should start with
 ```python
 # Schema-level tags
 {
-    "vgi.title": "Calendar — main",
+    "vgi.title": "Calendar",
     "vgi.doc_llm": "Holiday, business-day, recurrence, and trading-calendar helpers …",
     "vgi.doc_md": "## Calendar functions\n\n…",
     "vgi.keywords": '["holiday","business day","trading day","iso week"]',

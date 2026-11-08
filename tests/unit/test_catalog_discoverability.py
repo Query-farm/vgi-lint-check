@@ -381,3 +381,147 @@ def test_icon_image_gated_off_without_check_links():
     assert "VGI015" not in set(codes(cat, check_links=False))
     # sanity: the rule itself would fire when driven directly
     assert _run_icon(cat, lambda url: bad)
+
+
+# --- title is a name / subtitle (VGI147-149) -------------------------------
+import pytest  # noqa: E402
+
+GOOD_SUBTITLE = "Exchange sessions, holidays and market hours for 50+ stock exchanges."
+
+
+def _listing(title=None, subtitle=None, comment="Animal sounds, attributes, and taxonomy."):
+    tags = {}
+    if title is not None:
+        tags["vgi.title"] = title
+    if subtitle is not None:
+        tags["vgi.subtitle"] = subtitle
+    return F.catalog(F.schema("main"), tags=tags, comment=comment)
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["Trading calendar", "ASN.1", "Invesco ETFs", "Barcode & QR codes", "BGP/MRT", "X.509"],
+)
+def test_title_is_name_accepts_names(title):
+    assert "VGI147" not in set(codes(_listing(title=title)))
+
+
+@pytest.mark.parametrize(
+    ("title", "reason"),
+    [
+        ("ASN.1 BER/DER Decoder & Security-Payload Shredder", "chars"),
+        ("CBOR / MessagePack / COSE / CWT / WebAuthn Codec", "'/'-separated list"),
+        ("Field Validation & Normalization (conform)", "trailing parenthetical"),
+        ("Cheminformatics for SQL", "boilerplate"),
+        ("Calendar — main", "dash or colon"),
+        ("Azure cost: amortized", "dash or colon"),
+        ("Microsoft Entra Audit Sign-in Logs", "words"),
+        ("Trading calendar —", "dangling"),
+    ],
+)
+def test_title_is_name_flags_headlines(title, reason):
+    cfg = Config()
+    found = [
+        f
+        for f in run(select_rules(cfg), RuleContext(_listing(title=title), cfg))
+        if f.code == "VGI147"
+    ]
+    assert found and reason in found[0].message
+
+
+def test_title_is_name_checks_schemas_and_tables_but_not_functions():
+    t = F.table("main", "quotes", tags={"vgi.title": "Quotes — live / delayed / historic"})
+    s = F.schema("main", tables=[t], tags={"vgi.title": "Market data (main schema)"})
+    cfg = Config()
+    found = {
+        f.object_id.kind
+        for f in run(select_rules(cfg), RuleContext(F.catalog(s), cfg))
+        if f.code == "VGI147"
+    }
+    assert found == {s.id.kind, t.id.kind}
+
+
+def test_title_limits_are_configurable():
+    long_name = "Microsoft Entra Audit Sign-in Logs"
+    assert "VGI147" not in set(
+        codes(_listing(title=long_name), options=_opts(title_max_words=6, title_max_chars=40))
+    )
+
+
+def _opts(**kw):
+    from vgi_lint_check.config import Options
+
+    return Options(**kw)
+
+
+def test_subtitle_present():
+    assert "VGI148" in set(codes(_listing(title="Trading calendar")))
+    assert "VGI148" not in set(codes(_listing(subtitle=GOOD_SUBTITLE)))
+
+
+def test_subtitle_quality_accepts_plain_sentence():
+    assert "VGI149" not in set(codes(_listing(title="Trading calendar", subtitle=GOOD_SUBTITLE)))
+
+
+@pytest.mark.parametrize(
+    ("subtitle", "reason"),
+    [
+        ("Too short.", "min"),
+        ("x" * 141, "max"),
+        ("Decode ASN.1 in SQL queries today. Also SNMP, LDAP and Kerberos.", "one sentence"),
+        ("Stock-exchange trading calendars, sessions, market hours & schedules —", "dangling"),
+        ("Decode ASN.1 BER and DER payloads with SQL — a VGI worker", "boilerplate"),
+        (
+            "Time-series matrix-profile motifs and discords for analysts (Python, stumpy)",
+            "implementation",
+        ),
+    ],
+)
+def test_subtitle_quality_flags(subtitle, reason):
+    cfg = Config()
+    found = [
+        f
+        for f in run(select_rules(cfg), RuleContext(_listing(subtitle=subtitle), cfg))
+        if f.code == "VGI149"
+    ]
+    assert found and reason in found[0].message
+
+
+def test_subtitle_quality_flags_echo_of_comment_and_title():
+    cat = _listing(title=GOOD_SUBTITLE, subtitle=GOOD_SUBTITLE, comment=GOOD_SUBTITLE)
+    cfg = Config()
+    msgs = [f.message for f in run(select_rules(cfg), RuleContext(cat, cfg)) if f.code == "VGI149"]
+    assert msgs and "repeats the title" in msgs[0] and "catalog comment" in msgs[0]
+
+
+# --- icon aspect ratio (VGI016) --------------------------------------------
+def _run_square(cat, info, **opts):
+    from vgi_lint_check.rules.catalog import CatalogIconSquare
+
+    cfg = Config(check_links=True, options=_opts(**opts))
+    ctx = RuleContext(cat, cfg, image_probe=lambda url: info)
+    ctx.severity = Severity.WARNING
+    return list(CatalogIconSquare().check(ctx))
+
+
+def test_icon_square_accepts_square_and_near_square():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    for w, h in [(256, 256), (300, 256)]:
+        assert _run_square(_icon_cat(), ImageInfo(status=200, fmt="png", width=w, height=h)) == []
+
+
+def test_icon_square_flags_wide_logo():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    out = _run_square(_icon_cat(), ImageInfo(status=200, fmt="png", width=960, height=300))
+    assert out and out[0].code == "VGI016" and "3.20:1" in out[0].message
+
+
+def test_icon_square_skips_svg_broken_and_disabled():
+    from vgi_lint_check.linkcheck import ImageInfo
+
+    assert _run_square(_icon_cat(), ImageInfo(status=200, fmt="svg")) == []
+    assert _run_square(_icon_cat(), ImageInfo(status=404)) == []
+    wide = ImageInfo(status=200, fmt="png", width=960, height=300)
+    assert _run_square(_icon_cat(), wide, icon_max_aspect_ratio=0) == []

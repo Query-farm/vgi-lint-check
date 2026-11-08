@@ -72,6 +72,7 @@ def test_clean_table_no_findings():
     # catalog/schema content and are exercised by their own tests.
     richness = [
         "VGI124",
+        "VGI148",
         "VGI126",
         "VGI128",
         "VGI151",

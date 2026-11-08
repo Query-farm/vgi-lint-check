@@ -19,6 +19,7 @@ from ..model import (
     TAG_KEYWORDS,
     TAG_LICENSE,
     TAG_SOURCE_URL,
+    TAG_SUBTITLE,
     TAG_TITLE,
     ObjectId,
     ObjectKind,
@@ -389,6 +390,133 @@ class TitleQuality(Rule):
                     f"'vgi.title' just restates the machine name ({name!r})",
                     "use a human-friendly display title, not the identifier",
                 )
+
+
+# Shape checks shared by the title/subtitle rules. A title is a *name* shown in
+# cards, headings and breadcrumbs; a subtitle is the one line under it. Both are
+# listing copy, so engine boilerplate ("for DuckDB", "a VGI worker") is noise.
+_BOILERPLATE = re.compile(r"\bvgi\s+worker\b|\b(?:for|in|with)\s+(?:duckdb|sql)\b", re.IGNORECASE)
+_TRAILING_PAREN = re.compile(r"\([^()]*\)\s*$")
+_JOINED_DESCRIPTION = re.compile(r"\s[—–-]\s|:\s")
+_SLASH_LIST = re.compile(r"\s/|/\s")
+_DANGLING_END = re.compile(r"[—–\-:;,/&]\s*$|\.\.\.\s*$|…\s*$")
+_SENTENCE_BREAK = re.compile(r"[.!?]\s+[A-Z]")
+_IMPLEMENTATION = re.compile(
+    r"\([^()]*\b(?:python|rust|golang|go|java|typescript|javascript|bun|node(?:\.js)?)\b[^()]*\)",
+    re.IGNORECASE,
+)
+
+
+def _title_problems(title: str, max_chars: int, max_words: int) -> list[str]:
+    """Reasons a ``vgi.title`` reads as a headline rather than a display name."""
+    t = title.strip()
+    problems: list[str] = []
+    if max_chars and len(t) > max_chars:
+        problems.append(f"{len(t)} chars (max {max_chars})")
+    words = [w for w in t.split() if re.search(r"\w", w)]
+    if max_words and len(words) > max_words:
+        problems.append(f"{len(words)} words (max {max_words})")
+    if _SLASH_LIST.search(t) or t.count("/") >= 2:
+        problems.append("a '/'-separated list")
+    if _TRAILING_PAREN.search(t):
+        problems.append("a trailing parenthetical")
+    if _JOINED_DESCRIPTION.search(t):
+        problems.append("a description joined on with a dash or colon")
+    if _BOILERPLATE.search(t):
+        problems.append("engine boilerplate ('for DuckDB', 'VGI worker', ...)")
+    if _DANGLING_END.search(t):
+        problems.append("dangling trailing punctuation")
+    return problems
+
+
+@register
+class TitleIsName(Rule):
+    code = "VGI147"
+    name = "title-is-name"
+    category = DISC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, ObjectKind.TABLE, ObjectKind.VIEW)
+    summary = "A 'vgi.title' should be a short display name, not a headline."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        opts = ctx.config.options
+        for oid, tags, _name in _taggable(ctx, self.targets):
+            title = tags.get(TAG_TITLE)
+            if blank(title):
+                continue  # VGI124 owns absence
+            problems = _title_problems(str(title), opts.title_max_chars, opts.title_max_words)
+            if problems:
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"'vgi.title' {title!r} reads as a headline: " + "; ".join(problems),
+                    "shorten it to the name a person would say (e.g. 'Trading calendar', "
+                    "'ASN.1', 'Invesco ETFs'); move the description to 'vgi.subtitle'",
+                )
+
+
+@register
+class SubtitlePresent(Rule):
+    code = "VGI148"
+    name = "subtitle-present"
+    category = DISC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "The catalog should carry a one-sentence 'vgi.subtitle' for listings."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        if blank(ctx.catalog.tags.get(TAG_SUBTITLE)):
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                "catalog has no 'vgi.subtitle'",
+                "add a 'vgi.subtitle' tag — one sentence shown under the title in "
+                "directories and search results (what it does, for whom)",
+            )
+
+
+@register
+class SubtitleQuality(Rule):
+    code = "VGI149"
+    name = "subtitle-quality"
+    category = DISC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = "A 'vgi.subtitle' should be one plain sentence of listing copy."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        raw = cat.tags.get(TAG_SUBTITLE)
+        if blank(raw):
+            return  # VGI148 owns absence
+        sub = str(raw).strip()
+        opts = ctx.config.options
+        problems: list[str] = []
+        if opts.subtitle_min_chars and len(sub) < opts.subtitle_min_chars:
+            problems.append(f"{len(sub)} chars (min {opts.subtitle_min_chars})")
+        if opts.subtitle_max_chars and len(sub) > opts.subtitle_max_chars:
+            problems.append(f"{len(sub)} chars (max {opts.subtitle_max_chars})")
+        if _SENTENCE_BREAK.search(sub):
+            problems.append("more than one sentence")
+        if _DANGLING_END.search(sub):
+            problems.append("dangling trailing punctuation")
+        if _BOILERPLATE.search(sub):
+            problems.append("engine boilerplate ('for DuckDB', 'VGI worker', ...)")
+        if _IMPLEMENTATION.search(sub):
+            problems.append("an implementation detail (language/library belongs elsewhere)")
+        title = cat.tags.get(TAG_TITLE)
+        if not blank(title) and is_trivial_echo(sub, str(title)):
+            problems.append("it repeats the title")
+        if not blank(cat.comment) and is_trivial_echo(sub, cat.comment):
+            problems.append("it is identical to the catalog comment")
+        if problems:
+            yield self.finding(
+                ctx,
+                cat.id,
+                "'vgi.subtitle' needs work: " + "; ".join(problems),
+                "write one sentence of plain listing copy; put detail in 'vgi.doc_md' "
+                "and keep the comment as the technical description",
+            )
 
 
 @register

@@ -109,6 +109,16 @@ class Options:
     icon_min_dimension: int = 64
     icon_max_dimension: int = 2048
     icon_max_bytes: int = 1048576  # 1 MiB
+    # VGI016: a listing renders the icon in a square slot; warn when the image's
+    # longer side exceeds the shorter by more than this ratio (0 = disabled).
+    icon_max_aspect_ratio: float = 1.25
+    # VGI147: vgi.title is a display *name* (cards, headings, breadcrumbs), not a
+    # headline. Longer copy belongs in vgi.subtitle / the comment. 0 = disabled.
+    title_max_chars: int = 32
+    title_max_words: int = 4
+    # VGI149: vgi.subtitle is the one-sentence line under the name in listings.
+    subtitle_min_chars: int = 40
+    subtitle_max_chars: int = 140
     # Discoverability (VGI12x) tuning.
     min_meaningful_description_chars: int = 30
     min_example_queries: int = 3

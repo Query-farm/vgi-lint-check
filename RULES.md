@@ -34,6 +34,7 @@ skipped unless `--execute` is passed.
 | `VGI013` | info | license-valid-spdx | vgi.license should be an SPDX identifier (or a LicenseRef-… for custom). |  |
 | `VGI014` | warning | catalog-icon-url-valid | vgi.icon_url, when set, must be a valid http(s) URL. |  |
 | `VGI015` | warning | catalog-icon-image | vgi.icon_url must resolve to a browser-displayable image at a reasonable resolution. |  |
+| `VGI016` | warning | catalog-icon-square | vgi.icon_url should be (roughly) square — listings render it in a square slot. |  |
 
 ## Discoverability (VGI12x)
 
@@ -57,6 +58,9 @@ skipped unless `--execute` is passed.
 | `VGI139` | warning | source-url-catalog-only | Do not repeat the catalog source URL unchanged on every object. |  |
 | `VGI140` | info | release-dated | Published data-version releases should carry a release date (freshness). |  |
 | `VGI141` | info | release-documented | Releases should have a summary or notes_url ('what's new'). |  |
+| `VGI147` | warning | title-is-name | A 'vgi.title' should be a short display name, not a headline. |  |
+| `VGI148` | warning | subtitle-present | The catalog should carry a one-sentence 'vgi.subtitle' for listings. |  |
+| `VGI149` | warning | subtitle-quality | A 'vgi.subtitle' should be one plain sentence of listing copy. |  |
 | `VGI150` | info | examples-not-trivial | Example queries should demonstrate value, not only `SELECT * FROM x`. |  |
 | `VGI151` | info | minimum-examples | A worker should ship a minimum number of example queries overall. |  |
 | `VGI152` | error | agent-test-tasks-present | A worker must declare vgi.agent_test_tasks so `vgi-lint simulate` can grade it. |  |
@@ -292,4 +296,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_202 rules._
+_206 rules._

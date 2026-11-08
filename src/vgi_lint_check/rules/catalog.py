@@ -490,3 +490,38 @@ class LicenseValidSpdx(Rule):
             "use an SPDX id (e.g. MIT, Apache-2.0) or a 'LicenseRef-<name>' for a "
             "custom/source-available license so tools can interpret it",
         )
+
+
+@register
+class CatalogIconSquare(Rule):
+    code = "VGI016"
+    name = "catalog-icon-square"
+    category = CAT
+    default_severity = Severity.WARNING
+    requires_network = True
+    targets = (ObjectKind.CATALOG,)
+    summary = "vgi.icon_url should be (roughly) square — listings render it in a square slot."
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        probe = ctx.image_probe
+        limit = ctx.config.options.icon_max_aspect_ratio
+        if probe is None or not limit:
+            return
+        url = (ctx.catalog.tags.get(TAG_ICON_URL) or "").strip()
+        if not url or not _is_http_url(url):
+            return
+        info = probe(url)  # memoized by the probe; VGI015 already fetched it
+        if info.error is not None or is_broken(info.status):
+            return  # VGI015 owns broken/unreachable icons
+        if not (info.width and info.height):
+            return  # SVG/AVIF report no pixel size — can't judge
+        ratio = max(info.width, info.height) / min(info.width, info.height)
+        if ratio > limit:
+            yield self.finding(
+                ctx,
+                ctx.catalog.id,
+                f"vgi.icon_url image is {info.width}x{info.height} "
+                f"(aspect {ratio:.2f}:1, max {limit:g}:1): {url}",
+                "use a square icon (pad a wide logo onto a square canvas) so it isn't "
+                "letterboxed or cropped in directory cards",
+            )
