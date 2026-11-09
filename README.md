@@ -30,8 +30,9 @@ uv run vgi-lint --help
 ```
 
 vgi-lint-check 2.x runs on Haybarn 2.0, whose VGI extension attaches only workers
-speaking wire contract **`vgi.v3`** (vgi-python 0.48+, `@query-farm/vgi` 0.47+,
-vgi-go 0.38+, vgi Rust 0.48+, Java 0.45+, C# 0.22+, C++ 0.13+). For workers still
+speaking wire contract **`vgi.v3`**. The extension matches the protocol's major+minor
+exactly, and the current community build speaks **3.2**: vgi-python 0.50+,
+`@query-farm/vgi` 0.49.1+, vgi-go 0.41.1+, vgi Rust 0.50+, Java 0.47+, C# 0.25+. For workers still
 on `vgi.v2` SDKs, use vgi-lint-check **0.84.x** (Haybarn 1.5) — the `@v1` action
 is capped to it.
 
