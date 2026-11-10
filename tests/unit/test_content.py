@@ -136,6 +136,57 @@ def test_enumeration_ignores_english_word_names_in_prose():
     assert "VGI173" not in set(codes(cat))
 
 
+def _news_catalog(catalog_doc):
+    funcs = [F.func("main", n) for n in ("news_search", "news_providers")]
+    return F.catalog(
+        F.schema("main", functions=funcs),
+        tags={"vgi.doc_llm": "Global news search.", "vgi.doc_md": catalog_doc},
+    )
+
+
+def _vgi173(cat):
+    cfg = Config()
+    return [f for f in run(select_rules(cfg), RuleContext(cat, cfg)) if f.code == "VGI173"]
+
+
+def test_small_worker_listing_its_functions_as_bullets_is_error():
+    # Two objects is below the fraction floor, but a bullet inventory is still one.
+    doc = (
+        "Global news search.\n\n**Table functions**\n\n"
+        "- `news_search(query, provider := ..., count := ...)` — search news articles.\n"
+        "- `news_providers()` — list available providers.\n"
+    )
+    out = _vgi173(_news_catalog(doc))
+    assert out and "list items" in out[0].message
+    assert "news_search" in out[0].message
+
+
+def test_numbered_bold_and_table_row_lists_are_caught():
+    for doc in (
+        "1. **`news_search`** searches.\n2. **`news_providers`** lists providers.\n",
+        "| Function | Does |\n|---|---|\n| `news_search` | search |\n| `news_providers` | list |\n",
+        "* main.news_search(query) — search\n* main.news_providers() — providers\n",
+    ):
+        assert _vgi173(_news_catalog(doc)), doc
+
+
+def test_single_listed_object_or_list_of_concepts_passes():
+    doc = (
+        "Query worldwide coverage with one schema regardless of provider.\n\n"
+        "- `gdelt` — free, no key, worldwide with tone scores.\n"
+        "- `newsapi` — needs a `TYPE newsapi` secret.\n"
+        "- `news_search` is the place to start.\n"
+    )
+    assert not _vgi173(_news_catalog(doc))
+
+
+def test_list_floor_is_configurable():
+    doc = "- `news_search()` search\n- `news_providers()` providers\n"
+    cfg = Config(options=Options(enumeration_min_list_items=3))
+    cat = _news_catalog(doc)
+    assert not [f for f in run(select_rules(cfg), RuleContext(cat, cfg)) if f.code == "VGI173"]
+
+
 # --- VGI174 description-sql-fenced ------------------------------------------
 def _sql_codes(doc_md):
     t = F.table("main", "t", comment="A table row of data here.", tags={"vgi.doc_md": doc_md})

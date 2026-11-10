@@ -258,6 +258,27 @@ def _code_tokens(text: str) -> set[str]:
     return toks
 
 
+# A Markdown list item or table row whose first thing is an object name —
+# "- `news_search(query, …)` — search articles", "1. **`easter`** …",
+# "| `iso_week` | … |". That shape is an inventory however few objects the
+# worker has, so it is checked separately from the fraction test.
+_LIST_LEAD = re.compile(
+    r"^[ \t]*(?:[-*+]|\d+[.)]|\|)[ \t]+(?:\*\*|__)?`?"
+    r"((?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*)(`|\s*\()",
+    re.MULTILINE,
+)
+
+
+def _listed_objects(text: str, names: set[str]) -> list[str]:
+    """Worker objects that lead a list item or table row, in order, deduplicated."""
+    out: list[str] = []
+    for m in _LIST_LEAD.finditer(text):
+        name = m.group(1).rsplit(".", 1)[-1]
+        if name in names and name not in out:
+            out.append(name)
+    return out
+
+
 def _scope_object_names(ctx: RuleContext) -> Iterator[tuple[ObjectId, str, set[str]]]:
     """(id, label, object-name set) for the catalog and each schema.
 
@@ -283,14 +304,16 @@ class DescriptionEnumeratesObjects(Rule):
     default_severity = Severity.ERROR
     targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA)
     summary = (
-        "Catalog/schema descriptions must not just enumerate the worker's own "
-        "objects — that inventory is discoverable by listing the schema."
+        "Catalog/schema descriptions must not enumerate the worker's own "
+        "objects — as a list of them, or by naming most of them — that "
+        "inventory is discoverable by listing the schema."
     )
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         opts = ctx.config.options
         floor = opts.enumeration_min_objects
         fraction = opts.enumeration_object_fraction
+        list_floor = opts.enumeration_min_list_items
         cat = ctx.catalog
         descriptions = {
             cat.id: (cat.description_llm, cat.description_md),
@@ -305,18 +328,27 @@ class DescriptionEnumeratesObjects(Rule):
             for tag, value in (("vgi.doc_llm", llm), ("vgi.doc_md", md)):
                 if blank(value):
                     continue
-                named = names & _code_tokens(value or "")
-                if len(named) >= floor and len(named) / total >= fraction:
-                    yield self.finding(
-                        ctx,
-                        oid,
-                        f"{label} {tag} enumerates {len(named)} of {total} worker "
-                        f"objects ({', '.join(sorted(named)[:6])}"
-                        f"{', …' if len(named) > 6 else ''})",
-                        f"don't list the worker's objects in the {label} description — "
-                        "an agent discovers them by listing the schema. Describe what "
-                        "the worker is for, its key concepts, and when to reach for it",
-                    )
+                text = value or ""
+                listed = _listed_objects(text, names)
+                named = names & _code_tokens(text)
+                if len(listed) >= list_floor:
+                    shown = listed
+                    what = f"lists {len(listed)} worker objects as list items"
+                elif len(named) >= floor and len(named) / total >= fraction:
+                    shown = sorted(named)
+                    what = f"enumerates {len(named)} of {total} worker objects"
+                else:
+                    continue
+                yield self.finding(
+                    ctx,
+                    oid,
+                    f"{label} {tag} {what} ({', '.join(shown[:6])}"
+                    f"{', …' if len(shown) > 6 else ''})",
+                    f"don't list the worker's objects in the {label} description — "
+                    "an agent discovers them, with signatures, by listing the schema. "
+                    "Describe what the worker is for, its key concepts, and when to "
+                    "reach for it",
+                )
 
 
 # SQL embedded in a description belongs in a ```sql fence (or, better, an

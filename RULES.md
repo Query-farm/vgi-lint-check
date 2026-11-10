@@ -73,7 +73,7 @@ skipped unless `--execute` is passed.
 | `VGI170` | info | markdown-well-formed | vgi.doc_md should be valid Markdown (no empty/broken links). |  |
 | `VGI171` | warning | description-links-resolve | Links/images and source URLs in descriptions must resolve (no 404). |  |
 | `VGI172` | error | doc-links-well-formed | vgi.doc_links must be a JSON array of http(s) URLs (or {title?, url} objects). |  |
-| `VGI173` | error | description-enumerates-objects | Catalog/schema descriptions must not just enumerate the worker's own objects — that inventory is discoverable by listing the schema. |  |
+| `VGI173` | error | description-enumerates-objects | Catalog/schema descriptions must not enumerate the worker's own objects — as a list of them, or by naming most of them — that inventory is discoverable by listing the schema. |  |
 | `VGI174` | error | description-sql-fenced | SQL in a description must live in a ```sql code fence (or an executable example). |  |
 | `VGI175` | warning | listing-doc-uses-markdown | Catalog/schema vgi.doc_md should use Markdown structure, not be a plain-prose blob. |  |
 | `VGI176` | warning | listing-doc-multi-paragraph | Catalog/schema vgi.doc_md should be multiple paragraphs, not a single block. |  |

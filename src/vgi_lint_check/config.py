@@ -54,6 +54,9 @@ class Options:
     # treated as a redundant "manifest" — info an agent gets by listing the schema.
     enumeration_min_objects: int = 4
     enumeration_object_fraction: float = 0.5
+    # ...and, regardless of that fraction, one whose Markdown list items or table
+    # rows lead with at least this many of the worker's objects.
+    enumeration_min_list_items: int = 2
     # VGI180: extra boilerplate phrases to flag, as regex (case-insensitive), on
     # top of the built-in families. Anchor with `[^.]*` rather than `.*` to keep
     # a match inside one sentence. Invalid patterns are skipped, never fatal.
