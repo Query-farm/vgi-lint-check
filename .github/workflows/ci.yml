@@ -61,7 +61,7 @@ jobs:
     # can't attach fails here, not in every worker repo's metadata gate.
     runs-on: ubuntu-latest
     env:
-      VGI_PYTHON_REF: v0.50.0  # vgi.v3 / protocol 3.2
+      VGI_PYTHON_REF: v0.51.0  # vgi.v3 / protocol 3.3
       UV_PYTHON: "3.13"
       VGI_LINT_LIVE_STRICT: "1"
     steps:

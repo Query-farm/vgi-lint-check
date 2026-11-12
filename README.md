@@ -31,8 +31,10 @@ uv run vgi-lint --help
 
 vgi-lint-check 2.x runs on Haybarn 2.0, whose VGI extension attaches only workers
 speaking wire contract **`vgi.v3`**. The extension matches the protocol's major+minor
-exactly, and the current community build speaks **3.2**: vgi-python 0.50+,
-`@query-farm/vgi` 0.49.1+, vgi-go 0.41.1+, vgi Rust 0.50+, Java 0.47+, C# 0.25+. For workers still
+exactly, and the current community build speaks **3.3**: vgi-python 0.51+,
+`@query-farm/vgi` 0.50+, vgi-go 0.42+, vgi Rust 0.51+, Java 0.48+, C# 0.26+. Under 3.3 a
+table's scan function and its write functions are `table_only`: they no longer appear in
+`duckdb_functions()`, so the linter checks them through the table they back. For workers still
 on `vgi.v2` SDKs, use vgi-lint-check **0.84.x** (Haybarn 1.5) — the `@v1` action
 is capped to it.
 
