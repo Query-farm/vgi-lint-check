@@ -419,8 +419,9 @@ authors should start with
 - **Build-time contract, not a worker protocol version.** `vgi-lint spec --format
   json` publishes the latest key/alias/retirement registry for consumers to vendor
   and check in CI. Workers do not need to advertise a metadata-spec version.
-- **Agent context is bounded.** Catalog `vgi.doc_llm` is capped at 8,000 characters;
-  detail values and individual examples are capped at 4,000 characters and detail
+- **Agent context is bounded.** Catalog `vgi.doc_llm` and every `vgi.example_queries`
+  list are capped at 8,000 characters; other detail values and individual examples are
+  capped at 4,000 characters and detail
   tools return at most five examples. VGI417 warns before consumers truncate them.
 - **Strict by default.** Documentation tags are required broadly under the strict
   profile; a worker opts out per object/rule via `[tool.vgi-lint-check]`

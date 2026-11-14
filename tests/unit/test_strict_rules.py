@@ -301,6 +301,15 @@ def test_vgi417_warns_when_agent_metadata_will_be_truncated():
     assert "VGI417" in _codes(cat)
 
 
+def test_vgi417_example_queries_get_8000_char_budget():
+    def cat_with(n: int):
+        schema = F.schema("main", tags={"vgi.example_queries": "x" * n})
+        return F.catalog(schema)
+
+    assert "VGI417" not in _codes(cat_with(8_000))
+    assert "VGI417" in _codes(cat_with(8_001))
+
+
 def test_vgi310_function_overuses_any():
     all_any = F.func("main", "f", description="d", parameters=["a", "b", "c"])
     all_any.parameter_types[:] = ["ANY", "ANY", "ANY"]

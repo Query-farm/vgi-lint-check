@@ -1,6 +1,6 @@
 [project]
 name = "vgi-lint-check"
-version = "2.5.0"
+version = "2.5.1"
 description = "A pydoclint-style metadata-quality linter for VGI workers."
 readme = "README.md"
 keywords = [

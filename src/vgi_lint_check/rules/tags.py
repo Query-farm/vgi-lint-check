@@ -13,6 +13,7 @@ from ..model import (
     TAG_CATEGORY,
     TAG_CLASSIFICATION_TAGS,
     TAG_DOC_LLM,
+    TAG_EXAMPLE_QUERIES,
     TAG_REQUIRED_FILTERS,
     TAG_SEMANTIC_MEMBERS,
     TAG_SEMANTIC_RELATIONSHIPS,
@@ -274,10 +275,15 @@ class AgentContextValueBounded(Rule):
                     # structurally and paged/summarized by agent tools, not copied
                     # into prompts as one raw tag value.
                     limit = 65_536
+                elif key == TAG_EXAMPLE_QUERIES or (
+                    key == TAG_DOC_LLM and oid.kind is ObjectKind.CATALOG
+                ):
+                    # An example list holds several full queries, including
+                    # composed ones that call more than one of the worker's
+                    # objects, so it gets the larger budget.
+                    limit = 8_000
                 else:
-                    limit = (
-                        8_000 if key == TAG_DOC_LLM and oid.kind is ObjectKind.CATALOG else 4_000
-                    )
+                    limit = 4_000
                 if len(value) > limit:
                     yield self.finding(
                         ctx,
