@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -87,6 +88,9 @@ class SimLimits:
     row_limit: int = 50
     concurrency: int = 4  # tasks judged in parallel (each on its own cursor)
     sessions: bool = True  # use a claude session (resume) so only deltas are re-sent
+    # Optional jev.JevClient: grades success_criteria-only tasks (Tier 3) with a typed
+    # yes/no instead of the free-form LLM judge. Not part of equality/repr.
+    jev: Any = field(default=None, compare=False, repr=False)
 
 
 @dataclass
@@ -1222,6 +1226,8 @@ def grade_task(
                 result_text = "(answer query failed)"
         elif run.answer_result is not None:
             result_text = _render_actual(run.answer_result[0], _unrender_rows(*run.answer_result))
+        if limits.jev is not None:
+            return _jev_grade(limits.jev, task, run, result_text, mk)
         prompt = _JUDGE.format(
             task=task.prompt,
             criteria=task.success_criteria,
@@ -1244,6 +1250,41 @@ def grade_task(
         "produced an answer (no reference to verify against)" if answered else "no answer produced",
         "answered",
     )
+
+
+#: Tier-3 thresholds for the Jev grader: a confident yes passes, a confident no
+#: fails, anything between is recorded as partial rather than guessed.
+JEV_PASS_MIN = 0.7
+JEV_FAIL_MAX = 0.3
+_JEV_JUDGE = (
+    "A SQL analyst was given the task below and produced the summary and result shown. "
+    "Does the analyst's answer satisfy these success criteria: {criteria}"
+)
+
+
+def _jev_grade(
+    jev: Any,
+    task: AgentTask,
+    run: TaskRun,
+    result_text: str,
+    mk: Callable[[str, str, str], TaskVerdict],
+) -> TaskVerdict:
+    """Tier 3 through Jev: one typed yes/no on the success criteria."""
+    text = (
+        f"TASK: {task.prompt}\n\nANALYST SUMMARY: {run.answer_summary}\n\n"
+        f"ANALYST RESULT:\n{result_text}"
+    )
+    try:
+        p = jev.noul(text, _JEV_JUDGE.format(criteria=task.success_criteria))
+    except Exception as e:  # noqa: BLE001 - a grader failure must not crash the run
+        return mk("fail", f"jev judge failed: {e}", "jev")
+    if p is None:
+        return mk("fail", "jev returned no answer", "jev")
+    if p >= JEV_PASS_MIN:
+        return mk("pass", f"meets the success criteria (jev {p:.2f})", "jev")
+    if p <= JEV_FAIL_MAX:
+        return mk("fail", f"does not meet the success criteria (jev {p:.2f})", "jev")
+    return mk("partial", f"jev undecided on the success criteria ({p:.2f})", "jev")
 
 
 def _terminal_result(

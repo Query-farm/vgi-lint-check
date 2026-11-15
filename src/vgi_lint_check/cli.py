@@ -110,6 +110,15 @@ def app() -> None:
 )
 @click.option("--ai", is_flag=True, help="Shorthand for --doc-review --agent-check.")
 @click.option(
+    "--jev",
+    is_flag=True,
+    help=(
+        "Ask TypeSafe's Jev model typed questions (VGI190 example vs SQL, VGI191 category "
+        "fit; also grades --agent-check success_criteria). Needs a `typesafe` DuckDB "
+        "secret or TYPESAFE_API_KEY."
+    ),
+)
+@click.option(
     "--ai-backend", type=click.Choice(["claude", "api"]), default=None, help="LLM backend."
 )
 @click.option("--ai-model", default=None, help="LLM model override for the AI passes.")
@@ -225,6 +234,7 @@ def lint(
     doc_review: bool,
     agent_check: bool,
     ai: bool,
+    jev: bool,
     ai_backend: str | None,
     ai_model: str | None,
     ai_concurrency: int | None,
@@ -279,6 +289,7 @@ def lint(
         check_links=check_links,
         doc_review=doc_review or ai,
         agent_check=agent_check or ai,
+        jev=jev,
         ai_backend=ai_backend,
         ai_model=ai_model,
         ai_concurrency=ai_concurrency,
@@ -925,6 +936,86 @@ def _echo_dump_summary(doc: dict[str, Any], output: str | None) -> None:
 # --------------------------------------------------------------------------
 # review (LLM-as-judge, opt-in)
 # --------------------------------------------------------------------------
+# jev
+@app.command(name="jev")
+@click.argument("dumps", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--location", default=None, help="Where to run vgi-typesafe (default: pinned).")
+@click.option("--model", default="jev-latest", show_default=True, help="TypeSafe model.")
+@click.option("--concurrency", type=int, default=32, show_default=True)
+@click.option(
+    "--cache",
+    type=click.Path(dir_okay=False),
+    default=".vgi-jev-cache.json",
+    show_default=True,
+    help="Answer cache (content-hashed).",
+)
+@click.option("--min-example", type=float, default=0.9, show_default=True)
+@click.option("--min-category", type=float, default=0.98, show_default=True)
+@click.option("--format", "fmt", type=click.Choice(["terminal", "json"]), default="terminal")
+def jev_cmd(
+    dumps: tuple[str, ...],
+    location: str | None,
+    model: str,
+    concurrency: int,
+    cache: str,
+    min_example: float,
+    min_category: float,
+    fmt: str,
+) -> None:
+    r"""Ask TypeSafe's Jev model the VGI190/VGI191 questions about saved worker dumps.
+
+    Reads ``vgi-lint dump`` / ``fleet dump`` JSON files, so a whole fleet can be
+    checked without attaching every worker again. Needs a ``typesafe`` DuckDB
+    secret or ``TYPESAFE_API_KEY``.
+    \f
+
+    Args:
+        dumps: Dump JSON files.
+        location: vgi-typesafe LOCATION override.
+        model: TypeSafe model name.
+        concurrency: Parallel requests per batch.
+        cache: Answer cache path.
+        min_example: VGI190 confidence floor.
+        min_category: VGI191 confidence floor.
+        fmt: Output format.
+    """
+    from .jev import DEFAULT_LOCATION, JevClient, dump_findings
+
+    client = JevClient(
+        location=location or DEFAULT_LOCATION,
+        model=model,
+        concurrency=concurrency,
+        cache_path=cache,
+    )
+    results = [
+        dump_findings(client, Path(p), min_example=min_example, min_category=min_category)
+        for p in dumps
+    ]
+    if fmt == "json":
+        click.echo(json.dumps(results, indent=2))
+        return
+    total = 0
+    for r in results:
+        total += len(r["findings"])
+        if not r["findings"] and not r["errors"]:
+            continue
+        click.echo(f"{r['worker']}  ({r['examples']} examples, {r['categorised']} categorised)")
+        for e in r["errors"]:
+            click.echo(f"  error: {e}")
+        for f in r["findings"]:
+            if f["code"] == "VGI190":
+                click.echo(
+                    f"  VGI190 {f['where']} ({f['confidence']:.2f}): {f['description'][:100]}"
+                )
+            else:
+                click.echo(
+                    f"  VGI191 {f['where']} ({f['confidence']:.2f}): "
+                    f"{f['declared']!r} -> {f['suggested']!r}"
+                )
+    click.echo(f"{total} finding(s) across {len(results)} worker(s)")
+
+
+# --------------------------------------------------------------------------
 @app.command(name="review")
 @click.argument("location", required=False)
 @click.option("--as", "alias", default=None, help="Local catalog alias handle.")
@@ -1473,6 +1564,7 @@ def _apply_cli_overrides(
     check_links: bool | None,
     doc_review: bool = False,
     agent_check: bool = False,
+    jev: bool = False,
     ai_backend: str | None = None,
     ai_model: str | None = None,
     ai_concurrency: int | None = None,
@@ -1524,6 +1616,8 @@ def _apply_cli_overrides(
         cfg.doc_review = True
     if agent_check:
         cfg.agent_check = True
+    if jev:
+        cfg.jev = True
     if ai_backend is not None:
         cfg.ai_backend = ai_backend
     if ai_model is not None:

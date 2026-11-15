@@ -83,6 +83,8 @@ skipped unless `--execute` is passed.
 | `VGI180` | warning | doc-quality-review | An object's docs should pass an LLM quality review (accuracy/clarity/completeness). |  |
 | `VGI181` | error | description-boilerplate | Descriptions must not carry cross-worker boilerplate — filler that reads identically in every worker's docs carries no signal. |  |
 | `VGI182` | warning | description-type-formatting | DuckDB type names in a description must be code-formatted (`BIGINT`, not BIGINT). |  |
+| `VGI190` | info | example-description-matches-sql | An example's description should say what its SQL does (checked by TypeSafe's Jev model under --jev; flagged only when Jev is confident they disagree). |  |
+| `VGI191` | info | category-fits-object | An object's vgi.category should be the best fit among its schema's categories (checked by TypeSafe's Jev model under --jev; flagged only when Jev confidently picks another). |  |
 
 ## Descriptions (VGI1xx)
 
@@ -302,4 +304,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_212 rules._
+_214 rules._

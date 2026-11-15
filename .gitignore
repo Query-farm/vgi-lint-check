@@ -12,3 +12,4 @@ wheels/
 # vgi-lint review/simulate verdict caches
 .vgi-review-cache.json
 .vgi-sim-cache.json
+.vgi-jev-cache.json

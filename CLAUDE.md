@@ -109,6 +109,24 @@ Pipeline: **connect → load → model → rules/engine → reporting.**
   changing model or editing the rubric/actor prompt misses the cache instead of silently
   reusing another judge's verdicts — **bump `PROMPT_REVISION` when you touch a prompt.**
 - `simulate.py` — agent-suitability testing (see below).
+- `jev.py` — **typed judgments from TypeSafe's Jev model** (`--jev`, opt-in, advisory).
+  Jev answers with a typed `choice`+confidence or a yes/no probability instead of prose,
+  so a rule can act only on a confident answer. It runs *through the vgi-typesafe worker*
+  (attached like any worker, pinned in `jev.DEFAULT_LOCATION`); the key comes from a
+  `typesafe` DuckDB secret or `TYPESAFE_API_KEY` and never passes through this code.
+  Questions are batched as one `LATERAL` join per (kind, instructions, criteria) with the
+  per-item text as the correlated argument — constant named args, so it runs on stock
+  DuckDB 2.0.0. Answers are cached by content hash (`.vgi-jev-cache.json`); **bump
+  `QUESTION_REVISION` when you touch a question's wording.** Feeds VGI190 (example
+  description vs its SQL, ≥0.9), VGI191 (object `vgi.category` vs the schema registry,
+  ≥0.98) and, when `--agent-check` is also on, VGI920's Tier-3 grader (`_jev_grade`: ≥0.7
+  pass, ≤0.3 fail, else partial). Thresholds and the example wording were calibrated on
+  the 157-worker fleet (2026-11-14): the naive yes/no flagged claim-style descriptions,
+  `LIMIT 0` binds and capability descriptions; the guided choice with the object's
+  comment as context cut the fleet's flags from 81 to 21, ~2/3 of them real. A
+  catalog-comment "purpose" question was tried and dropped — it never answered
+  confidently, and VGI107 does that job deterministically. `vgi-lint jev DUMP…` asks the
+  same questions about saved `dump` files, for a fleet sweep without re-attaching.
 - `tutorials/` + `rules/tutorials.py` — the **tutorials** subsystem: executable
   `.vgi.md` worker tutorials, linted / executed / rendered / LLM-planned (see below).
   File-sourced, so it runs on a **parallel engine**, not the catalog `RuleContext` loop.

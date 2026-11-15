@@ -38,6 +38,7 @@ class RuleContext:
     # --agent-check; the requires_review / requires_agent rules read them.
     review_report: Any | None = None  # review.ReviewReport
     sim_report: Any | None = None  # simulate.SimReport
+    jev_report: Any | None = None  # jev.JevReport, populated only under --jev
     # Timing tracer, set only under --trace; the engine times each rule with it.
     tracer: Any | None = None  # trace.Tracer
     # Lazily-computed, run-shared corpus coverage (parse-based). Do not read
@@ -67,6 +68,7 @@ class Rule(ABC):
     requires_network: bool = False  # gated by --check-links (makes outbound HTTP)
     requires_review: bool = False  # gated by --doc-review (LLM doc-quality judge)
     requires_agent: bool = False  # gated by --agent-check (runs `simulate` + LLM)
+    requires_jev: bool = False  # gated by --jev (TypeSafe Jev typed judgments)
     summary: str = ""  # one-liner shown in `rules`/`explain` and agent output
 
     @abstractmethod

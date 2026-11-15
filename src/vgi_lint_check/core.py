@@ -436,7 +436,9 @@ def _lint_one_version(
         needs_net = any(getattr(r, "requires_network", False) for r in rules)
         resolver = make_link_resolver(config.link_timeout) if needs_net else None
         image_probe = make_image_probe(config.link_timeout) if needs_net else None
-        review_report, sim_report = _run_ai_passes(catalog, con, config, rules, tracer)
+        jev_client = _jev_client(config, rules)
+        review_report, sim_report = _run_ai_passes(catalog, con, config, rules, tracer, jev_client)
+        jev_report = _run_jev_pass(catalog, jev_client, rules, tracer)
         ctx = RuleContext(
             catalog,
             config,
@@ -445,6 +447,7 @@ def _lint_one_version(
             image_probe=image_probe,
             review_report=review_report,
             sim_report=sim_report,
+            jev_report=jev_report,
             tracer=tracer,
         )
         with _span(tracer, "phase", "run rules"):
@@ -490,8 +493,64 @@ def _doc_quality(report: Any) -> int | None:
     return int(round((report.score - 1) / 4 * 100))
 
 
+def _jev_client(config: Config, rules: Any) -> Any:
+    """A Jev client when --jev is on and something will ask it (else None).
+
+    Args:
+        config: The resolved lint config.
+        rules: The selected rules.
+
+    Returns:
+        A ``jev.JevClient`` or None.
+    """
+    if not config.jev:
+        return None
+    wants = any(getattr(r, "requires_jev", False) for r in rules) or any(
+        getattr(r, "requires_agent", False) for r in rules
+    )
+    if not wants:
+        return None
+    from .jev import DEFAULT_CACHE, DEFAULT_LOCATION, JevClient
+
+    return JevClient(
+        location=config.jev_location or DEFAULT_LOCATION,
+        model=config.jev_model,
+        concurrency=config.jev_concurrency,
+        cache_path=DEFAULT_CACHE if config.ai_cache else None,
+    )
+
+
+def _run_jev_pass(catalog: Any, client: Any, rules: Any, tracer: Tracer | None = None) -> Any:
+    """Ask Jev the VGI190/VGI191 questions for one catalog (None when not enabled).
+
+    Args:
+        catalog: The built catalog.
+        client: A ``jev.JevClient``, or None when --jev is off.
+        rules: The selected rules.
+        tracer: Optional timing tracer.
+
+    Returns:
+        A ``jev.JevReport`` or None.
+    """
+    if client is None or not any(getattr(r, "requires_jev", False) for r in rules):
+        return None
+    from .jev import catalog_items, run_questions
+
+    examples, categories = catalog_items(catalog)
+    with _span(tracer, "phase", "jev (VGI190/VGI191)"):
+        report = run_questions(client, examples, categories)
+    for err in report.errors:
+        _warn_ai_pass("jev", RuntimeError(err))
+    return report
+
+
 def _run_ai_passes(
-    catalog: Any, con: Any, config: Config, rules: Any, tracer: Tracer | None = None
+    catalog: Any,
+    con: Any,
+    config: Config,
+    rules: Any,
+    tracer: Tracer | None = None,
+    jev_client: Any = None,
 ) -> tuple[Any, Any]:
     """Run the opt-in LLM passes (doc-review / agent-simulation) when enabled.
 
@@ -542,7 +601,7 @@ def _run_ai_passes(
                     backend,
                     backend_name=config.ai_backend,
                     cache=_cache(".vgi-sim-cache.json"),
-                    limits=config.sim_limits(),
+                    limits=config.sim_limits(jev=jev_client),
                 )
         except Exception as e:  # noqa: BLE001
             _warn_ai_pass("agent-check", e)

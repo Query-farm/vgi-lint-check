@@ -138,7 +138,11 @@ def tier_of(code: str) -> str:
     rule = REGISTRY.get(code)
     if rule is None:
         return "structural"
-    if getattr(rule, "requires_review", False) or getattr(rule, "requires_agent", False):
+    if (
+        getattr(rule, "requires_review", False)
+        or getattr(rule, "requires_agent", False)
+        or getattr(rule, "requires_jev", False)
+    ):
         return "semantic"
     if getattr(rule, "requires_connection", False):
         return "behavioral"

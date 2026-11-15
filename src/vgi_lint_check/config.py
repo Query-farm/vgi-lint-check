@@ -51,6 +51,10 @@ class Options:
     # VGI107: ...and stays a single short plain paragraph; the long-form guide
     # lives in the catalog's vgi.doc_md / vgi.doc_llm.
     max_catalog_comment_chars: int = 300
+    # VGI190 / VGI191: act on a Jev choice only at or above this confidence
+    # (calibrated on the fleet, 2026-11-14; see jev.py).
+    jev_example_min_confidence: float = 0.9
+    jev_category_min_confidence: float = 0.98
     min_schema_description_chars: int = 160
     # VGI173: a catalog/schema description that names this many of the worker's
     # own objects (as code tokens) and covers at least this fraction of them is
@@ -337,6 +341,12 @@ class Config:
     # LLM passes (use the local `claude -p` subscription backend by default).
     doc_review: bool = False  # VGI180: LLM doc-quality review (requires_review rules)
     agent_check: bool = False  # VGI920: run `simulate` + gate (requires_agent rules)
+    # VGI190/VGI191 + VGI920's soft grader: typed judgments from TypeSafe's Jev model via
+    # the vgi-typesafe worker (needs a `typesafe` DuckDB secret or TYPESAFE_API_KEY).
+    jev: bool = False
+    jev_location: str | None = None  # default: jev.DEFAULT_LOCATION (pinned release)
+    jev_model: str = "jev-latest"
+    jev_concurrency: int = 16
     ai_backend: str = "claude"  # claude (subscription CLI) | api
     ai_model: str | None = None
     ai_concurrency: int = 4  # parallel LLM batches/tasks for the doc-review pass
@@ -396,6 +406,8 @@ class Config:
             return Severity.OFF
         if getattr(rule, "requires_agent", False) and not self.agent_check:
             return Severity.OFF
+        if getattr(rule, "requires_jev", False) and not self.jev:
+            return Severity.OFF
         # 2. category gate
         if self.categories is not None and str(rule.category) not in self.categories:
             return Severity.OFF
@@ -407,16 +419,24 @@ class Config:
         # 4. explicit per-rule override, else the rule default
         return self.severity_overrides.get(rule.code, rule.default_severity)
 
-    def sim_limits(self) -> Any:
+    def sim_limits(self, jev: Any = None) -> Any:
         """Build the ``simulate`` bounds for ``--agent-check`` from this config.
 
         Timeout and concurrency fall back to the execution window rather than to
         ``SimLimits``' own defaults, because the agent run drives the same worker
         through the same cold start as the execution rules do.
+
+        Args:
+            jev: Optional ``jev.JevClient``; when given, it grades tasks that only
+                declare ``success_criteria`` in place of the free-form LLM judge.
+
+        Returns:
+            A ``simulate.SimLimits``.
         """
         from .simulate import SimLimits
 
         return SimLimits(
+            jev=jev,
             timeout=self.sim_timeout if self.sim_timeout is not None else self.execute_timeout,
             concurrency=(
                 self.sim_concurrency
