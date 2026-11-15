@@ -959,3 +959,44 @@ class DescriptionTypeFormatting(Rule):
                 "wrap type names in backticks (`BIGINT`, `LIST(STRUCT(…))`) so they "
                 "render as code and read unambiguously as types rather than words",
             )
+
+
+# VGI183: links that point back at the worker itself or its publisher don't tell a
+# reader where the data or the format comes from.
+_OWN_LINK = re.compile(
+    r"^https?://(github\.com/query-farm|raw\.githubusercontent\.com/query-farm|"
+    r"(www\.)?query\.farm|ghcr\.io/query-farm)(/|$)",
+    re.IGNORECASE,
+)
+
+
+@register
+class CatalogDocsLinkOut(Rule):
+    code = "VGI183"
+    name = "catalog-docs-link-out"
+    category = CONTENT
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = (
+        "The catalog's docs should link to where the data or format comes from — the "
+        "upstream service or dataset, its API docs, or the spec the worker implements — "
+        "in vgi.doc_md or vgi.doc_links."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        links, _err = decode_doc_links(cat.tags)
+        if any(not _OWN_LINK.match(link.url or "") for link in links):
+            return
+        text = "\n".join(t for t in (cat.description_md, cat.description_llm) if t)
+        urls = [u for _kind, u in _md_targets(text)] + _BARE_URL.findall(text)
+        if any(u.startswith(("http://", "https://")) and not _OWN_LINK.match(u) for u in urls):
+            return
+        yield self.finding(
+            ctx,
+            cat.id,
+            "the catalog's docs don't link anywhere outside the worker",
+            "link the upstream service or dataset, its API docs (and where to get a key, "
+            "if one is needed), or the spec/RFC/library the worker implements — as "
+            "Markdown links in vgi.doc_md, or as vgi.doc_links entries",
+        )

@@ -1,5 +1,7 @@
 """Tests for the catalog (VGI0xx) and discoverability (VGI12x) rules."""
 
+import json
+
 from tests import fixtures as F
 from vgi_lint_check.config import Config
 from vgi_lint_check.findings import Severity
@@ -594,3 +596,37 @@ def test_plain_type_name_in_catalog_comment_is_not_vgi182():
     found = set(codes(cat))
     assert "VGI182" not in found
     assert "VGI107" not in found
+
+
+# --- VGI183 catalog docs link out / VGI102 on the catalog --------------------------
+def _codes_of(cat, code):
+    return [f for f in run(select_rules(Config()), RuleContext(cat, Config())) if f.code == code]
+
+
+def test_catalog_docs_without_any_outside_link_are_flagged():
+    cat = F.catalog(
+        F.schema("main"),
+        comment="FRED economic data as SQL tables.",
+        tags={"vgi.doc_md": "# FRED\n\nSee [the repo](https://github.com/Query-farm/vgi-fred)."},
+    )
+    [f] = _codes_of(cat, "VGI183")
+    assert f.severity is Severity.WARNING
+
+
+def test_catalog_docs_linking_upstream_pass():
+    md = "Data from [FRED](https://fred.stlouisfed.org/). Get a key at https://fredaccount.stlouisfed.org/apikeys."
+    cat = F.catalog(F.schema("main"), comment="FRED economic data.", tags={"vgi.doc_md": md})
+    assert _codes_of(cat, "VGI183") == []
+
+
+def test_doc_links_tag_satisfies_vgi183():
+    links = json.dumps([{"title": "RFC 8949", "url": "https://www.rfc-editor.org/rfc/rfc8949"}])
+    cat = F.catalog(F.schema("main"), comment="CBOR decode for SQL.", tags={"vgi.doc_links": links})
+    assert _codes_of(cat, "VGI183") == []
+
+
+def test_catalog_doc_md_repeating_the_comment_is_vgi102():
+    text = "FRED and ALFRED economic data through typed SQL table functions."
+    cat = F.catalog(F.schema("main"), comment=text, tags={"vgi.doc_md": text})
+    [f] = _codes_of(cat, "VGI102")
+    assert f.severity is Severity.WARNING

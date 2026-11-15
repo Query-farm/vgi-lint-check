@@ -83,6 +83,7 @@ skipped unless `--execute` is passed.
 | `VGI180` | warning | doc-quality-review | An object's docs should pass an LLM quality review (accuracy/clarity/completeness). |  |
 | `VGI181` | error | description-boilerplate | Descriptions must not carry cross-worker boilerplate — filler that reads identically in every worker's docs carries no signal. |  |
 | `VGI182` | warning | description-type-formatting | DuckDB type names in a description must be code-formatted (`BIGINT`, not BIGINT). |  |
+| `VGI183` | warning | catalog-docs-link-out | The catalog's docs should link to where the data or format comes from — the upstream service or dataset, its API docs, or the spec the worker implements — in vgi.doc_md or vgi.doc_links. |  |
 | `VGI190` | info | example-description-matches-sql | An example's description should say what its SQL does (checked by TypeSafe's Jev model under --jev; flagged only when Jev is confident they disagree). |  |
 | `VGI191` | info | category-fits-object | An object's vgi.category should be the best fit among its schema's categories (checked by TypeSafe's Jev model under --jev; flagged only when Jev confidently picks another). |  |
 
@@ -91,7 +92,7 @@ skipped unless `--execute` is passed.
 | Code | Default | Rule | What it checks | Notes |
 | --- | --- | --- | --- | --- |
 | `VGI101` | warning | schema-comment | Every schema should have a comment describing the domain it covers. |  |
-| `VGI102` | info | description-tag-not-duplicate | vgi.doc_llm/_md should add narrative detail, not just repeat the object's own description/comment. |  |
+| `VGI102` | warning | description-tag-not-duplicate | vgi.doc_llm/_md should add narrative detail, not just repeat the object's own description/comment (catalog and schemas included). |  |
 | `VGI103` | warning | listing-description-detailed | Catalog/schema doc_llm and doc_md should be detailed (well above object-level). |  |
 | `VGI106` | error | catalog-description-substantive | The catalog comment is the worker's storefront line — it must be a descriptive sentence, not a bare name or single word. |  |
 | `VGI107` | warning | catalog-comment-concise | The catalog comment is the worker's one-line description in directories — one plain paragraph, short, saying what the worker is for; the function guide belongs in vgi.doc_md / vgi.doc_llm. |  |
@@ -306,4 +307,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_216 rules._
+_217 rules._

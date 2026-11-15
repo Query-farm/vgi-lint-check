@@ -403,16 +403,17 @@ class DescriptionTagNotDuplicate(Rule):
     code = "VGI102"
     name = "description-tag-not-duplicate"
     category = DESC
-    default_severity = Severity.INFO
-    targets = _OPTIONAL_DESC_KINDS
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG, ObjectKind.SCHEMA, *_OPTIONAL_DESC_KINDS)
     summary = (
         "vgi.doc_llm/_md should add narrative detail, not just repeat the "
-        "object's own description/comment."
+        "object's own description/comment (catalog and schemas included)."
     )
 
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         cat = ctx.catalog
-        items: list[tuple[ObjectId, TagSet, str | None]] = []
+        items: list[tuple[ObjectId, TagSet, str | None]] = [(cat.id, cat.tags, cat.comment)]
+        items += [(s.id, s.tags, s.comment) for s in cat.iter_schemas()]
         for t in cat.iter_table_like():
             items.append((t.id, t.tags, t.comment))
         for f in cat.iter_all_functions():
