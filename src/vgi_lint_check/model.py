@@ -810,6 +810,11 @@ class Catalog:
 
         Executable examples can live on the catalog, any schema, table, view, or
         function — every object that carries tags.
+
+        Overloads of one function that report the *same* tag (engines key object
+        tags by name, so every overload can come back with one shared list) are
+        yielded once: running the identical examples again on each overload
+        doubles the work, and concurrently it races examples that write a file.
         """
         yield self.id, self.executable_examples, self.executable_examples_parse_error
         for s in self.schemas:
@@ -818,7 +823,14 @@ class Catalog:
                 yield t.id, t.executable_examples, t.executable_examples_parse_error
             for v in s.views:
                 yield v.id, v.executable_examples, v.executable_examples_parse_error
+            seen: set[tuple[str, str]] = set()
             for f in s.functions:
+                raw = f.tags.get("vgi.executable_examples")
+                if raw:
+                    key = (f.name, raw if isinstance(raw, str) else repr(raw))
+                    if key in seen:
+                        continue
+                    seen.add(key)
                 yield f.id, f.executable_examples, f.executable_examples_parse_error
 
     def has_objects(self) -> bool:
