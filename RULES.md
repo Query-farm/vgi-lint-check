@@ -193,6 +193,7 @@ skipped unless `--execute` is passed.
 | `VGI514` | warning | example-is-bare-select-star | An example that is a bare 'SELECT *' dump (no projection, filter, or aggregation) is low-effort and teaches an agent nothing about usage. |  |
 | `VGI515` | error | example-described | Schema- and function-level example queries must each carry a non-empty description. |  |
 | `VGI516` | warning | example-reads-local-file | Examples must not read local files: a path like 'test/data/x.pdf' exists only in the worker's own repo, so for everyone else the example returns NULL or no rows. |  |
+| `VGI517` | warning | example-calls-worker | An example must use the worker: one that only reads DuckDB's own catalog (duckdb_functions(), vgi_copy_formats()) shows nothing the worker does. |  |
 | `VGI520` | warning | object-untested | Every function/table should be exercised by at least one agent test task. |  |
 | `VGI521` | warning | test-reference-resolves | A worker-qualified object called in an agent test task must exist in the catalog. |  |
 
@@ -307,4 +308,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_217 rules._
+_218 rules._

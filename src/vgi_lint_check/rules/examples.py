@@ -730,3 +730,68 @@ class ExampleReadsLocalFile(Rule):
 def _written_paths(sql: str) -> list[str]:
     """Files ``sql`` writes: ``COPY ... TO 'path'`` targets."""
     return [m.group(1) for m in re.finditer(r"\bTO\s+'((?:[^']|'')*)'", sql, re.IGNORECASE)]
+
+
+@register
+class ExampleCallsWorker(Rule):
+    code = "VGI517"
+    name = "example-calls-worker"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.SCHEMA,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = (
+        "An example must use the worker: one that only reads DuckDB's own catalog "
+        "(duckdb_functions(), vgi_copy_formats()) shows nothing the worker does."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        from ..corpus import _iter_doc_sql
+        from ..sql_parse import parse_refs
+
+        cat = ctx.catalog
+        names = {t.name.lower() for t in cat.iter_table_like()} | {
+            f.name.lower() for f in cat.iter_all_functions()
+        }
+        if not names:
+            return
+
+        def uses_worker(stmts: list[str]) -> bool:
+            parsed_any = False
+            for sql in stmts:
+                for part in (p for p in sql.split(";") if p.strip()):
+                    refs = parse_refs(part)
+                    if refs is None:
+                        return True  # can't tell (e.g. some COPY forms): never flag
+                    parsed_any = True
+                    if any(r.name.lower() in names for r in refs.all):
+                        return True
+            return not parsed_any
+
+        units: list[tuple[ObjectId, str, list[str]]] = [
+            (origin, where, [sql]) for sql, origin, where in _iter_doc_sql(cat)
+        ]
+        for host_id, examples, _err in cat.iter_executable_example_hosts():
+            for ex in examples:
+                label = ex.name or (ex.description or f"#{ex.index}")
+                stmts = [st.sql for st in ex.statements if st.sql and st.sql.strip()]
+                units.append((host_id, f"executable example {label!r}", stmts))
+        for origin, where, stmts in units:
+            if stmts and not uses_worker(stmts):
+                yield self.finding(
+                    ctx,
+                    origin,
+                    f"{where} doesn't call any of the worker's tables or functions",
+                    "replace it with an example that calls the worker (if it exists so "
+                    "something runs without credentials, call a function that needs none, "
+                    "or bind a table function with LIMIT 0); the catalog explorer already "
+                    "shows what the worker exposes",
+                )

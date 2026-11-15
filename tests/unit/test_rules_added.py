@@ -418,3 +418,20 @@ def test_uninformative_results():
     assert _uninformative((0.0,), "SELECT hue FROM rgb_to_hsl(255, 0, 0)") is None
     assert _uninformative((False,), "SELECT is_business_day(DATE '2026-12-25')") is None
     assert _uninformative((3,), "SELECT count(*) FROM f()") is None
+
+
+def test_vgi517_flags_an_example_that_only_reads_duckdb_catalog():
+    intro = "SELECT function_name FROM duckdb_functions() WHERE database_name = 'v'"
+    fn = F.func(
+        "main",
+        "observations",
+        examples=[
+            _EQ(0, "Discover functions", intro),
+            _EQ(1, "Real", "SELECT * FROM observations('x')"),
+        ],
+    )
+    cat = F.catalog(F.schema("main", functions=[fn]))
+    found = [
+        f for f in run(select_rules(Config()), RuleContext(cat, Config())) if f.code == "VGI517"
+    ]
+    assert len(found) == 1 and "example #0" in found[0].message
