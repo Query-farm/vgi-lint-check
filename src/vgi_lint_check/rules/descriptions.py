@@ -61,6 +61,64 @@ class CatalogDescriptionSubstantive(Rule):
         )
 
 
+# VGI107: Markdown structure that has no place in a one-paragraph comment.
+_MD_MARKERS = (
+    (re.compile(r"^\s{0,3}#{1,6}\s", re.M), "a Markdown heading"),
+    (re.compile(r"^\s{0,3}(?:[-*+]|\d+[.)])\s", re.M), "a Markdown list"),
+    (re.compile(r"`[^`\n]+`"), "code spans"),
+    (re.compile(r"\[[^\]\n]+\]\([^)\s]+\)"), "Markdown links"),
+)
+
+
+@register
+class CatalogCommentConcise(Rule):
+    code = "VGI107"
+    name = "catalog-comment-concise"
+    category = DESC
+    default_severity = Severity.WARNING
+    targets = (ObjectKind.CATALOG,)
+    summary = (
+        "The catalog comment is the worker's one-line description in directories — "
+        "one plain paragraph, short, saying what the worker is for; the function "
+        "guide belongs in vgi.doc_md / vgi.doc_llm."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        cat = ctx.catalog
+        text = (cat.comment or "").strip()
+        if not text:
+            return
+        opts = ctx.config.options
+        reasons: list[str] = []
+        if len(text) > opts.max_catalog_comment_chars:
+            reasons.append(f"is {len(text)} chars (max {opts.max_catalog_comment_chars})")
+        if re.search(r"\n\s*\n", text):
+            reasons.append("has more than one paragraph")
+        for pattern, what in _MD_MARKERS:
+            if pattern.search(text):
+                reasons.append(f"uses {what}")
+        # Identifiers with an underscore can't be ordinary prose words, so a run of
+        # them is a function list; plain-word names ("alerts") are not counted.
+        objects = [t.name for t in cat.iter_table_like()] + [
+            f.name for f in cat.iter_all_functions()
+        ]
+        names = {n for n in objects if n and "_" in n}
+        named = sorted(n for n in names if re.search(rf"(?<![\w.]){re.escape(n)}(?!\w)", text))
+        if len(named) >= opts.enumeration_min_objects:
+            reasons.append(f"lists {len(named)} of the worker's objects ({', '.join(named[:5])}…)")
+        if not reasons:
+            return
+        yield self.finding(
+            ctx,
+            cat.id,
+            f"catalog comment {'; '.join(reasons)}",
+            "write one or two plain sentences on what the worker is for and what it covers, "
+            "e.g. 'US National Weather Service forecasts, alerts, observations and river "
+            "gauges as SQL tables. No API key needed.' Move the per-function guide into "
+            "the catalog's vgi.doc_md (people) and vgi.doc_llm (agents).",
+        )
+
+
 @register
 class ListingDescriptionDetailed(Rule):
     code = "VGI103"

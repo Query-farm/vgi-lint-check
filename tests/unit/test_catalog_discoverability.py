@@ -525,3 +525,61 @@ def test_icon_square_skips_svg_broken_and_disabled():
     assert _run_square(_icon_cat(), ImageInfo(status=404)) == []
     wide = ImageInfo(status=200, fmt="png", width=960, height=300)
     assert _run_square(_icon_cat(), wide, icon_max_aspect_ratio=0) == []
+
+
+# --- catalog comment stays one short plain paragraph (VGI107) ---------------
+def _vgi107(cat):
+    findings = run(select_rules(Config()), RuleContext(cat, Config()))
+    return [f for f in findings if f.code == "VGI107"]
+
+
+def test_concise_catalog_comment_passes():
+    cat = F.catalog(
+        F.schema("main"),
+        comment=(
+            "US National Weather Service forecasts, alerts and river gauges as SQL tables. "
+            "No API key needed."
+        ),
+    )
+    assert _vgi107(cat) == []
+
+
+def test_long_catalog_comment_is_flagged():
+    cat = F.catalog(F.schema("main"), comment="Weather data for analysts and agents. " * 12)
+    [finding] = _vgi107(cat)
+    assert finding.severity is Severity.WARNING
+    assert "max 300" in finding.message
+
+
+def test_markdown_catalog_comment_is_flagged():
+    cat = F.catalog(
+        F.schema("main"),
+        comment="# NWS for DuckDB\n\nRead National Weather Service data with `forecast`.",
+    )
+    [finding] = _vgi107(cat)
+    assert "more than one paragraph" in finding.message
+    assert "Markdown heading" in finding.message
+    assert "code spans" in finding.message
+
+
+def test_catalog_comment_listing_functions_is_flagged():
+    names = ("grid_series", "latest_observation", "stations_at", "flood_thresholds")
+    fns = [F.func("main", n) for n in names]
+    cat = F.catalog(
+        F.schema("main", functions=fns),
+        comment="Weather: use stations_at, grid_series, latest_observation and flood_thresholds.",
+    )
+    [finding] = _vgi107(cat)
+    assert "lists 4 of the worker's objects" in finding.message
+
+
+def test_plain_word_object_names_do_not_count_as_a_list():
+    fns = [F.func("main", n) for n in ("alerts", "forecast", "observations", "zones")]
+    cat = F.catalog(
+        F.schema("main", functions=fns),
+        comment=(
+            "Weather alerts, forecast grids, observations and forecast zones "
+            "from the US National Weather Service."
+        ),
+    )
+    assert _vgi107(cat) == []

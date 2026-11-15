@@ -92,6 +92,7 @@ skipped unless `--execute` is passed.
 | `VGI102` | info | description-tag-not-duplicate | vgi.doc_llm/_md should add narrative detail, not just repeat the object's own description/comment. |  |
 | `VGI103` | warning | listing-description-detailed | Catalog/schema doc_llm and doc_md should be detailed (well above object-level). |  |
 | `VGI106` | error | catalog-description-substantive | The catalog comment is the worker's storefront line — it must be a descriptive sentence, not a bare name or single word. |  |
+| `VGI107` | warning | catalog-comment-concise | The catalog comment is the worker's one-line description in directories — one plain paragraph, short, saying what the worker is for; the function guide belongs in vgi.doc_md / vgi.doc_llm. |  |
 | `VGI111` | warning | table-comment | Every table should have a one-line comment describing its rows. |  |
 | `VGI112` | warning | description-llm | Tables/views/functions should carry a 'vgi.doc_llm' tag for agents. |  |
 | `VGI113` | warning | description-md | Tables/views/functions should carry a 'vgi.doc_md' tag for human docs. |  |
@@ -301,4 +302,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_211 rules._
+_212 rules._

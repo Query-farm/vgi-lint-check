@@ -45,6 +45,19 @@ The object's `comment` is the one-liner. `vgi.doc_llm` and `vgi.doc_md` are the
 comment (VGI102): the comment says what it is; the docs say how to use it, the
 columns/returns, caveats, and examples.
 
+For the **catalog**, the comment is also the worker's description wherever it is
+listed (directories, `vgi_catalogs()`, DuckDB tools). Keep it to one plain
+paragraph of at most 300 characters (VGI107): what the worker is for, what
+sources or data it covers, and anything a user must know before attaching
+("No API key needed."). No Markdown, no headings, and no list of functions.
+The per-function guide ("use `forecast` for predictions, `alerts_at` for
+hazards…") belongs in the catalog's `vgi.doc_md` for people and `vgi.doc_llm`
+for agents.
+
+- Good: `US National Weather Service forecasts, alerts, observations and river gauges, plus NOAA outlook maps and radar grids, as SQL tables. No API key needed.`
+- Not this: a 3,000-character comment that opens with `# NWS for DuckDB` and
+  walks through sixty functions.
+
 ---
 
 ## 2. Quick map: which tags go where
