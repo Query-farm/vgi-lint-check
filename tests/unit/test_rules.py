@@ -71,6 +71,7 @@ def test_clean_table_no_findings():
     # (catalog/schema listing docs use Markdown + multiple paragraphs) need extra
     # catalog/schema content and are exercised by their own tests.
     richness = [
+        "VGI183",  # catalog docs link upstream: needs catalog doc content, own tests
         "VGI124",
         "VGI148",
         "VGI126",
