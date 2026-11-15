@@ -64,6 +64,10 @@ class Options:
     # ...and, regardless of that fraction, one whose Markdown list items or table
     # rows lead with at least this many of the worker's objects.
     enumeration_min_list_items: int = 2
+    # ...and, regardless of catalog size, one that names at least this many of
+    # them. Without it a big worker (nws: 58 of 92 functions in one paragraph;
+    # cloudflare: 14 of 1,386) never reached the fraction.
+    enumeration_max_named: int = 8
     # VGI180: extra boilerplate phrases to flag, as regex (case-insensitive), on
     # top of the built-in families. Anchor with `[^.]*` rather than `.*` to keep
     # a match inside one sentence. Invalid patterns are skipped, never fatal.

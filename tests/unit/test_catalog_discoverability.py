@@ -630,3 +630,37 @@ def test_catalog_doc_md_repeating_the_comment_is_vgi102():
     cat = F.catalog(F.schema("main"), comment=text, tags={"vgi.doc_md": text})
     [f] = _codes_of(cat, "VGI102")
     assert f.severity is Severity.WARNING
+
+
+# --- VGI173 counts prose mentions and big lists ------------------------------------
+def _fns(*names):
+    return [F.func("main", n) for n in names]
+
+
+def test_vgi173_counts_underscore_names_in_plain_prose():
+    names = [f"fn_{i}" for i in range(20)]
+    prose = "Use " + ", ".join(names[:8]) + " for the main cases."
+    cat = F.catalog(F.schema("main", functions=_fns(*names)), tags={"vgi.doc_md": prose})
+    [f] = [f for f in _codes_of(cat, "VGI173")]
+    assert "8 of 20" in f.message
+
+
+def test_vgi173_flags_a_long_list_in_a_large_catalog():
+    names = [f"fn_{i}" for i in range(200)]  # 8 of 200 is far below half
+    prose = "Use " + ", ".join(names[:8]) + "."
+    cat = F.catalog(F.schema("main", functions=_fns(*names)), tags={"vgi.doc_llm": prose})
+    assert _codes_of(cat, "VGI173")
+
+
+def test_vgi173_reads_the_catalog_comment():
+    names = ["alerts_at", "forecast_hourly", "grid_series", "stations_at", "zones_at"]
+    comment = "Use alerts_at, forecast_hourly, grid_series and stations_at for weather."
+    cat = F.catalog(F.schema("main", functions=_fns(*names)), comment=comment)
+    assert any("comment" in f.message for f in _codes_of(cat, "VGI173"))
+
+
+def test_vgi173_ignores_plain_words_and_short_mentions():
+    names = ["series", "category", "sources", "releases", "observations", "vintage_dates"]
+    prose = "Discover series by category and sources; see vintage_dates for revisions."
+    cat = F.catalog(F.schema("main", functions=_fns(*names)), tags={"vgi.doc_md": prose})
+    assert _codes_of(cat, "VGI173") == []

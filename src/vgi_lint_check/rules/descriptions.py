@@ -114,8 +114,9 @@ class CatalogCommentConcise(Rule):
             f"catalog comment {'; '.join(reasons)}",
             "write one or two plain sentences on what the worker is for and what it covers, "
             "e.g. 'US National Weather Service forecasts, alerts, observations and river "
-            "gauges as SQL tables. No API key needed.' Move the per-function guide into "
-            "the catalog's vgi.doc_md (people) and vgi.doc_llm (agents).",
+            "gauges as SQL tables. No API key needed.' Put the longer overview in the "
+            "catalog's vgi.doc_md (people) and vgi.doc_llm (agents), and per-function "
+            "guidance on each function's own description, not as a list (VGI173).",
         )
 
 

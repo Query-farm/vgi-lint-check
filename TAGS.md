@@ -50,9 +50,12 @@ listed (directories, `vgi_catalogs()`, DuckDB tools). Keep it to one plain
 paragraph of at most 300 characters (VGI107): what the worker is for, what
 sources or data it covers, and anything a user must know before attaching
 ("No API key needed."). No Markdown, no headings, and no list of functions.
-The per-function guide ("use `forecast` for predictions, `alerts_at` for
-hazards…") belongs in the catalog's `vgi.doc_md` for people and `vgi.doc_llm`
-for agents.
+The catalog's `vgi.doc_md` (people) and `vgi.doc_llm` (agents) carry the
+longer overview: where the data comes from, the key concepts, how the parts fit
+together, and caveats. Neither is a function list (VGI173): an agent discovers
+the objects, with signatures, by listing the schema, and the directory shows
+them in its catalog explorer. Guidance about one function ("use this for
+historical snapshots") goes on that function's own description.
 
 - Good: `US National Weather Service forecasts, alerts, observations and river gauges, plus NOAA outlook maps and radar grids, as SQL tables. No API key needed.`
 - Not this: a 3,000-character comment that opens with `# NWS for DuckDB` and

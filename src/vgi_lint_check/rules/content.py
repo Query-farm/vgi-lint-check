@@ -247,6 +247,19 @@ _QUALIFIED = re.compile(r"(?:[A-Za-z_][A-Za-z0-9_]*\.)+[A-Za-z_][A-Za-z0-9_]*")
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
+def _named_objects(text: str, names: set[str]) -> set[str]:
+    """Worker objects ``text`` names: as code, or in prose when the name has an underscore.
+
+    An underscore name ("alfred_revisions") can't be an English word, so a plain-prose
+    mention counts; a plain word ("series", "holiday") only counts as code.
+    """
+    found = names & _code_tokens(text)
+    for n in names:
+        if "_" in n and n not in found and re.search(rf"(?<![\w.]){re.escape(n)}(?!\w)", text):
+            found.add(n)
+    return found
+
+
 def _code_tokens(text: str) -> set[str]:
     """Identifiers in ``text`` that appear as code (backticked/called/qualified)."""
     toks: set[str] = set()
@@ -314,27 +327,30 @@ class DescriptionEnumeratesObjects(Rule):
         floor = opts.enumeration_min_objects
         fraction = opts.enumeration_object_fraction
         list_floor = opts.enumeration_min_list_items
+        ceiling = opts.enumeration_max_named
         cat = ctx.catalog
-        descriptions = {
-            cat.id: (cat.description_llm, cat.description_md),
+        descriptions: dict[ObjectId, tuple[str | None, str | None, str | None]] = {
+            cat.id: (cat.comment, cat.description_llm, cat.description_md),
         }
         for s in cat.iter_schemas():
-            descriptions[s.id] = (s.tags.get(TAG_DOC_LLM), s.tags.get(TAG_DOC_MD))
+            descriptions[s.id] = (s.comment, s.tags.get(TAG_DOC_LLM), s.tags.get(TAG_DOC_MD))
         for oid, label, names in _scope_object_names(ctx):
             total = len(names)
             if total == 0:
                 continue
-            llm, md = descriptions.get(oid, (None, None))
-            for tag, value in (("vgi.doc_llm", llm), ("vgi.doc_md", md)):
+            comment, llm, md = descriptions.get(oid, (None, None, None))
+            for tag, value in (("comment", comment), ("vgi.doc_llm", llm), ("vgi.doc_md", md)):
                 if blank(value):
                     continue
                 text = value or ""
                 listed = _listed_objects(text, names)
-                named = names & _code_tokens(text)
+                named = _named_objects(text, names)
                 if len(listed) >= list_floor:
                     shown = listed
                     what = f"lists {len(listed)} worker objects as list items"
-                elif len(named) >= floor and len(named) / total >= fraction:
+                elif len(named) >= ceiling or (
+                    len(named) >= floor and len(named) / total >= fraction
+                ):
                     shown = sorted(named)
                     what = f"enumerates {len(named)} of {total} worker objects"
                 else:
@@ -347,7 +363,8 @@ class DescriptionEnumeratesObjects(Rule):
                     f"don't list the worker's objects in the {label} description — "
                     "an agent discovers them, with signatures, by listing the schema. "
                     "Describe what the worker is for, its key concepts, and when to "
-                    "reach for it",
+                    "reach for it; put per-function guidance on each function's own "
+                    "description",
                 )
 
 
