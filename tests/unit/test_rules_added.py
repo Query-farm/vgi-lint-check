@@ -435,3 +435,15 @@ def test_vgi517_flags_an_example_that_only_reads_duckdb_catalog():
         f for f in run(select_rules(Config()), RuleContext(cat, Config())) if f.code == "VGI517"
     ]
     assert len(found) == 1 and "example #0" in found[0].message
+
+
+def test_local_file_paths_cover_debug_symbol_files():
+    assert local_file_paths("SELECT * FROM module_info('/srv/debug/libssl.so.debug')") == [
+        "/srv/debug/libssl.so.debug"
+    ]
+    assert local_file_paths("SELECT * FROM module_info('app.pdb')") == ["app.pdb"]
+
+
+def test_identifiers_with_short_suffixes_are_not_files():
+    # EIA series ids end in a frequency letter; that is not an archive file.
+    assert local_file_paths("SELECT * FROM series('ELEC.SALES.CO-RES.A')") == []

@@ -639,7 +639,7 @@ class TestReferenceResolves(Rule):
 _SQL_STRING = re.compile(r"'((?:[^']|'')*)'")
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
 _FILE_EXT = re.compile(
-    r"\.(exe|dll|so|dylib|mp4|mov|mkv|webm|mp3|wav|flac|ogg|evtx|pdf|xlsx?|docx?|pptx?|csv|"
+    r"\.(exe|dll|so|dylib|debug|dwarf|pdb|dsym|elf|mp4|mov|mkv|webm|mp3|wav|flac|ogg|evtx|pdf|xlsx?|docx?|pptx?|csv|"
     r"tsv|parquet|json|ndjson|jsonl|xml|pcapng|pcap|pem|crt|der|cer|p12|laz|las|tiff?|png|"
     r"jpe?g|gif|webp|heic|bin|dat|hive|dmp|pprof|pb|wasm|zip|gz|tar|bz2|xz|zst|txt|md|html?|"
     r"sqlite|db|bson|cbor|mvt|pmtiles|mbtiles|toml|ya?ml|ics|x12|edi|hl7|avro|orc|arrow|"
