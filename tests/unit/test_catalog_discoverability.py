@@ -583,3 +583,14 @@ def test_plain_word_object_names_do_not_count_as_a_list():
         ),
     )
     assert _vgi107(cat) == []
+
+
+def test_plain_type_name_in_catalog_comment_is_not_vgi182():
+    # VGI107 keeps the catalog comment plain text, so VGI182 must not ask for backticks.
+    cat = F.catalog(
+        F.schema("main"),
+        comment="Multi-codec (de)compression over a DuckDB BLOB column, with codec detection.",
+    )
+    found = set(codes(cat))
+    assert "VGI182" not in found
+    assert "VGI107" not in found

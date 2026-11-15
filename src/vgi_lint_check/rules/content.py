@@ -944,6 +944,10 @@ class DescriptionTypeFormatting(Rule):
     def check(self, ctx: RuleContext) -> Iterator[Finding]:
         ignored = {n.strip().upper() for n in ctx.config.options.type_format_ignore_names}
         for oid, label, source, text in _iter_doc_text(ctx):
+            # The catalog comment is plain text by design (VGI107): directories and
+            # DuckDB tools show it verbatim, so backticks there would print literally.
+            if label == "catalog" and source == "comment":
+                continue
             names = [n for n in _bare_type_names(text) if n not in ignored]
             if not names:
                 continue
