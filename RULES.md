@@ -191,6 +191,7 @@ skipped unless `--execute` is passed.
 | `VGI513` | warning | macro-demonstrated-on-input | A macro's examples should feed it a column/expression, not only literal constants. |  |
 | `VGI514` | warning | example-is-bare-select-star | An example that is a bare 'SELECT *' dump (no projection, filter, or aggregation) is low-effort and teaches an agent nothing about usage. |  |
 | `VGI515` | error | example-described | Schema- and function-level example queries must each carry a non-empty description. |  |
+| `VGI516` | warning | example-reads-local-file | Examples must not read local files: a path like 'test/data/x.pdf' exists only in the worker's own repo, so for everyone else the example returns NULL or no rows. |  |
 | `VGI520` | warning | object-untested | Every function/table should be exercised by at least one agent test task. |  |
 | `VGI521` | warning | test-reference-resolves | A worker-qualified object called in an agent test task must exist in the catalog. |  |
 
@@ -267,6 +268,7 @@ skipped unless `--execute` is passed.
 | `VGI910` | warning | result-schema-matches | A table function's declared result schema must match what it returns (via DESCRIBE). | requires `--execute` |
 | `VGI911` | error | scan-responds | Every table, view, and table function must yield its first rows promptly. | requires `--execute` |
 | `VGI912` | warning | scan-batch-shape | A worker scan should emit bounded batches, not one oversized batch. | requires `--execute` |
+| `VGI913` | warning | example-result-informative | An example should show real output: not a single row of NULLs or a count of 0, unless its description says that empty answer is the point. | requires `--execute` |
 | `VGI920` | error | agent-suitability | An agent must clear the worker's vgi.agent_test_tasks suite (simulate pass-rate). |  |
 
 ## Tutorials (VGI13xx)
@@ -304,4 +306,4 @@ skipped unless `--execute` is passed.
 | `VGI1362` | error | tutorial-slug-unique | Tutorial slugs must be unique within a suite. |  |
 | `VGI1370` | warning | tutorial-narrative-quality | A tutorial's narrative should pass an LLM quality review (accuracy/clarity/aha/voice). |  |
 
-_214 rules._
+_216 rules._

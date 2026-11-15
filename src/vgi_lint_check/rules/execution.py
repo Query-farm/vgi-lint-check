@@ -177,6 +177,81 @@ class ExampleQueriesReturnRows(Rule):
         yield from (f for f in results if f is not None)
 
 
+# VGI913: words in an example's description that say an empty answer is the point.
+_EXPECTS_NOTHING = re.compile(
+    r"\b(no|not|none|nothing|absent|missing|empty|zero|false|never|without|invalid|"
+    r"rejects?|null|nulls|fails?|unknown|isn'?t|doesn'?t|aren'?t|outside|unmatched|"
+    r"non-?existent|private|reserved|closed|expired)\b",
+    re.IGNORECASE,
+)
+_COUNT_CALL = re.compile(r"\bcount\s*\(", re.IGNORECASE)
+
+
+def _uninformative(row: tuple[Any, ...] | list[Any], sql: str) -> str | None:
+    """Why a single-row result shows nothing, or None if it carries an answer."""
+    vals = list(row)
+    if vals and all(v is None for v in vals):
+        return "a single row of NULLs"
+    # Zero is a real answer for most numbers ("hue of red is 0"), and false is a real
+    # answer to a yes/no question; only a count of nothing demonstrates nothing.
+    if (
+        vals
+        and _COUNT_CALL.search(sql)
+        and all(
+            v is None or (isinstance(v, int) and not isinstance(v, bool) and v == 0) for v in vals
+        )
+    ):
+        return "a count of 0"
+    return None
+
+
+@register
+class ExampleResultInformative(Rule):
+    code = "VGI913"
+    name = "example-result-informative"
+    category = EXEC
+    default_severity = Severity.WARNING
+    targets = _EXAMPLE_TARGETS
+    requires_connection = True
+    summary = (
+        "An example should show real output: not a single row of NULLs or a count of 0, "
+        "unless its description says that empty answer is the point."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        con = ctx.connection
+        if con is None:
+            return
+        timeout = ctx.config.execute_timeout
+
+        def work(pair: tuple[Any, Any], cur: Any) -> Finding | None:
+            obj, ex = pair
+            sql = (ex.sql or "").rstrip().rstrip(";")
+            if _EXPECTS_NOTHING.search(ex.description or ""):
+                return None
+            wrapped = f"SELECT * FROM ({sql}) AS _q LIMIT 2"
+            try:
+                rows = run_with_timeout(cur, lambda q=wrapped: cur.execute(q).fetchall(), timeout)
+            except Exception:  # noqa: BLE001 - VGI901 reports execution/timeout errors
+                return None
+            if len(rows) != 1:  # no rows is VGI902's finding; several rows carry data
+                return None
+            why = _uninformative(rows[0], sql)
+            if why is None:
+                return None
+            return self.finding(
+                ctx,
+                obj.id,
+                f"example #{ex.index} returns {why}, so it demonstrates nothing",
+                "give the example input that produces real output (data the worker ships, "
+                "inline values, or a URL to a sample file); if the empty answer is the "
+                "point, say so in the description",
+            )
+
+        results = map_queries(con, _example_sqls(ctx.catalog), work, ctx.config.execute_concurrency)
+        yield from (f for f in results if f is not None)
+
+
 @register
 class ViewExecutes(Rule):
     code = "VGI903"

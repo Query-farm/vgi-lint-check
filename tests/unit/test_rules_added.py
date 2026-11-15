@@ -378,3 +378,43 @@ def test_vgi327_ordinary_view_clean():
     )
     s = F.schema("main", comment="c", views=[v])
     assert "VGI327" not in set(codes(F.catalog(s)))
+
+
+# --- VGI516 example-reads-local-file / VGI913 example-result-informative ------------
+from vgi_lint_check.model import ExampleQuery as _EQ  # noqa: E402
+from vgi_lint_check.rules.examples import local_file_paths  # noqa: E402
+from vgi_lint_check.rules.execution import _uninformative  # noqa: E402
+
+
+def test_local_file_paths_only_counts_reads():
+    assert local_file_paths("SELECT pe.main.imports('test/sql/data/hello.exe')") == [
+        "test/sql/data/hello.exe"
+    ]
+    assert local_file_paths("SELECT * FROM 'data/x.csv'") == ["data/x.csv"]
+    assert local_file_paths("SELECT f(content) FROM read_blob('book.xlsx')") == ["book.xlsx"]
+    # URLs, VALUES labels and COPY targets are not local reads
+    assert local_file_paths("SELECT read_blob('https://example.com/a.pdf')") == []
+    assert local_file_paths("SELECT * FROM (VALUES ('a.png', 1), ('b.png', 2)) t(n, x)") == []
+    assert local_file_paths("COPY t TO 'out.cbor' (FORMAT cbor)") == []
+
+
+def test_vgi516_flags_a_repo_relative_example_file():
+    fn = F.func(
+        "main",
+        "imports",
+        examples=[_EQ(0, "Imports of a binary", "SELECT * FROM imports('test/data/hello.exe')")],
+    )
+    cat = F.catalog(F.schema("main", functions=[fn]))
+    found = [
+        f for f in run(select_rules(Config()), RuleContext(cat, Config())) if f.code == "VGI516"
+    ]
+    assert len(found) == 1 and "test/data/hello.exe" in found[0].message
+
+
+def test_uninformative_results():
+    assert _uninformative((None, None), "SELECT a, b FROM f()") == "a single row of NULLs"
+    assert _uninformative((0,), "SELECT count(*) FROM f()") == "a count of 0"
+    # a zero that answers the question, and false for a yes/no, are real answers
+    assert _uninformative((0.0,), "SELECT hue FROM rgb_to_hsl(255, 0, 0)") is None
+    assert _uninformative((False,), "SELECT is_business_day(DATE '2026-12-25')") is None
+    assert _uninformative((3,), "SELECT count(*) FROM f()") is None

@@ -633,3 +633,100 @@ class TestReferenceResolves(Rule):
                 f"{b.where} calls {b.reference!r}, which this worker does not expose",
                 "fix the reference (a typo or a renamed object) or update the stale task SQL",
             )
+
+
+# VGI516: a string literal that names a file on the local disk.
+_SQL_STRING = re.compile(r"'((?:[^']|'')*)'")
+_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_FILE_EXT = re.compile(
+    r"\.(exe|dll|so|dylib|mp4|mov|mkv|webm|mp3|wav|flac|ogg|evtx|pdf|xlsx?|docx?|pptx?|csv|"
+    r"tsv|parquet|json|ndjson|jsonl|xml|pcapng|pcap|pem|crt|der|cer|p12|laz|las|tiff?|png|"
+    r"jpe?g|gif|webp|heic|bin|dat|hive|dmp|pprof|pb|wasm|zip|gz|tar|bz2|xz|zst|txt|md|html?|"
+    r"sqlite|db|bson|cbor|mvt|pmtiles|mbtiles|toml|ya?ml|ics|x12|edi|hl7|avro|orc|arrow|"
+    r"feather|nc|grib2?|shp|gpkg|geojson|kml|eml|msg|mbox|log)$",
+    re.IGNORECASE,
+)
+
+
+def local_file_paths(sql: str) -> list[str]:
+    """String literals ``sql`` reads as local files (not URLs, not files it writes).
+
+    A literal counts when it is the first argument of a function call
+    (``read_blob('x.pdf')``, ``pe.imports('hello.exe')``) or a ``FROM 'x.csv'`` scan.
+    Literals in ``VALUES`` lists are data (``('access.log', ...)``), and a ``TO 'x'``
+    target is a file the example writes itself, so neither counts.
+    """
+    out: list[str] = []
+    for m in _SQL_STRING.finditer(sql):
+        lit = m.group(1).replace("''", "'").strip()
+        if not lit or _SCHEME.match(lit) or " " in lit or not _FILE_EXT.search(lit):
+            continue
+        before = sql[: m.start()].rstrip()
+        if re.search(r"\bFROM$", before, re.IGNORECASE):
+            out.append(lit)
+            continue
+        if not before.endswith("("):
+            continue
+        head = before[:-1].rstrip()
+        word = re.search(r"([A-Za-z_][\w.]*)$", head)
+        if word is None or word.group(1).upper() == "VALUES":
+            continue  # a VALUES row or a parenthesised tuple, not a call
+        out.append(lit)
+    return out
+
+
+@register
+class ExampleReadsLocalFile(Rule):
+    code = "VGI516"
+    name = "example-reads-local-file"
+    category = EX
+    default_severity = Severity.WARNING
+    targets = (
+        ObjectKind.CATALOG,
+        ObjectKind.TABLE,
+        ObjectKind.VIEW,
+        ObjectKind.SCALAR_FUNCTION,
+        ObjectKind.AGGREGATE,
+        ObjectKind.MACRO,
+        ObjectKind.TABLE_FUNCTION,
+    )
+    summary = (
+        "Examples must not read local files: a path like 'test/data/x.pdf' exists only in "
+        "the worker's own repo, so for everyone else the example returns NULL or no rows."
+    )
+
+    def check(self, ctx: RuleContext) -> Iterator[Finding]:
+        from ..corpus import _iter_doc_sql
+
+        # Each unit is one example: its statements run in one session, so a file it
+        # writes with COPY ... TO and then reads back is not a local dependency.
+        units: list[tuple[ObjectId, str, list[str]]] = [
+            (origin, where, [sql]) for sql, origin, where in _iter_doc_sql(ctx.catalog)
+        ]
+        for host_id, examples, _err in ctx.catalog.iter_executable_example_hosts():
+            for ex in examples:
+                label = ex.name or (ex.description or f"#{ex.index}")
+                stmts = [st.sql for st in ex.statements if st.sql and st.sql.strip()]
+                units.append((host_id, f"executable example {label!r}", stmts))
+        seen: set[tuple[str, str]] = set()
+        for origin, where, stmts in units:
+            written = {t for sql in stmts for t in _written_paths(sql)}
+            for sql in stmts:
+                for path in local_file_paths(sql):
+                    if path in written or (origin.qualified(), path) in seen:
+                        continue
+                    seen.add((origin.qualified(), path))
+                    yield self.finding(
+                        ctx,
+                        origin,
+                        f"{where} reads the local file {path!r}, which only exists in the "
+                        "worker's repo",
+                        "point it at a URL pinned to a release tag (e.g. raw.githubusercontent.com"
+                        "/<org>/<repo>/vX.Y.Z/<path>), use inline bytes or values, or data the "
+                        "worker bundles",
+                    )
+
+
+def _written_paths(sql: str) -> list[str]:
+    """Files ``sql`` writes: ``COPY ... TO 'path'`` targets."""
+    return [m.group(1) for m in re.finditer(r"\bTO\s+'((?:[^']|'')*)'", sql, re.IGNORECASE)]
