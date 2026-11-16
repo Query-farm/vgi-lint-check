@@ -396,6 +396,10 @@ def test_local_file_paths_only_counts_reads():
     assert local_file_paths("SELECT read_blob('https://example.com/a.pdf')") == []
     assert local_file_paths("SELECT * FROM (VALUES ('a.png', 1), ('b.png', 2)) t(n, x)") == []
     assert local_file_paths("COPY t TO 'out.cbor' (FORMAT cbor)") == []
+    # a worker-defined scheme (terraform's bundled documents) is not a local file...
+    assert local_file_paths("SELECT * FROM read_plan('sample:change.plan.json')") == []
+    # ...but a Windows drive letter is
+    assert local_file_paths("SELECT * FROM read_plan('C:\\tf\\plan.json')") == ["C:\\tf\\plan.json"]
 
 
 def test_vgi516_flags_a_repo_relative_example_file():
