@@ -266,6 +266,21 @@ class TableHasPrimaryKey(Rule):
 _FK_NAME = re.compile(r"^(?P<base>.+?)_?id$", re.IGNORECASE)
 
 
+def _name_forms(base: str) -> tuple[str, ...]:
+    """Singular and plural spellings a table named after ``base`` might use.
+
+    Args:
+        base: lower-case column base, e.g. ``order`` from ``order_id``.
+
+    Returns:
+        tuple[str, ...]: candidate table names, most likely first, without duplicates.
+    """
+    forms = [base, base + "s", base + "es", base.removesuffix("s")]
+    if base.endswith("y"):
+        forms.append(base[:-1] + "ies")
+    return tuple(dict.fromkeys(f for f in forms if f))
+
+
 @register
 class ForeignKeySuggested(Rule):
     code = "VGI808"
@@ -289,7 +304,9 @@ class ForeignKeySuggested(Rule):
                 if not m or col.name.lower() in fk_cols:
                     continue
                 base = m.group("base").lower().rstrip("_")
-                if not base or base == t.name.lower():
+                # The table's own key (orders.order_id, categories.category_id)
+                # names the table itself, not a reference to another one.
+                if not base or t.name.lower() in _name_forms(base):
                     continue
                 target = self._target_table(cat, base, t.schema)
                 if target is not None:
@@ -304,7 +321,7 @@ class ForeignKeySuggested(Rule):
 
     def _target_table(self, cat: Catalog, base: str, schema: str) -> str | None:
         # Match a table named like the column base (singular or plural).
-        for cand in (base, base + "s", base.rstrip("s")):
+        for cand in _name_forms(base):
             for t in cat.find_table_like(cand):
                 if t.name.lower() == cand:
                     return str(t.name)

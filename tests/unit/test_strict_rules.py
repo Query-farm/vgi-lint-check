@@ -95,6 +95,47 @@ def test_vgi808_suggested_foreign_key():
     assert found and "owner" in found[0].message
 
 
+def _vgi808(tables):
+    s = F.schema("main", comment="c", tags=_TAGS, tables=tables)
+    return [
+        f
+        for f in run(select_rules(Config()), RuleContext(F.catalog(s), Config()))
+        if f.code == "VGI808"
+    ]
+
+
+def _keyed(name, *cols):
+    return F.table(
+        "main",
+        name,
+        comment="c",
+        tags=_TAGS,
+        columns=[F.col("main", name, c) for c in cols],
+        constraints=[F.constraint("main", name, "PRIMARY KEY", columns=[cols[0]])],
+    )
+
+
+def test_vgi808_ignores_a_tables_own_key():
+    # orders.order_id and categories.category_id name the table itself.
+    found = _vgi808([_keyed("orders", "order_id"), _keyed("categories", "category_id")])
+    assert found == []
+
+
+def test_vgi808_still_flags_references_to_plural_tables():
+    found = _vgi808(
+        [
+            _keyed("orders", "order_id"),
+            _keyed("order_lines", "line_id", "order_id"),
+            _keyed("categories", "category_id"),
+            _keyed("products", "product_id", "category_id"),
+        ]
+    )
+    messages = sorted((f.object_id.qualified(), f.message) for f in found)
+    assert len(found) == 2, messages
+    assert any("'orders'" in m for _, m in messages)
+    assert any("'categories'" in m for _, m in messages)
+
+
 def test_vgi204_timestamp_timezone():
     naive = F.table(
         "main",
